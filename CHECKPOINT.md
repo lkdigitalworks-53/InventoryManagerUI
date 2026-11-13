@@ -1,76 +1,25 @@
-# CHECKPOINT: 2026-11-12 R5b, activity_log inside the restock operation + recordPurchase removal - resume here
+# CHECKPOINT: 2026-11-13 AP1, add product with opening stock = ONE atomic operation, SERVER slice, dormant - resume here
 
-**Branch:** `feat/2026-11-12-r5b-activity-log-in-op`, cut from `main` @ `66d3f8d` (#195 merged, #191 R5a merged). Design: `docs/superpowers/specs/2026-11-12-r5b-activity-in-operation-design.md` (decisions D-R5b-1..D-R5b-8, all vetoable in the PR; the questions Taher would be grilled on are answered there with the recommendation taken).
-**Commit identity:** `lkdwtaher@gmail.com` as git user AND last line of every commit message. The PAT comes from the chat prompt only, passed per command with `git -c http.extraHeader=...`, never in a URL, `.git/config`, the repo or memory.
-**Rules in force:** no build or run; no Qt in the sandbox (CI is the oracle); always a branch; push without asking; tests and a test plan for every change; out-of-scope findings go to `docs/superpowers/KNOWN-ISSUES.md`. Server deploy BEFORE the client.
-**Skills used:** `brainstorming` (design doc written; the user's one-turn rule replaced the approval gate, decisions are vetoable in the PR), `qt-qml` (ActivityLog.adopt, no layout change), `qt-ui-design` (N/A: no visible UI change; the feed row looks the same), `ponytail` (one op entity, one stamping helper, no new endpoint).
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-12-p1-s4a-followups-merged-prev-CHECKPOINT.md`.
-**Test plan:** `docs/superpowers/test-plans/2026-11-12-r5b-activity-in-operation-test-plan.md`.
+**Branch:** `feat/2026-11-13-ap1-add-product-server-op`, cut from `main` @ `024a6f6` (#197 merged). Design: `docs/superpowers/specs/2026-11-13-add-product-atomic-operation-design.md` (D-AP-1..10, all vetoable in the PR; section 7 lists the four questions Taher would be grilled on, recommendation taken).
+**Commit identity:** `Taher (via Claude session) <lkdigitalworks@gmail.com>` as git user AND last line of every commit message (project instruction of 2026-11-13; the Claude trailers come before it). PAT per command via `git -c http.extraHeader`, never in a URL, `.git/config`, the repo or memory.
+**Rules in force:** no build or run; no Qt in the sandbox (CI is the oracle); always a branch; push without asking; tests and a test plan for every change; out-of-scope findings go to `docs/superpowers/KNOWN-ISSUES.md`. Node tests of `functions/` DO run here (`cd functions && npm ci && node --test`, baseline 1720/1720 on `024a6f6`). Server deploy BEFORE the client.
+**Skills used:** `brainstorming` (design doc written; one-turn rule replaced the approval gate, decisions vetoable in the PR), `qt-qml` and `qt-ui-design` (N/A in AP1: no QML, no UI), `ponytail` (one registry entry, one opType, one branch in `checkActivityOp`, no new endpoint, no per-opType shape check D-AP-6).
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-13-pr197-merged-prev-CHECKPOINT.md`.
+**Skill number:** 168 (167 is taken on two open branches, `feat/2026-11-12-p1-s4b1-register-client-engine` and `feat/2026-11-12-picker-s4-edit-order`). If either merges first, renumber nothing: 168 stays.
+**Test plan:** `docs/superpowers/test-plans/2026-11-13-ap1-add-product-server-test-plan.md`.
+
+## Step 2 arc (the whole thing, so the next session knows where it is)
+- AP1 server, dormant (THIS BRANCH). AP2 client pure layer (`OperationKeys.addProductKey`, `AddProductPlan.build/reflect`, `FailureCause`, `DescribeItem`). AP3 wire `InventoryStore.addProduct` + `AddProductDialog` (+ inline supplier row, R5a "Use" pattern) + `DataModel` route; needs Taher's answer to D-AP-7 (offline add: refuse) and D-AP-8 (photo from the live answer). AP4 docs + device test of the whole arc.
+- Roadmap order after step 2: step 3 (new order, `_tryAdjustOrder`, imported completion, reverse), step 4 (import chunking; G5 product delete and G9 account writes need designs). R6 (device test of the restock arc) is Taher's and still open.
 
 ## Steps
-- [x] 0. Read memory, ATOMIC-OPERATIONS-STATUS, R5a design notes, operationLogic, ActivityLog, RestockPlan, InventoryStore restock; branch cut; baseline restock tests 88/88.
-- [x] 1. Design doc + this checkpoint written.
-- [x] 2. SERVER (23 tests, 16/16 mutants): `activity` operation-only entity in `operationLogic.js` (validate, stamp, `{{$stock}}`), tests, FailureCause codes.
-- [x] 3. CLIENT (planner, adopt, hooks, QML twins, e2e x2): `RestockPlan` activity op + `reflect`, `ActivityLog.adopt`, `InventoryStore` hooks (+ legacy fallback), QML twins.
-- [x] 4. P2: `TransactionStore.recordPurchase` removed, D-1 drift guard moved to a pinned key list.
-- [x] 5. Docs (test plan, README, SKILLS 166 + index, AGENTS, STATUS 13, KNOWN-ISSUES 24-28): test plan, README, SKILLS, AGENTS, ATOMIC-OPERATIONS-STATUS section 13, KNOWN-ISSUES.
-- [x] 6. Pushed. PR #197. CI on `bde06ca`: QML red (4 test-side cases, stale op counts + one tie), fixed in `e4c490c`; CI on `e4c490c`: Functions, QML, E2E, Rules all green (read 2026-11-13 via API). Deploy Check runs on merge.
+- [x] 0. Clone, memory + STATUS + CHECKPOINT + KNOWN-ISSUES read, baseline 1720/1720, branch cut, identity set.
+- [x] 1. Evidence read: `addProduct` (7 independent writes), `RestockPlan`, `operationLogic`, `counterRegistry`, `movementLogic` (create derives a `receipt` row), no role gate on `recordOperation` (same as `recordMutation`), drift guard, e2e twin pattern.
+- [x] 2. Design doc written (this commit).
+- [ ] 3. SERVER: `product` counter, `addProduct` opType, activity kind tied to opType, `checkActivityOp(opType)`.
+- [ ] 4. TESTS: `operationLogic.addProduct.test.js`, guard rows + mutants, widened source pin, dormancy guard, e2e emulator case (CI only).
+- [ ] 5. DOCS: test plan, README, AGENTS, SKILLS 168 + index, STATUS section 14, KNOWN-ISSUES, test-plans README row.
+- [ ] 6. Push, open PR, read CI.
 
 ## NEXT (if this session stops)
-Continue at the first unchecked step. Deploy order when merged: functions first, then the client build.
-
----
-
-# REVIEW SWEEP 1 of PR #197 (2026-11-13, one chat turn, NO parallel agents) - resume here
-
-**Who/how:** session prompt of 2026-11-13. Commit identity `tsadmin@gmail.com` as git user AND last line of every commit message (newer prompt wins over `lkdwtaher@`; the three R5b commits above keep the old one, history NOT rewritten). Fixes go ON the PR head branch `feat/2026-11-12-r5b-activity-log-in-op` (the PR IS that branch; a second branch would be a second PR). PAT only per command via `git -c http.extraHeader`, remote URL clean.
-**Skills used:** `requesting-code-review` (inline: the user forbids parallel agents), `qt-qml-review` (Phase 1 python lint run on the changed QML, filtered to changed lines; Phase 2 done inline, six domains, on `adopt` + two small edits; qmllint not available, no Qt in the sandbox), `ponytail-audit` (finding format).
-**Rules in force:** no build or run of the app; CI is the oracle for QML and rules; Node tests of `functions/` DO run here (`cd functions && npm ci && node --test`, baseline 1711/1711 on head `cd08418`).
-
-## Steps
-- [x] R0. Clone, checkout PR head, read CHECKPOINT, design D-R5b-1..8, full prod diff (server, planner, ActivityLog, InventoryStore, TransactionStore), all new tests, docs diff; baseline 1711/1711 locally.
-- [x] R1. Probed the server with a script (real `validateOperationRequest` + `applyOperation` on the strict fake DB). Confirmed: F1 four activity rows accepted in ONE operation (design says one); F2 a row naming product p2 accepted while the delta is on p1; F3 `{{$stock}}` in the TITLE stored raw. Lint (qt-qml-review Phase 1) on changed lines: 24 hits, 0 real (22 `var` = repo convention 1452 vs 5, 1 JS-2 and 1 ORD-1 false positives).
-- [x] R2. SERVER FIX F1+F2+F3 in `checkActivityOp` (`functions/lib/operationLogic.js`): one activity op per operation; no `{{$stock}}` in the title; the row names a product an EARLIER inventory delta of this operation changed, token or not (token keeps `activity-stock-missing`, else `invalid-activity`). Tests: A-7 last line flips on purpose, A-10..A-13 new, emulator e2e twin (CI only, opIndex 5/4/4). Functions 1715/1715 (was 1711), scripts 1049/1049, 9/9 real hand mutants killed (a 10th was equivalent: `concat([])`). Commit 1 = this one.
-- [x] R3. TEST HYGIENE (tests and test plan only, zero prod change): the three new `restockWire` cases were labelled W-20/21/22 and collided with the existing W-20 (two already shared it, a third made it three); renamed W-23..W-25 and the test plan rows; `B-2` had `a || b` between two possible ids, now ONE exact key list (proves the id carries the injected clock's year). 57/57 in the two files. The older W-20 pair (lines 312 and 414) is NOT touched (KNOWN-ISSUES). Commit 2 = this one.
-- [x] R4. DOCS (commit 3 = this one): stale `recordPurchase` mentions fixed (MigrationService comment, SKILLS.md two places); test plan section 10 + counts; Skill 166 rules 10-12; README and AGENTS sentences; KNOWN-ISSUES 29-32 (W-20 pair, id not pinned = decision, adopt vs stale fetch = unverified, lint noted). Left as history on purpose: `ATOMIC-OPERATIONS-STATUS.md` section 10 P2 line and the old plans/specs (they describe their own date).
-- [x] R5. Pushed after every commit. CI on head `2874f1d` (read 2026-11-13 via API): Functions 1715/1715, QML 3026/3026, Rules 129/129, E2E 114/114 (113 + the new F1-F3 emulator case), 4984 of 4984. Sweep 1 of PR #197 is DONE.
-- [x] R6 Done in sweep 2 below: KNOWN-ISSUES 30 stays a recorded decision (id not pinned), 31 analysed by reading the code (real, not new in R5b, fix proposed as a separate PR). The three R5b-original commits keep `lkdwtaher@` (history not rewritten). Deploy order when merged: functions FIRST, then the client build.
-
-# REVIEW SWEEP 2 of PR #197 (2026-11-13, one chat turn, NO parallel agents) - resume here
-
-**Who/how:** session prompt of 2026-11-13 07:48 IST (superpowers requesting-code-review, qt-qml-review, ponytail-audit, caveman full). Commit identity `lkdwtaher@gmail.com` as git user AND last line of every commit message (this prompt names it; sweep 1 used another address and stays as it is). Fixes go ON the PR head branch. PAT only per command via `git -c http.extraHeader`, remote URL clean. No build, no Qt.
-**Rules in force:** same as sweep 1. Node tests run here (`cd functions && npm ci && node --test`; scripts: `node --test .github/scripts/__tests__/*.test.js`).
-
-## Steps
-- [x] T0. Clone, checkout PR head `1bad9ee`, memory read, baseline functions 1715/1715.
-- [x] T1. Read whole server diff, applyOperation, runMints, checkPlaceholders, recordOperation handler (no role gate there = known decision, KNOWN-ISSUES ~399), firestore rules (activity_log client-writable), full client diff (RestockPlan, ActivityLog.adopt, InventoryStore hooks, RestockFlow), legacy activityText parity, new QML tests.
-- [x] T2. PROBE (`scratchpad/probe2.js`): FOUND subtitle stored at 1600 chars from a 1000-char template (token x 100 x 16-digit stock); minted ids can also push the title over 200. Literal id `act-squat` accepted (KNOWN-ISSUES 30, decision stays). Max-float stock refused by the existing movement check.
-- [x] T3. FIX `stampActivity` (`functions/lib/operationLogic.js`): refuse a non-doc / non-string title or subtitle (was a TypeError inside the transaction), re-prove both caps on the stored text. Tests B-12..B-15, 4/4 killed with the fix reverted. Adopt twin AD-8 + `tst_ActivityLog` case (a held id below the insertion point).
-- [x] T4. DOCS: test plan section 11 + counts, KNOWN-ISSUES 31 (confidence 85, not new in R5b, fix proposed), Skill 166 rule 13, this checkpoint.
-- [x] T5. Counts: functions 1720/1720 (+5), scripts 1049/1049. QML twin and CI: read after push.
-- [ ] T6 (NEXT SESSION): read CI on the sweep 2 head; separate small PR for KNOWN-ISSUES 31 (merge by id in `ActivityLog._fetchFromFirebase`) if Taher wants it; R6 device test of the whole restock arc (test plan section 7 + step 13).
-
-## NEXT (if this session stops)
-Continue at the first unchecked R-step. Each commit is independent and revertable. Never force-push this branch.
-
----
-
-# REVIEW SWEEP 3 of PR #197 (2026-11-13, one chat turn, NO parallel agents): device report "restock Confirm shows: server cannot accept this request" - resume here
-
-**Who/how:** session prompt of 2026-11-13 (device test). Commit identity `tsadmin@gmail.com` as git user AND last line of every commit message. Fixes go ON this branch (the PR IS the branch); never force-push. PAT per command via `git -c http.extraHeader`, remote URL clean. Skills read: `systematic-debugging`, `qt-qml`, `qt-ui-design` (N/A, no UI change), `ponytail-audit`. No build, no run, no Qt in the sandbox.
-**Report (Taher):** on device, Restock -> Confirm shows the toast "The server cannot accept this request. This is an app problem, please report it". The text in brackets after it was NOT given, so the exact code is unconfirmed.
-
-## Steps
-- [x] S0. Clone, checkout PR head `6ddf4de`, baseline functions 1720/1720.
-- [x] S1. ROOT CAUSE by evidence (Phase 1-3 of systematic-debugging, no fix before it):
-  - The toast text is `FailureCause._bug(code)`: only a code on the "app built it wrongly" list reaches it (`qml/helper/FailureCause.js`).
-  - MAIN client + MAIN server, every supplier shape (none, known, new, id string), through `RestockFlow.makeInput` -> `RestockPlan.build` -> `validateOperationRequest`: all ACCEPTED. Fractional stock also accepted. So `main` itself is not broken. (Only a stock stored as a STRING in Firestore gives `movement-qty-mismatch`; the app writes `parseInt`, so only a hand-edited doc can do it.)
-  - This branch's client plan is `mint, stock_batch, delta, transaction, ACTIVITY`. Run against MAIN's server: **REJECT 400 `unsupported-entity` at opIndex 4**. Against this branch's server: ACCEPT. Reproduces the exact toast with `(unsupported-entity)`.
-  - Deployed server: `deployed-main` tag = `66d3f8d` (main, #195), deploy job green (GitHub API, 2026-11-13). Deploys run only from `main` after a one-tap approval, so this branch's server half CANNOT be on the server while the PR is open.
-  - Conclusion (high confidence, unconfirmed on the phone): the phone runs a build of THIS branch against the server of main. The documented order (test plan section 7, "Deploy functions BEFORE installing the client") cannot be followed from an unmerged PR. Data is safe: a terminal 4xx writes nothing.
-- [x] S2. Re-read this PR's client diff (RestockPlan, reflect, adopt, hooks, FailureCause, RestockFlow, TransactionStore removal; no `recordPurchase` caller left, feed doc keys equal `ActivityLog.record`'s). No new defect found by reading. KNOWN-ISSUES 33 written. Functions 1720/1720.
-- [ ] S3 (NEXT): Taher answers the two questions in the chat reply (the code in brackets; which build was on the phone) and picks A / C (see KNOWN-ISSUES 33). Then act on the choice.
-- [ ] S4 (NEXT SESSION): read CI on this head; rest of the full re-review not done this turn: QML twins and e2e files line by line, `tests/tst_ActivityLog.qml`, docs consistency, KNOWN-ISSUES 31 (adopt vs stale fetch) fix PR if wanted, R6 device run.
-
-## NEXT (if this session stops)
-Continue at S3. Do NOT add a client fallback for an old server (AGENTS rule 4) unless Taher decides option D in KNOWN-ISSUES 33.
+Continue at the first unchecked step. Each commit is independent. Never force-push this branch.
