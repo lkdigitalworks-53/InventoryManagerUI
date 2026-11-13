@@ -25,7 +25,7 @@ const FNS = ["restock", "_restockFailureText", "_applyRestock", "onRestockApplie
 function sandbox(opts) {
     const o = Object.assign({ online: true, parked: false, queued: false, products: [{ productId: "p1", name: "Tomato", category: "Veg", price: 12.5, stock: 10 }],
         suppliers: [{ supplierId: "SUP-009", name: "Acme Farms" }] }, opts || {});
-    const log = { gateway: [], activity: [], stock: [], batch: [], tx: [], supplier: [], resync: [], warn: [] };
+    const log = { gateway: [], activity: [], legacy: [], adopted: new Set(), stock: [], batch: [], tx: [], supplier: [], resync: [], warn: [] };
     const state = { parked: o.parked, queued: o.queued };
     const ctx = {
         RestockFlow: RF, RestockPlan: RP, FailureCause: FC, console: { warn: (...a) => log.warn.push(a.join(" ")) },
@@ -39,7 +39,9 @@ function sandbox(opts) {
             addLocalSupplier: (d) => { log.supplier.push(d.supplierId); o.suppliers.push(d); }, syncFromFirebase: () => log.resync.push("supplier") },
         StockBatchStore: { addLocalBatch: (d) => log.batch.push(d.batchId), syncFromFirebase: () => log.resync.push("batch") },
         TransactionStore: { addLocalEntries: (docs) => log.tx.push(...docs.map((x) => x.txId)), syncFromFirebase: () => log.resync.push("tx") },
-        ActivityLog: { record: (kind, title, sub, id) => log.activity.push({ kind, title, sub, id }) },
+        // adopt() is the real function's contract: an id already held is ignored. `legacy` counts the old client-written row.
+        ActivityLog: { record: (kind, title, sub, id) => { log.legacy.push(id); log.activity.push({ kind, title, sub, id }); },
+                       adopt: (d) => { if (log.adopted.has(d.id)) return false; log.adopted.add(d.id); log.activity.push({ kind: d.kind, title: d.title, sub: d.subtitle, id: d.entityId }); return true; } },
         applyRemoteStock: (id, stock) => log.stock.push([id, stock]),
         syncFromFirebase: () => log.resync.push("inventory"),
         Gateway: { recordOperation: (opType, ops, key, options, cb) => {
@@ -247,10 +249,10 @@ test("W-13 double tap: the first queues, the second (same tick) is refused by th
 // ---------------------------------------------------------------------------- what is sent
 
 test("W-14 the operation sent: opType restock, a restock key, plan ops for none / known / new supplier", () => {
-    const shapes = [["", ["mint", "mutation", "delta", "mutation"]],
-        ["acme farms", ["mint", "mutation", "delta", "mutation"]],
-        ["SUP-777", ["mint", "mutation", "delta", "mutation"]],
-        ["Newco", ["mint", "mint", "mutation", "mutation", "delta", "mutation"]]];
+    const shapes = [["", ["mint", "mutation", "delta", "mutation", "mutation"]],
+        ["acme farms", ["mint", "mutation", "delta", "mutation", "mutation"]],
+        ["SUP-777", ["mint", "mutation", "delta", "mutation", "mutation"]],
+        ["Newco", ["mint", "mint", "mutation", "mutation", "delta", "mutation", "mutation"]]];
     for (const [party, kinds] of shapes) {
         const h = sandbox();
         const t = tap(h, { party });
@@ -417,4 +419,41 @@ test("W-20 a first restock that is discarded frees the name", () => {
     const second = tap(h, { id: "p2", party: { newName: "Acme" } });
     assert.deepEqual(second.calls, [], "queued, not refused");
     assert.equal(h.taps(), 2);
+});
+
+// ------------------------------------------------------------------ R5b: the feed row comes from the server
+
+test("W-23 R5b: the answer carries the server's feed row; it is adopted once and no client-written row is made", async () => {
+    const h = sandbox();
+    const t = tap(h, { party: "Newco" });
+    const { answer } = await serve(t.call);
+    assert.equal(answer.results.some((r) => r.entity === "activity"), true);
+    finish(h, t.call, answer, true);
+    assert.equal(h.log.legacy.length, 0, "no client-written row");
+    assert.equal(h.log.activity.length, 1);
+    assert.deepEqual(plain(h.log.activity[0]), { kind: "product_restocked", title: "Restocked: Tomato", sub: "+5 · now 15 in stock · from Newco · weekly", id: "p1" });
+    h.ctx.onRestockApplied(t.call.key, answer.results, true);      // the same answer again (replay, relaunch): nothing twice
+    assert.equal(h.log.activity.length, 1);
+    assert.equal(h.log.legacy.length, 0);
+});
+
+test("W-24 R5b legacy: an answer to a restock queued by the previous build (no feed row) writes the old client row, once", async () => {
+    const h = sandbox();
+    const t = tap(h, { party: "Newco" });
+    const { answer } = await serve(t.call);
+    const legacy = Object.assign({}, answer, { results: answer.results.filter((r) => r.entity !== "activity") });
+    finish(h, t.call, legacy, true);
+    assert.equal(h.log.legacy.length, 1);
+    assert.equal(h.log.activity.length, 1);
+    assert.deepEqual(plain(h.log.activity[0]), { kind: "product_restocked", title: "Restocked: Tomato", sub: "+5 · now 15 in stock · from Newco · weekly", id: "p1" });
+});
+
+test("W-25 R5b: an answer that cannot be read as one restock (damaged feed row) applies nothing, writes no row, and re-reads", async () => {
+    const h = sandbox();
+    const t = tap(h, { party: "" });
+    const { answer } = await serve(t.call);
+    const damaged = answer.results.map((r) => (r.entity === "activity" ? Object.assign({}, r, { after: Object.assign({}, r.after, { id: "act-x" }) }) : r));
+    finish(h, t.call, Object.assign({}, answer, { results: damaged }), true);
+    assert.deepEqual([h.log.stock, h.log.batch, h.log.tx, h.log.activity, h.log.legacy], [[], [], [], [], []]);
+    assert.ok(h.log.resync.length > 0, "everything the operation could have touched is re-read");
 });

@@ -186,6 +186,14 @@ function newPartyChoice(text, suppliers) {
     return { kind: "new", name: r.supplier.newName }
 }
 
+// R5b: the display name of an already-known supplier, for the feed row ("" when none or not in the list).
+function knownSupplierName(supplier, suppliers) {
+    if (!supplier || typeof supplier.id !== "string" || !Array.isArray(suppliers)) return ""
+    for (var i = 0; i < suppliers.length; ++i)
+        if (suppliers[i] && suppliers[i].supplierId === supplier.id && typeof suppliers[i].name === "string") return suppliers[i].name
+    return ""
+}
+
 // Builds RestockPlan.build's input from what the tap knows. `now` is ONE Date: the ISO timestamp and
 // the local date both come from it (O4), so a tap at 23:59:59.9 cannot get two different days.
 // a = { key, product, qty, unitCost, reason, party, suppliers, now }
@@ -204,7 +212,8 @@ function makeInput(a) {
     return { ok: true, input: {
         key: a.key, productId: p.productId, productName: p.name, category: p.category,
         qty: a.qty, unitCost: cost, reason: a.reason,
-        now: a.now.toISOString(), date: localDate(a.now), supplier: sup.supplier
+        now: a.now.toISOString(), date: localDate(a.now), supplier: sup.supplier,
+        supplierName: knownSupplierName(sup.supplier, a.suppliers)
     } }
 }
 

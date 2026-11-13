@@ -173,3 +173,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 163: Build a report over an append-only ledger from the ledger alone, in half-open periods, streamed, with the mutable document as a cross-check only
 - 164: A step that creates something must not run before the confirm that needs it; take a structured value, not an overloaded string, and let a limit have exactly one source of truth
 - 165: Close a class of bug with one helper, give it a table-driven test over every handler, and pick each handler's failure code by what the CLIENT does with it
+- 166: Put a derived feed row inside the transaction that causes it, stamp who and when on the server, and open an entity to ONE operation type instead of to every endpoint

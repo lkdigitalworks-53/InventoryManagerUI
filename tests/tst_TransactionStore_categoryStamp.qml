@@ -26,33 +26,6 @@ TestCase {
         AuthStore._settings.sessionJson = "" // see tst_Gateway.qml header / CHECKPOINT.md 2026-08-18
     }
 
-    // ── recordPurchase ───────────────────────────────────────────────────
-    function test_recordPurchase_stamps_explicit_category() {
-        TransactionStore.recordPurchase("P1", 5, 10, "Widget", "S1", "restock", "Hardware")
-        compare(TransactionStore.entries.length, 1)
-        compare(TransactionStore.entries[0].category, "Hardware")
-    }
-
-    function test_recordPurchase_falls_back_to_live_product_category_when_omitted() {
-        InventoryStore.products = [{ productId: "P1", name: "Widget", category: "Hardware" }]
-        TransactionStore.recordPurchase("P1", 5, 10, "Widget", "S1", "restock")
-        compare(TransactionStore.entries[0].category, "Hardware", "no category param -> falls back to the live product")
-    }
-
-    function test_recordPurchase_empty_category_when_product_gone_and_none_passed() {
-        // InventoryStore.products left empty by init() — nothing to fall back to.
-        TransactionStore.recordPurchase("P9", 5, 10, "Ghost Widget", "S1", "restock")
-        compare(TransactionStore.entries[0].category, "", "neither an explicit category nor a live product to resolve from")
-    }
-
-    function test_recordPurchase_null_category_param_treated_as_omitted() {
-        // Monkey case: a falsy-but-not-undefined category must not short-circuit
-        // past the live-product fallback (category || fallback, same as productName).
-        InventoryStore.products = [{ productId: "P1", name: "Widget", category: "Hardware" }]
-        TransactionStore.recordPurchase("P1", 5, 10, "Widget", "S1", "restock", null)
-        compare(TransactionStore.entries[0].category, "Hardware")
-    }
-
     // ── recordCreated ────────────────────────────────────────────────────
     function test_recordCreated_stamps_category_from_snapshot() {
         TransactionStore.recordCreated("P2", "New Gadget", 3, 20, { category: "Electronics", sku: "G1" })

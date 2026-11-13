@@ -27,6 +27,8 @@ var _BUG_CODES = {
     "too-many-mints": true, "unknown-counter": true, "invalid-bind-name": true, "duplicate-bind-name": true,
     "unused-mint": true, "unbound-placeholder": true, "placeholder-not-allowed": true,
     "placeholder-entity-mismatch": true, "movement-qty-mismatch": true,
+    // R5b: the activity row of a restock (operationLogic.js checkActivityOp)
+    "invalid-activity": true, "activity-stock-missing": true,
     // delta / movement / mutation validators (functions/lib/gatewayLogic.js, movementLogic.js): a request
     // the client built wrongly. functions/test/failureCauseCodes.test.js fails when the server gains a
     // code that is neither a person-facing cause below nor listed here.

@@ -191,6 +191,26 @@ QtObject {
         _pruneOldEntries()
     }
 
+    // A row the SERVER already wrote (the activity op inside a restock operation, atomic-ops R5b): show it here,
+    // newest first by `timestamp`, without a second Firestore write. Ignores an id already in the list, so a replayed
+    // answer adds nothing twice. Returns true when a row was added; a row older than all 50 held is not added (false).
+    function adopt(entry) {
+        if (!entry || typeof entry.id !== "string" || entry.id.length === 0 || typeof entry.timestamp !== "string") return false
+        var arr = (entries || []).slice()
+        var at = arr.length
+        for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].id === entry.id) return false
+            if (at === arr.length && arr[i].timestamp < entry.timestamp) at = i
+        }
+        if (at >= 50) return false
+        arr.splice(at, 0, entry)
+        if (arr.length > 50) arr = arr.slice(0, 50)
+        entries = arr
+        revision++
+        _pruneOldEntries()
+        return true
+    }
+
     function markAllRead() {
         if (unreadCount === 0) return
         var arr = []
