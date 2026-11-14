@@ -184,6 +184,17 @@ async function deriveContextSafe(db, uid) {
     }
 }
 
+// The writes only an owner or admin may make: a staff delete, the removed_staff tombstone, a product delete. ONE rule for
+// every endpoint that can carry an entity write (recordMutation, recordMutationsBatch, recordOperation). recordMutation
+// alone checked it until KNOWN-ISSUES 42, so a lowest-role token could delete a staff record through the other two.
+// stock_batch deletes stay ungated: the restock and FIFO paths use them for non-owner roles.
+function isOwnerAdminOnlyWrite(entity, action) {
+    return (entity === "staff" && action === "delete")
+        || entity === "removed_staff"
+        || PhotoCleanup.isCascadeEntityDelete(entity, action);
+}
+const isOwnerOrAdmin = (role) => role === "owner" || role === "admin";
+
 exports.recordMutation = functions.onRequest(
     { region: "asia-south1", cors: true },
     async (req, res) => {
@@ -244,11 +255,8 @@ exports.recordMutation = functions.onRequest(
         // DataModel.onDeleteProduct gate. Checked before the prefix build and any transaction:
         // 403, zero writes, no marker, no sweep. stock_batch deletes stay ungated (restock / FIFO
         // paths use them for non-owner roles).
-        const isStaffDelete = validated.entity === "staff" && validated.action === "delete";
-        const isStaffTombstone = validated.entity === "removed_staff";
         const isProductDelete = PhotoCleanup.isCascadeEntityDelete(validated.entity, validated.action);
-        if ((isStaffDelete || isStaffTombstone || isProductDelete)
-                && ctx.role !== "owner" && ctx.role !== "admin") {
+        if (isOwnerAdminOnlyWrite(validated.entity, validated.action) && !isOwnerOrAdmin(ctx.role)) {
             send(res, 403, { ok: false, error: "role-not-allowed" });
             return;
         }
@@ -462,6 +470,12 @@ exports.recordOperation = functions.onRequest(
             send(res, 403, { ok: false, error: "no-tenant-context" });
             return;
         }
+        // KNOWN-ISSUES 42: the same owner/admin rule as recordMutation, on EVERY op of the operation (403, zero writes, whole
+        // operation refused). A mint op and a delta op carry no action, so only mutation ops can match.
+        if (!isOwnerOrAdmin(ctx.role) && validated.ops.some((op) => op.kind === "mutation" && isOwnerAdminOnlyWrite(op.entity, op.action))) {
+            send(res, 403, { ok: false, error: "role-not-allowed" });
+            return;
+        }
 
         let result;
         try {
@@ -668,6 +682,11 @@ exports.recordMutationsBatch = functions.onRequest(
         if (ctx === CONTEXT_FAILED) { send(res, 500, { ok: false, error: UNAVAILABLE }); return; }
         if (!ctx) {
             send(res, 403, { ok: false, error: "no-tenant-context" });
+            return;
+        }
+        // KNOWN-ISSUES 42: the same owner/admin rule as recordMutation, on EVERY item (403, zero writes).
+        if (!isOwnerOrAdmin(ctx.role) && validated.items.some((it) => isOwnerAdminOnlyWrite(validated.entity, it.action))) {
+            send(res, 403, { ok: false, error: "role-not-allowed" });
             return;
         }
 

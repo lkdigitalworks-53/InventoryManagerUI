@@ -198,7 +198,8 @@ collections and zeroes product stock).
   `recordMutation` calls now actually go through the gateway and write a real `audit_log` entry.
   `recordMutation` also has one narrow, entity/action-specific server-side role check
   (staff/delete and the `removed_staff` tombstone entity require owner or admin, 2026-09-21 / 2026-09-25) — every other entity/action still relies on the
-  client's own role check only; see `KNOWN-ISSUES.md`
+  client's own role check only; see `KNOWN-ISSUES.md`.
+  **Owner/admin-only writes are ONE rule on EVERY endpoint (2026-11-15, KNOWN-ISSUES 42):** `isOwnerAdminOnlyWrite(entity, action)` in `functions/index.js` (staff delete, any `removed_staff` write, product delete) is called by `recordMutation`, `recordMutationsBatch` (every item) and `recordOperation` (every mutation op) right after the membership context, so a refusal is a 403 `role-not-allowed` with zero writes and, in an operation, refuses the WHOLE operation. Until then only `recordMutation` checked it, and a lowest-role token could delete a staff record or plant a tombstone through the other two. Any NEW endpoint that can carry an entity write must call the same helper; `index.handlers.ownerOnlyWrites.test.js` is the table (4 endpoints x 4 roles x the sensitive writes, plus every other entity staying open to staff) and it keeps its own copy of the rule on purpose.
   atomically with the working-tier doc. Whether the one-time `runCutover` (irreversible — wipes
   the ledger, zeroes stock) was run as part of this same rollout has **not** been independently
   confirmed in a session — don't assume historical ledger/stock data was reset without checking.

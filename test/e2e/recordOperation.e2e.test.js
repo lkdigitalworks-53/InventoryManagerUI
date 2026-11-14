@@ -360,6 +360,35 @@ test("BC replay: the same delete request sent twice -> 200 both times, no second
     assert.equal((await cascadeAudits("bcE2E-p7")).length, 2);
 });
 
+// KNOWN-ISSUES 42: owner/admin-only writes are one rule on EVERY endpoint. A staff token used to be accepted on recordOperation and
+// recordMutationsBatch for a staff delete (only recordMutation refused it). CI-only: written against the emulator, not run in the sandbox.
+test("owner-only writes: a staff token cannot delete a staff record through recordOperation or recordMutationsBatch (403, record intact, no marker); the owner still can", async () => {
+    const rec = { staffId: "opE2E-stf1", name: "E2E Staff" };
+    await seed("staff/opE2E-stf1", rec);
+    const staffDelete = (requestId) => op(requestId, [{ kind: "mutation", entity: "staff", entityId: "opE2E-stf1", action: "delete", before: rec, after: null }]);
+    try {
+        const viaOp = await post(staffDelete("completeOrder:opE2E-own1:1"), fixture.secondIdToken);
+        assert.equal(viaOp.status, 403, JSON.stringify(viaOp.body));
+        assert.equal(viaOp.body.error, "role-not-allowed");
+        assert.deepEqual(await read("staff/opE2E-stf1"), rec, "the staff record is intact");
+        assert.equal(await read("audit_log/completeOrder:opE2E-own1:1"), null, "no marker");
+
+        const viaBatch = await post({ entity: "staff", requestId: "opE2E-own-b1", items: [{ entityId: "opE2E-stf1", action: "delete", before: rec, after: null }] },
+                                    fixture.secondIdToken, "/recordMutationsBatch");
+        assert.equal(viaBatch.status, 403, JSON.stringify(viaBatch.body));
+        assert.equal(viaBatch.body.error, "role-not-allowed");
+        assert.deepEqual(await read("staff/opE2E-stf1"), rec, "still intact after the batch attempt");
+
+        const owner = await post(staffDelete("completeOrder:opE2E-own2:1"));
+        assert.equal(owner.status, 200, JSON.stringify(owner.body));
+        assert.equal(await read("staff/opE2E-stf1"), null, "the owner may delete it");
+    } finally {
+        await db.doc(T + "staff/opE2E-stf1").delete();
+        await db.doc(T + "audit_log/completeOrder:opE2E-own2:1").delete();
+        await db.doc(T + "audit_log/completeOrder:opE2E-own2:1~0").delete();
+    }
+});
+
 test("BC role gate: a staff token cannot delete a product (403), batches and product intact; staff may still delete a stock_batch", async () => {
     const { product, batches } = await seedProductWithBatches("bcE2E-p8", 2);
 
