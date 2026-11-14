@@ -32,9 +32,12 @@ const ALLOWED = new Set([
     "qml/helper/PickerSheetModel.js", "qml/components/ProductPickerSheet.qml", "qml/components/ProductPickerRow.qml", "qml/helper/PickerRowGeometry.js",
     "functions/test/pickerRowGeometry.test.js", "tests/tst_PickerRowGeometry.qml",
     "functions/test/pickerSheetModel.test.js", "functions/test/pickerSheetWiring.test.js", "tests/tst_PickerSheetModel.qml",
-    // Slice S3 (New Order wired, on purpose): the dialog, its helper and their tests. OrderDetailDialog stays out until S4.
+    // Slice S3 (New Order wired, on purpose): the dialog, its helper and their tests. 
     "qml/pages/NewOrderDialog.qml", "qml/helper/NewOrderPicker.js", "functions/test/newOrderPicker.test.js",
     "functions/test/newOrderPickerWiring.test.js", "tests/tst_NewOrderPicker.qml",
+    // Slice S4 (Edit Order wired, on purpose): the dialog, its helper and their tests.
+    "qml/pages/OrderDetailDialog.qml", "qml/helper/EditOrderPicker.js", "functions/test/editOrderPicker.test.js",
+    "functions/test/editOrderPickerWiring.test.js", "tests/tst_EditOrderPicker.qml",
 ]);
 
 test("DORM-01 nothing outside the helpers and their tests mentions them", () => {

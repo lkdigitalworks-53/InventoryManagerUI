@@ -14,6 +14,7 @@
 // `lookup` is supplied by the dialog so this file reads no store:
 //   productOf(id)  -> the catalog product or null            (InventoryStore.getById)
 //   batchesOf(id)  -> its FIFO batches, oldest first          (StockBatchStore.forProduct); used by opsCheck only
+//   availableOf(id, product, lines) -> optional; units still addable (default: stock minus the cart). Edit Order only.
 //
 // Ids: plan ids are strings, a cart line may hold a numeric id (KNOWN-ISSUES, picker carried requirement 5), so
 // every comparison is String(line.productId) === id.
@@ -33,6 +34,8 @@ function _has(o, k) { return !!o && typeof o === "object" && Object.prototype.ha
 function _str(s) { return (typeof s === "string") ? s : ((s === undefined || s === null) ? "" : String(s)) }
 function _whole(n) { return (typeof n === "number" && isFinite(n) && n > 0) ? Math.floor(n) : 0 }
 function _isQty(q) { return typeof q === "number" && isFinite(q) && q > 0 && Math.floor(q) === q }
+// What a line holds now: a positive finite quantity as it is (an order line of 2.5 stays 2.5), anything else 0.
+function _held(n) { return (typeof n === "number" && isFinite(n) && n > 0) ? n : 0 }
 function _blankId(id) { return id === undefined || id === null || id === "" }
 
 function _productOf(lookup, id) {
@@ -91,6 +94,23 @@ function _indexOf(lines, id) {
     return -1
 }
 
+// How many units NEW quantity may still use for this product. The default is the New Order formula. Edit Order
+// (picker slice S4) passes lookup.availableOf(id, product, linesBuiltSoFar) because a completed order's units are
+// already out of stock; the hook is optional, so New Order is unchanged. A throwing or non-number hook gives 0:
+// fail closed, the product is refused.
+function _capOf(lookup, id, p, out) {
+    if (lookup && typeof lookup.availableOf === "function") {
+        try {
+            var n = lookup.availableOf(id, p, out)
+            return (typeof n === "number" && isFinite(n) && n > 0) ? Math.floor(n) : 0
+        } catch (e) {
+            return 0
+        }
+    }
+    var left = availableFor({ productId: id, stock: p.stock }, out)    // a fractional line in the cart leaves a fraction: whole units only
+    return left > 0 ? Math.floor(left) : 0
+}
+
 function _skip(id, name, reason) { return { productId: id, name: name, reason: reason } }
 
 // -> { lines, skipped }. `lines` is a NEW array of NEW objects (the input is never changed); `skipped` lists what was
@@ -111,14 +131,14 @@ function applyPlan(lines, plan, lookup) {
         var p = _productOf(lookup, id)
         if (!p) { skipped.push(_skip(id, id, "gone")); continue }
         var name = _str(p.name).length > 0 ? _str(p.name) : id
-        var cap = availableFor({ productId: id, stock: p.stock }, out)
+        var cap = _capOf(lookup, id, p, out)
         if (cap <= 0) { skipped.push(_skip(id, name, "out-of-stock")); continue }
         var at = _indexOf(out, id)
         var price = priceOf(p)
         if (at < 0 && price === null) { skipped.push(_skip(id, name, "no-price")); continue }
         var take = Math.min(e.qty, cap)
         if (take < e.qty) skipped.push({ productId: id, name: name, reason: "reduced", added: take, asked: e.qty })
-        if (at >= 0) out[at].qty = _whole(out[at].qty) + take    // a line with no usable quantity counts as 0, never NaN
+        if (at >= 0) out[at].qty = _held(out[at].qty) + take    // a line with no usable quantity counts as 0, never NaN; a fraction is kept
         else out.push({ name: name, qty: take, price: price, productId: id, discountType: "flat", discountValue: 0 })
     }
     return { lines: out, skipped: skipped }

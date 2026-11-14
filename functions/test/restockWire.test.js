@@ -319,6 +319,8 @@ test("W-20 DataModel routes both Gateway signals for opType restock, announces a
     assert.match(dm, /InventoryStore\.restockPendingSaleMessage/);
     // S3: the New Order picker hides it through the sheet's hook (the old combo loop is gone)
     assert.match(rd("pages/NewOrderDialog.qml"), /hasQueuedRestock: function\(id\) \{ return InventoryStore\.hasQueuedRestock\(id\) \}/);
+    // S4: and the Edit Order picker the same way (its combo, which never had this guard, is gone)
+    assert.match(rd("pages/OrderDetailDialog.qml"), /hasQueuedRestock: function\(id\) \{ return InventoryStore\.hasQueuedRestock\(id\) \}/);
     assert.match(rd("pages/RestockDialog.qml"), /function\(ok, queued, refusal\)/);
     assert.doesNotMatch(rd("pages/RestockDialog.qml"), /supplierFailed/);
     assert.doesNotMatch(dm, /supplierFailed/);

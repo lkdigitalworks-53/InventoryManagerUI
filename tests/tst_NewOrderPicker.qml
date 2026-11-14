@@ -413,4 +413,56 @@ TestCase {
             if (n > 1) ok(note.indexOf("(+" + (n - 1) + " more)") > 0, "wrong count: " + note);
         }
     }
+
+    function test_NOP_28_applyplan_uses_lookup_availableof_when_the_dialog_supplies_i() {
+        const l = lk([prod("A", 2)]);
+        const seen = [];
+        l.availableOf = function(id, p, out) { seen.push([id, p.stock, out.length]); return 7; };
+        const r = NP.applyPlan([line("A", 1)], plan([], [e("A", 9), e("A", 9)]), l);
+        // stock is only 2, the hook says 7: the first entry takes 7, the second sees the same answer from the hook again
+        eq(r.lines[0].qty, 1 + 7 + 7);
+        eq(seen, [["A", 2, 1], ["A", 2, 1]]);
+    }
+
+    function test_NOP_29_a_hook_answer_that_is_not_a_number_above_0_refuses_the_produ() {
+        for (const bad of [0, -3, NaN, Infinity, "5", undefined, null, {}]) {
+            const l = lk([prod("A", 9)]);
+            l.availableOf = function() { return bad; };
+            const r = NP.applyPlan([], plan([e("A", 1)]), l);
+            eq(r.lines, []);
+            eq(r.skipped.map(function(s) { return s.reason; }), ["out-of-stock"]);
+        }
+        const f = lk([prod("A", 9)]);
+        f.availableOf = function() { return 2.9; };
+        eq(NP.applyPlan([], plan([e("A", 5)]), f).lines[0].qty, 2);
+        const t = lk([prod("A", 9)]);
+        t.availableOf = function() { throw new Error("x"); };
+        const r2 = NP.applyPlan([], plan([e("A", 1)]), t);
+        eq(r2.lines, []);
+        eq(r2.skipped.map(function(s) { return s.reason; }), ["out-of-stock"]);
+    }
+
+    function test_NOP_30_without_the_hook_nothing_changes_a_hook_that_is_not_a_functi() {
+        for (const notFn of [undefined, null, 5, "x", {}]) {
+            const l = lk([prod("A", 4)]);
+            l.availableOf = notFn;
+            const r = NP.applyPlan([line("A", 3)], plan([], [e("A", 9)]), l);
+            eq(r.lines[0].qty, 4);
+            eq(r.skipped, [{ productId: "A", name: "Name A", reason: "reduced", added: 1, asked: 9 }]);
+        }
+    }
+
+    function test_NOP_31_a_bump_keeps_a_fractional_quantity_the_line_already_holds_a_() {
+        const r = NP.applyPlan([line("A", 2.5)], plan([], [e("A", 1)]), lk([prod("A", 10)]));
+        eq(r.lines[0].qty, 3.5);
+        eq(r.skipped, []);
+        for (const bad of [0, -3, NaN, undefined, "2", Infinity]) {
+            const r2 = NP.applyPlan([line("A", bad)], plan([], [e("A", 2)]), lk([prod("A", 10)]));
+            eq(r2.lines[0].qty, 2);
+        }
+        // stock 5, the line holds 2.5: 2 whole units are left, so a bump of 5 adds 2 and says so
+        const r3 = NP.applyPlan([line("A", 2.5)], plan([], [e("A", 5)]), lk([prod("A", 5)]));
+        eq(r3.lines[0].qty, 4.5);
+        eq(r3.skipped, [{ productId: "A", name: "Name A", reason: "reduced", added: 2, asked: 5 }]);
+    }
 }
