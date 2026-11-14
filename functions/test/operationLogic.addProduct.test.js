@@ -417,6 +417,45 @@ test("K-1 DOCUMENTED GAP (KNOWN-ISSUES, not new in AP1): an inventory create wit
     assert.equal(rowsOf(db).length, 0);
 });
 
+test("K-2 DOCUMENTED GAP (KNOWN-ISSUES 40): a damaged counter plus the surviving history of a deleted top product blocks EVERY add on the same id", async () => {
+    // PRD-006 was added and later deleted: its inventory doc is gone, but nothing deletes a product's `created` row or feed row.
+    // The counter doc is then damaged (the rules let members write `counters`), so the mint re-seeds from the inventory ids
+    // (highest PRD-005) and hands out PRD-006 AGAIN. `tx-c-{{prd}}` and `act-{{prd}}` are derived from that number, so the
+    // creates hit the old rows: 409 conflict, nothing is written, the counter stays damaged, and the next try mints PRD-006 again.
+    // Safe for the data (never an overwrite) but a dead end for the user. AP2 must derive those two ids from the operation, not
+    // from the product number alone, or this test is the warning that it did not.
+    const db = strictDb({
+        [T + "counters/products"]: { value: "oops" },
+        [T + "inventory/PRD-005"]: { productId: "PRD-005", name: "Five", stock: 1 },
+        [T + "transactions/tx-c-PRD-006"]: { txId: "tx-c-PRD-006", kind: "created" },
+        [T + "activity_log/act-PRD-006"]: { id: "act-PRD-006", kind: "product_added", title: "old" }
+    });
+    for (const attempt of ["1", "2", "3"]) {
+        const r = await run(db, body(addOps(), "addProduct", "try" + attempt));
+        assert.equal(r.ok, false, "attempt " + attempt);
+        assert.deepEqual([r.status, r.error, r.opIndex], [409, "conflict", 4], "attempt " + attempt + ": the `created` row is the first create that collides");
+    }
+    assert.equal(db.writes.length, 0, "no attempt wrote anything");
+    assert.deepEqual(db.store[T + "counters/products"], { value: "oops" }, "the damaged counter is never repaired, because nothing commits");
+});
+
+test("K-3 DOCUMENTED GAP (KNOWN-ISSUES 41): typed text is not escaped: a bound {{name}} inside a product name becomes the minted id, and the stock token inside it makes the whole add a 400", async () => {
+    // M6 keeps unbound {{x}} as typed text. A bound one is replaced in EVERY string of the doc, so a name typed as "{{prd}}" is stored as
+    // the id. And the title of the feed row may not hold the stock token (F3), so a name typed with it is refused at the feed row.
+    // AddProductPlan (AP2) must neutralise "{{" and "}}" in typed text; these two pins show what happens when it does not.
+    const typed = "Fresh {{prd}} {{zzz}}";
+    const db = withCounter(6);
+    const ops = addOps({ stock: 0, activity: activityOp({ title: "Product added: " + typed, subtitle: "stock 0" }) })
+        .map((o) => o.entity === "inventory" ? create("inventory", "{{prd}}", productDoc({ stock: 0, name: typed })) : o);
+    const r = await run(db, body(ops));
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(db.store[T + "inventory/PRD-007"].name, "Fresh PRD-007 {{zzz}}", "bound token replaced, unbound one kept");
+    assert.equal(db.store[T + "activity_log/act-PRD-007"].title, "Product added: Fresh PRD-007 {{zzz}}");
+
+    const refused = invalid(body(addOps({ activity: activityOp({ title: "Product added: Mix " + TOKEN }) })));
+    assert.deepEqual([refused.error, refused.opIndex], ["invalid-activity", 5]);
+});
+
 // ------------------------------------------------------------------ guards
 
 test("G-1 dormancy: no QML file sends the addProduct operation yet (AP3 removes this guard when it wires the client)", () => {
