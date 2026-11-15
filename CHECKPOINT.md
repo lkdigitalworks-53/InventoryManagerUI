@@ -16,7 +16,7 @@ AP1 server (merged #199). **AP2 client pure layer (THIS BRANCH, dormant):** keys
 - [x] 3. Phase 2 deep review, single-threaded. Read: `AddProductPlan.js`, the three helper diffs, the server `operationLogic.js` validator and apply path, `DocLimits`, both Node test files, the QML twin, design, test plan, all `tx-c-` / `act-` consumers. Domains 2-5 of the QML review (layout, loaders, delegates, states) are N/A: this PR has no visual QML. Chain probe: 4000 adversarial inputs through build, real validator, real apply, reflect, stored-doc round trip: 0 failures.
 - [x] 4. F1 FIXED (`49abb69`, pushed): a timestamp or day with only the right shape passed `build`; now a real instant (`_realTime`). Test first (red), then fix; 4 mutants (3 killed, 1 proven equivalent); QML twin rows added.
 - [x] 5. F2 FIXED (docs, this commit): the old add path never had the `{{prd}}` hole; KNOWN-ISSUES 41, STATUS and the test plan's on-device step corrected. Counts refreshed (1882, 43, 60, 68 rows, 39 mutants); KNOWN-ISSUES 46 records the sweep; design section 6 gets the `malformed-results` bullet; Skill 171 rule 5 extended.
-- [ ] 6. CI on the PR head after the docs push: read it and write the result into test plan section 5. If a QML twin row fails on the real engine, fix the row, not the planner, unless the planner is wrong.
+- [x] 6. CI READ on `49abb69` (code commit): all 4 test jobs success, incl. real QML Tests; deploy jobs skipped. Recorded in test plan section 5. Docs-only head `efd53fb` had no runs yet when read.
 - [ ] 7. Taher reviews PR #201, answers the grill questions, merges. Then AP3.
 
 ## Open (judged, not changed) - KNOWN-ISSUES 43-46
@@ -29,4 +29,4 @@ AP1 server (merged #199). **AP2 client pure layer (THIS BRANCH, dormant):** keys
 4. NEW: after a committed add whose answer fails `reflect`, should AP3 refresh and NOT offer retry (recommended), or show an error? See design section 6.
 
 ## NEXT (if this session stops)
-Read CI on the PR head; record it; then AP3 after #201 merges. Continue at the first unchecked step. Each commit is independent. Do not force-push again without Taher's instruction.
+Taher reviews and merges #201; then AP3. Continue at the first unchecked step. Each commit is independent. Do not force-push again without Taher's instruction.

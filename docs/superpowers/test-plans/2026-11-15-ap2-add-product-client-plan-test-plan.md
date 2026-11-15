@@ -49,4 +49,4 @@ The plan itself, the id from the answer, the photo, the offline refusal.
 
 ## 5. CI result
 PR #201 head `1a99696` (before the rebase and the sweep): QML Tests, Functions Tests, Firestore + Storage Rules Tests and E2E Tests all success; Deploy Check skipped (nothing to deploy).
-After the rebase onto #200 (`b211dcf`) and the PR #201 sweep (code `49abb69`, then the docs commit): the checks run on the PR; the result is recorded here when read (see the checkpoint). The new twin rows (10 refusals, one boundary test) are checked by CI's real qmltestrunner only.
+After the rebase onto #200 (`b211dcf`) and the PR #201 sweep (code `49abb69`, then the docs commit): READ 2026-11-16 on `49abb69` (the code commit): QML Tests success (the new twin rows, 10 refusals and one boundary test, passed on the REAL qmltestrunner), Functions Tests success, Firestore + Storage Rules Tests success, E2E Tests success, PR Test Summary Comment success; Deploy Check, Deploy to Firebase and Record Deployed Commit skipped (nothing to deploy). The docs-only commits after it (`efd53fb`) changed no code.
