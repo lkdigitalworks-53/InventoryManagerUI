@@ -55,4 +55,4 @@ Prerequisites: P1 an owner account and a staff-role account on the dev tenant; P
 `recordOperation` (order completion, restock), `recordMutationsBatch` (bulk edits), `recordMutation` (all single writes), staff management page.
 
 ## 5. CI result (fill after push)
-Pending.
+Head `c1b5a11` (PR #199 after merging main): Functions Tests, Firestore + Storage Rules Tests, QML Tests and E2E Tests all success, including the new emulator case; Deploy Check, Deploy to Firebase and Record Deployed Commit skipped (PR, not main). Local functions suite 1819/1819.
