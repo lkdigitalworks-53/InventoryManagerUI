@@ -23,6 +23,7 @@ const TWINS = [
     { node: "pickerRowGeometry.test.js", qml: "tst_PickerRowGeometry.qml", name: "PickerRowGeometry", helper: "PickerRowGeometry.js", alias: "PG" },
     { node: "pickerSheetModel.test.js", qml: "tst_PickerSheetModel.qml", name: "PickerSheetModel", helper: "PickerSheetModel.js", alias: "PM" },
     { node: "newOrderPicker.test.js", qml: "tst_NewOrderPicker.qml", name: "NewOrderPicker", helper: "NewOrderPicker.js", alias: "NP" },
+    { node: "editOrderPicker.test.js", qml: "tst_EditOrderPicker.qml", name: "EditOrderPicker", helper: "EditOrderPicker.js", alias: "EP" },
 ];
 
 function slug(title) {
