@@ -5023,5 +5023,6 @@ Rules:
 7. When two writers share a counter doc (the server mint and the client's single and bulk mints), extend the drift guard to pin BOTH client minters and mutation-test the guard (5 new mutants).
 8. A known hole that is not this slice's job is written as a test that pins today's behaviour and says so (K-1: a non-numeric stock leaves no ledger row; `recordMutation` has the same hole), so the day it is fixed the test flips on purpose.
 9. Deploy order is part of the design: server first, client later, and the PR says which slice a device test belongs to.
+10. An id derived from a COUNTER number is only as unique as the counter. When a counter can be damaged and re-seeded (here any member can write it) and the rows derived from it outlive the thing they describe (history of a deleted product), a deterministic id turns "never overwrite" into a permanent 409 on every retry. Derive such ids from the operation as well (its nonce), and pin the dead end as a test before the planner is built (K-2). Same for typed text that goes through a substitution grammar: neutralise the delimiters where the text is built (K-3).
 
 **The check:** can the server half be merged and deployed with the app untouched, and would a revert change nothing a user can see? If not, the slice is too big.

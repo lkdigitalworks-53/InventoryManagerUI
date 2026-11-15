@@ -83,3 +83,18 @@ AP2 to AP4 above. Also: `AddProductDialog`'s inline supplier row (AP3), imported
 2. D-AP-4: opening stock as `receipt` (taken) or a new `opening` kind (a P1 slice of its own, CA input needed).
 3. D-AP-1: server-first split (taken) or one big PR (rejected after #197).
 4. D-AP-6: no server shape check (taken), accepting that the planner tests are the only guard for the shape.
+5. D-AP-11 (section 8): derive the `created` row and feed row ids from the operation nonce (recommended), or keep them deterministic from the product number.
+6. D-AP-12 (section 8): neutralise `{{` / `}}` in typed text in the planner (recommended), or refuse such text in the dialog.
+
+## 8. Review addendum, 2026-11-15 (PR #199 sweep; two decisions for AP2, nothing in AP1's server code changes)
+
+The sweep read the server code against its connected code and RAN the full suite (1754/1754, 100% line, branch and function on both changed files), and found no defect in what AP1 adds. It found two consequences of the id design in section 2 that AP2 will build, pinned today as documented-gap tests (K-2, K-3) so they cannot be forgotten.
+
+**D-AP-11: the ids of the `created` row and the feed row.** Section 2 derives them from the product number alone (`tx-c-{{prd}}`, `act-{{prd}}`). A product number can be handed out twice: `counters/products` is writable by any member (rules tests), a damaged or deleted counter is re-seeded from the inventory ids, and a deleted top product leaves its history rows behind (nothing deletes them). Then every add collides on those rows (409, nothing written, same number minted on every retry) and the user is stuck until someone edits Firestore by hand (KNOWN-ISSUES 40, test K-2). Options:
+ - A (recommended): the AP2 planner puts the operation nonce into both ids (`tx-c-{{prd}}-<nonce>`, `act-{{prd}}-<nonce>`). Unique per operation, still stable on replay (same key, same ids; the replay marker answers anyway), `checkActivityOp` already accepts any `act-` id equal to `after.id`. Cost: ids a little longer and less readable; grep of `qml/` and `functions/` (2026-11-15): nothing reads a `tx-c-` prefix, and the only rule on an `act-` id is the server's `act-` prefix plus `id == entityId`, which a nonce suffix keeps.
+ - B: the server mint also probes the history ids. Rejected: couples the mint engine to the names of two other collections, for every future counter.
+ - C: product delete also deletes its history rows. Rejected: history is what the stock register and the Activity feed show for a deleted product.
+ - D: leave it. Rare (needs a damaged counter AND a deleted top product) but permanent and invisible to a shop owner.
+Why it is a decision and not a fix: the ids are built by AP2, not by AP1, and option A trades readable ids for robustness.
+
+**D-AP-12: typed text and the placeholder grammar.** The substitution replaces `{{name}}` in every string of the doc, and the feed title may not hold the stock token. A product typed as `{{prd}}` is stored as its own id; one typed with `{{$stock}}` makes the whole add a 400 (KNOWN-ISSUES 41, test K-3). Options: neutralise `{{` and `}}` in typed strings in the planner, for example `{ {` (recommended: the add always works, the text changes by one space in a case nobody types), or refuse such text in the dialog (the user sees an error for a name they may have pasted), or leave it. A server-side escape is rejected: it would change M6 for every op type.
