@@ -321,7 +321,7 @@ TestCase {
 
     function test_PICK_33_the_reasons_are_the_fixed_names_the_ui_will_show() {
         eq(PK.REASON, { pendingMint: "pending-mint", queuedRestock: "queued-restock", unsyncedEdit: "unsynced-edit",
-                        deleting: "deleting", outOfStock: "out-of-stock", orderFull: "order-full", unavailable: "unavailable" });
+                        deleting: "deleting", outOfStock: "out-of-stock", noPrice: "no-price", orderFull: "order-full", unavailable: "unavailable" });
     }
 
     function test_PICK_34_a_fresh_row_object_per_call() {
@@ -330,5 +330,76 @@ TestCase {
         ok(a !== b, "same row twice");
         a.maxQty = 99;
         eq(b.maxQty, 5);
+    }
+
+    function test_PICK_35_a_product_with_no_price_for_a_new_line_is_disabled_as_no_pri() {
+        const r = PK.classify(prod("A"), ctx({ hasPrice: () => false }));
+        eq(brief(r), { visibility: "disabled", reason: "no-price", available: 5, maxQty: 0 });
+        eq(r.inOrder, 0);
+    }
+
+    function test_PICK_36_a_priced_product_or_no_hasprice_hook_at_all_changes_nothing() {
+        eq(brief(PK.classify(prod("A"), ctx({ hasPrice: () => true }))), { visibility: "enabled", reason: "", available: 5, maxQty: 5 });
+        eq(brief(PK.classify(prod("A"), ctx())), { visibility: "enabled", reason: "", available: 5, maxQty: 5 });
+        eq(brief(PK.classify(prod("A"), ctx({ hasPrice: undefined }))), { visibility: "enabled", reason: "", available: 5, maxQty: 5 });
+        eq(brief(PK.classify(prod("A"), ctx({ hasPrice: "not a function" }))), { visibility: "enabled", reason: "", available: 5, maxQty: 5 });
+    }
+
+    function test_PICK_37_anything_that_is_not_truthy_from_hasprice_means_no_price_fai() {
+        const no = [false, 0, "", null, undefined, NaN];
+        for (let i = 0; i < no.length; ++i) {
+            const v = no[i];
+            eq(PK.classify(prod("A"), ctx({ hasPrice: () => v })).reason, "no-price");
+        }
+        const yes = [true, 1, "yes", {}, [], -1];
+        for (let j = 0; j < yes.length; ++j) {
+            const w = yes[j];
+            eq(PK.classify(prod("A"), ctx({ hasPrice: () => w })).visibility, "enabled");
+        }
+    }
+
+    function test_PICK_38_a_product_already_on_the_order_stays_addable_without_a_price() {
+        const r = PK.classify(prod("A"), ctx({ hasPrice: () => false, inOrderQty: () => 2 }));
+        eq(brief(r), { visibility: "enabled", reason: "", available: 5, maxQty: 5 });
+        eq(r.inOrder, 2);
+    }
+
+    function test_PICK_39_precedence_hidden_then_out_of_stock_then_no_price_then_order() {
+        eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, hasPendingMint: () => true })).reason, "pending-mint");
+        eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, hasQueuedRestock: () => true })).reason, "queued-restock");
+        eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, isDeleting: () => true })).reason, "deleting");
+        eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, unsyncedState: () => "parked" })).reason, "unsynced-edit");
+        eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, availableFor: () => 0 })).reason, "out-of-stock");
+        eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, lineLimitReached: true })).reason, "no-price");
+        eq(PK.classify(prod("A"), ctx({ hasPrice: () => true, lineLimitReached: true })).reason, "order-full");
+        // a draft quantity on a product that is not on the order does not make a missing price acceptable
+        eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, inDraft: () => 3 })).reason, "no-price");
+    }
+
+    function test_PICK_40_a_throwing_hasprice_disables_the_row_as_unavailable() {
+        eq(PK.classify(prod("A"), ctx({ hasPrice: () => { throw new Error("boom"); } })).reason, "unavailable");
+    }
+
+    function test_PICK_41_hasprice_is_asked_once_with_the_product_object_and_only_when() {
+        const asked = [];
+        const p = prod("A");
+        PK.classify(p, ctx({ hasPrice: (x) => { asked.push(x); return true; } }));
+        eq(asked.length, 1);
+        ok(asked[0] === p, "asked with a copy");
+        asked.length = 0;
+        const spy = (x) => { asked.push(x); return true; };
+        PK.classify(p, ctx({ hasPrice: spy, hasPendingMint: () => true }));
+        PK.classify(p, ctx({ hasPrice: spy, availableFor: () => 0 }));
+        PK.classify(p, ctx({ hasPrice: spy, inOrderQty: () => 1 }));
+        eq(asked.length, 0);
+    }
+
+    function test_PICK_42_summarize_keeps_a_no_price_row_disabled_never_counted_as_hid() {
+        const products = [prod("A"), prod("B")];
+        const c = ctx({ hasPrice: (p) => p.productId !== "B" });
+        const s = PK.summarize(products, c, {});
+        eq(s.rows.map((r) => r.reason), ["", "no-price"]);
+        eq(s.hiddenCount, 0);
+        eq(PK.summarize(products, c, { inStockOnly: true }).rows.map((r) => r.product.productId), ["A", "B"]);
     }
 }

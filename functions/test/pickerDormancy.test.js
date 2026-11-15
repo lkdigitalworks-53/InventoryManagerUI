@@ -37,7 +37,7 @@ const ALLOWED = new Set([
     "functions/test/newOrderPickerWiring.test.js", "tests/tst_NewOrderPicker.qml",
     // Slice S4 (Edit Order wired, on purpose): the dialog, its helper and their tests.
     "qml/pages/OrderDetailDialog.qml", "qml/helper/EditOrderPicker.js", "functions/test/editOrderPicker.test.js",
-    "functions/test/editOrderPickerWiring.test.js", "tests/tst_EditOrderPicker.qml",
+    "functions/test/editOrderPickerWiring.test.js", "tests/tst_EditOrderPicker.qml", "functions/test/pickerOrderE2eWiring.test.js",
 ]);
 
 test("DORM-01 nothing outside the helpers and their tests mentions them", () => {

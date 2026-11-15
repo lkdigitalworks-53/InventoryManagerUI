@@ -5050,3 +5050,30 @@ Rules:
 10. An id derived from a COUNTER number is only as unique as the counter. When a counter can be damaged and re-seeded (here any member can write it) and the rows derived from it outlive the thing they describe (history of a deleted product), a deterministic id turns "never overwrite" into a permanent 409 on every retry. Derive such ids from the operation as well (its nonce), and pin the dead end as a test before the planner is built (K-2). Same for typed text that goes through a substitution grammar: neutralise the delimiters where the text is built (K-3).
 
 **The check:** can the server half be merged and deployed with the app untouched, and would a revert change nothing a user can see? If not, the slice is too big.
+
+## Skill 169: Mirror an apply-time refusal as a disabled row reason with an optional hook, and dry-run a Node E2E offline before CI
+
+Learned in picker S5a (2026-11-15). Plan `docs/superpowers/plans/2026-11-15-product-picker-v2-s5a-no-price-and-e2e.md`.
+
+1. **A rule that refuses at apply time is a bug in the UI until the row says so.** `applyPlan` refused a new line with no price, but the sheet showed the row addable: the person tapped Add and got a toast. Fix by giving `classify` the same question, not a copy of the answer: an optional `hasPrice(p)` hook the dialogs fill with `NP.priceOf(p) !== null`. The helper stays store-free and cannot drift from `applyPlan`.
+2. **An optional hook defaults to "not checked", a present hook fails closed.** Absent: skip. Present and not truthy, or throwing: disable. Pin both (PICK-36, 37, 40) and pin that each dialog still supplies it by counting hooks (NOW-03, EOW-03 say seven).
+3. **Mirror the refusal at the same scope.** `applyPlan` refuses only a NEW line, so the reason applies only when `inOrder === 0`; disabling a bump would stop a person finishing an order whose product lost its price afterwards. Precedence: hidden, out of stock, no price, order full.
+4. **A new allow-list pin will fail on your own new test file.** `DORM-01` lists every file allowed to mention the picker helpers; add a new test or E2E file to it in the same commit.
+5. **No emulator, no excuse to skip the E2E dry run.** Put a throwaway `--require` hook in /tmp: stub `firebase-admin/app` and `firebase-admin/firestore` with the repo's strict in-memory double (`get/set/update/delete`, `listDocuments`) and replace `global.fetch` with the REAL `validateOperationRequest` + `applyOperation`. It proves the client logic and the operation shapes; it does not prove Firestore semantics, say so.
+6. **Clean up everything the real server writes, not just what you seeded.** A completion also writes `audit_log` rows and one `stock_movements` row per stock change, keyed by the request id. Delete them by the request-id prefix, and make the hook print leftovers on exit to prove it.
+7. **Commit and push after code and tests, before docs.** A chat turn can end at any tool call; the docs are the part that can be redone from the branch.
+
+
+## Skill 170: Two readers of one value must share one rule, and a sweep tests the SHAPES the rule is for, not the happy product
+
+Learned in the PR #200 sweep (picker S5a, 2026-11-15). Plan section "PR #200 sweep" in `docs/superpowers/plans/2026-11-15-product-picker-v2-s5a-no-price-and-e2e.md`.
+
+1. **When a feature makes a value decide something (here: can this row be added), find every other reader of that value.** `NewOrderPicker.priceOf` decided addability and the line price; `PickerSheetModel.priceOf` painted the row price and the total. They differed on `sellingPrice: null` with a legacy `price`: the row said 0, the order line was priced 3. The PR had a test that pinned the product as addable (NOW-17, product NUL) and never looked at the number next to it. Grep the value's name (`sellingPrice`), not the function, and list every reader.
+2. **Test the value shapes, not one example per branch.** `undefined`, `null`, `0`, `NaN`, negative, text, legacy-only, both missing. A table of shapes found the bug in one assertion (SHEET-44); a "legacy price" case that used `undefined` had passed for weeks.
+3. **Pin an invariant by brute force when two layers must agree.** "The row is never looser than the commit" is a property: enumerate price shapes x cart shapes, ask both layers, assert the implication (NOP-32). It also found the one place the layers differ (a cart line with no usable quantity) and pinned it as the safe direction.
+4. **A mutant that loosens the row must fail a test.** Disable the price check in `classify`: NOP-32 failed. Revert the display fix: SHEET-44 failed. Run both before trusting the new tests.
+5. **A test must not assert its own fixture.** `eq(noPrice.hasPrice(), false)` tested a lambda the test had just written. Read your assertions for the call that touches the code under test.
+6. **Recount, never carry a count.** The test plan said 1786, the PR said 1791, the run said 1791. Re-run, write the measured number (Skill rule from the learnings file).
+7. **A wrong committer email is a process finding, not a rewrite.** Say it in the PR notes; do not force-push a PR under review.
+
+**The check:** for the value, `grep` every reader; for each, feed the same eight shapes; for each decision made from it, name the test that fails when a reader changes.
