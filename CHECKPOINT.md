@@ -17,16 +17,17 @@ AP1 server (merged #199). **AP2 client pure layer (THIS BRANCH, dormant):** keys
 - [x] 4. F1 FIXED (`49abb69`, pushed): a timestamp or day with only the right shape passed `build`; now a real instant (`_realTime`). Test first (red), then fix; 4 mutants (3 killed, 1 proven equivalent); QML twin rows added.
 - [x] 5. F2 FIXED (docs, this commit): the old add path never had the `{{prd}}` hole; KNOWN-ISSUES 41, STATUS and the test plan's on-device step corrected. Counts refreshed (1882, 43, 60, 68 rows, 39 mutants); KNOWN-ISSUES 46 records the sweep; design section 6 gets the `malformed-results` bullet; Skill 171 rule 5 extended.
 - [x] 6. CI READ on `49abb69` (code commit): all 4 test jobs success, incl. real QML Tests; deploy jobs skipped. Recorded in test plan section 5. Docs-only head `efd53fb` had no runs yet when read.
-- [ ] 7. Taher reviews PR #201, answers the grill questions, merges. Then AP3.
+- [x] 7. Grill questions answered 2026-11-16 (recommendations taken, recorded in design, KNOWN-ISSUES 46a and above).
+- [ ] 8. Taher reviews and merges PR #201. Then AP3 (design section 6 is the checklist).
 
 ## Open (judged, not changed) - KNOWN-ISSUES 43-46
 43 `RestockPlan` accepts any non-empty `now` (recipe: AP2's `_realTime`). 44 dialog values the planner refuses = AP3 checklist. 46a `reflect` can refuse an answer the server has already committed: AP3 must define the dialog's behaviour. 46b restock REFUSES token-equal text, add NEUTRALISES it.
 
-## Grill questions for Taher (veto in the PR)
-1. D-AP2-2: planner refuses bad numbers and tax outside 0..100 (stricter than today). OK?
-2. D-AP2-5: typed text is trimmed before storing. OK?
-3. D-AP2-7: `created` row stores exact stock (old path rounded 2.5 to 2; the Purchased analytics sum `quantity` and `total` of `created` rows, so fractional stock now counts fully there).
-4. NEW: after a committed add whose answer fails `reflect`, should AP3 refresh and NOT offer retry (recommended), or show an error? See design section 6.
+## Decisions (Taher, 2026-11-16: "go as per recommendation")
+1. D-AP2-2 DECIDED: the planner refuses bad numbers and tax outside 0..100.
+2. D-AP2-5 DECIDED: typed text is trimmed before storing.
+3. D-AP2-7 DECIDED: the `created` row stores exact stock. AP3 checklist: check how the Purchased analytics (`BreakdownMath.js:209`, `TransactionStore.qml:430,444`) read a fractional `created` quantity.
+4. `malformed-results` after a committed add DECIDED: AP3 refreshes the product list from the server and offers no plain retry (a new tap = a new key = a second product). `reflect` is NOT made stricter.
 
 ## NEXT (if this session stops)
 Taher reviews and merges #201; then AP3. Continue at the first unchecked step. Each commit is independent. Do not force-push again without Taher's instruction.
