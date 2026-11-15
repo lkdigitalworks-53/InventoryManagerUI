@@ -74,6 +74,7 @@ BottomSheet {
         hasPendingMint: function(id) { return StockBatchStore.hasPendingMint(id) },
         hasQueuedRestock: function(id) { return InventoryStore.hasQueuedRestock(id) },
         unsyncedState: function(id) { return InventoryStore.syncStateOf(id) },
+        hasPrice: function(p) { return Picker.priceOf(p) !== null },
         inOrderQty: function(id) { return Picker.cartQty(dlg.selectedProducts, id) },
         availableFor: function(p) { return Picker.availableFor(p, dlg.selectedProducts) },
         commitCheck: function(plan) { return Picker.opsCheck(dlg.selectedProducts, plan, dlg._pickerLookup) }

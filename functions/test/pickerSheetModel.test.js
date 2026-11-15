@@ -1,5 +1,5 @@
 "use strict";
-// PickerSheetModel (qml/helper/PickerSheetModel.js). Cases SHEET-01..40, plan:
+// PickerSheetModel (qml/helper/PickerSheetModel.js). Cases SHEET-01..43, plan:
 // docs/superpowers/plans/2026-11-04-product-picker-v2-s2-sheet-component.md. The QML twin
 // tests/tst_PickerSheetModel.qml is derived from these bodies (PAIR-01 in pickerDormancy.test.js).
 const test = require("node:test");
@@ -101,6 +101,7 @@ test("SHEET-05 a pending mint, a queued restock, an unsynced edit and a delete i
 test("SHEET-05b a disabled row always has words, even for a reason code this file does not know", () => {
     eq(PM.reasonTextFor("out-of-stock"), "Out of stock");
     eq(PM.reasonTextFor("order-full"), "Order is full");
+    eq(PM.reasonTextFor("no-price"), "No selling price");
     eq(PM.reasonTextFor("unavailable"), "Not available right now");
     eq(PM.reasonTextFor("something-new"), "Not available right now");
     eq(PM.reasonTextFor(undefined), "Not available right now");
@@ -559,4 +560,28 @@ test("SHEET-40 seeded monkey, 300 rounds: the gate is open exactly when the draf
         ok(asked <= 1, "the hook was asked more than once in one build");
     }
     ok(seen.open > 20 && seen.refused > 20 && seen.empty > 5 && seen.full > 5 && seen.asked > 50, "the monkey never reached every outcome: " + FX.canon(seen));
+});
+
+// ---- S5a (2026-11-15): the hasPrice hook reaches the rows ----
+test("SHEET-41 a product with no price is shown disabled with words and a No price pill; the stock is not lost", () => {
+    const v = mk([prod("A", 5), prod("B", 5, { sellingPrice: undefined })], { hooks: hooks({ hasPrice: (p) => typeof p.sellingPrice === "number" }) });
+    eq([v.rows[0].canAdd, v.rows[0].reasonText, v.rows[0].pillLabel], [true, "", "5 pcs left"]);
+    eq([v.rows[1].canAdd, v.rows[1].reasonText, v.rows[1].pillStatus, v.rows[1].pillLabel, v.rows[1].maxQty, v.rows[1].atMax],
+       [false, "No selling price", "inactive", "No price", 0, false]);
+    eq(v.hiddenCount, 0);
+    eq(ids(mk([prod("A", 5), prod("B", 5)], { inStockOnly: true, hooks: hooks({ hasPrice: (p) => p.productId === "A" }) })), ["A", "B"]);
+});
+test("SHEET-42 without a hasPrice hook every row is as before, and a draft on a product that lost its price is dropped", () => {
+    eq(mk([prod("A", 5)]).rows[0].canAdd, true);
+    const v = mk([prod("A", 5), prod("B", 5)], { draft: { A: 2, B: 3 }, hooks: hooks({ hasPrice: (p) => p.productId === "A" }) });
+    eq(v.draft, { A: 2 });
+    eq(v.rows[1].qty, 0);
+    eq(v.canCommit.ok, true);
+});
+test("SHEET-43 a product already on the order stays addable when its price is gone, a throwing hasPrice disables only that row", () => {
+    const v = mk([prod("A", 5), prod("B", 5)], { hooks: hooks({ hasPrice: () => false, inOrderQty: (id) => (id === "A" ? 1 : 0) }) });
+    eq([v.rows[0].canAdd, v.rows[0].inOrderLabel], [true, "In this order: 1 pcs"]);
+    eq([v.rows[1].canAdd, v.rows[1].reasonText], [false, "No selling price"]);
+    const t = mk([prod("A", 5), prod("B", 5)], { hooks: hooks({ hasPrice: (p) => { if (p.productId === "B") throw new Error("x"); return true; } }) });
+    eq([t.rows[0].canAdd, t.rows[1].canAdd, t.rows[1].reasonText], [true, false, "Not available right now"]);
 });

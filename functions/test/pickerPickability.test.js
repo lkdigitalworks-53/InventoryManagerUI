@@ -1,5 +1,5 @@
 "use strict";
-// ProductPickability (qml/helper/ProductPickability.js). Cases PICK-01..34, plan:
+// ProductPickability (qml/helper/ProductPickability.js). Cases PICK-01..42, plan:
 // docs/superpowers/plans/2026-11-03-product-picker-v2-s1-pure-helpers.md. The QML twin
 // tests/tst_ProductPickability.qml is derived from these bodies (PAIR-01 in pickerDormancy.test.js).
 const test = require("node:test");
@@ -283,7 +283,7 @@ test("PICK-32 summarize keeps disabled rows and counts only hidden ones", () => 
 });
 test("PICK-33 the reasons are the fixed names the UI will show", () => {
     eq(PK.REASON, { pendingMint: "pending-mint", queuedRestock: "queued-restock", unsyncedEdit: "unsynced-edit",
-                    deleting: "deleting", outOfStock: "out-of-stock", orderFull: "order-full", unavailable: "unavailable" });
+                    deleting: "deleting", outOfStock: "out-of-stock", noPrice: "no-price", orderFull: "order-full", unavailable: "unavailable" });
 });
 test("PICK-34 a fresh row object per call", () => {
     const a = PK.classify(prod("A"), ctx());
@@ -291,4 +291,69 @@ test("PICK-34 a fresh row object per call", () => {
     ok(a !== b, "same row twice");
     a.maxQty = 99;
     eq(b.maxQty, 5);
+});
+
+// ---- S5a (2026-11-15): the optional hasPrice hook, KNOWN-ISSUES 23 ----
+test("PICK-35 a product with no price for a NEW line is disabled as no-price, keeps its stock, cannot be added", () => {
+    const r = PK.classify(prod("A"), ctx({ hasPrice: () => false }));
+    eq(brief(r), { visibility: "disabled", reason: "no-price", available: 5, maxQty: 0 });
+    eq(r.inOrder, 0);
+});
+test("PICK-36 a priced product, or no hasPrice hook at all, changes nothing", () => {
+    eq(brief(PK.classify(prod("A"), ctx({ hasPrice: () => true }))), { visibility: "enabled", reason: "", available: 5, maxQty: 5 });
+    eq(brief(PK.classify(prod("A"), ctx())), { visibility: "enabled", reason: "", available: 5, maxQty: 5 });
+    eq(brief(PK.classify(prod("A"), ctx({ hasPrice: undefined }))), { visibility: "enabled", reason: "", available: 5, maxQty: 5 });
+    eq(brief(PK.classify(prod("A"), ctx({ hasPrice: "not a function" }))), { visibility: "enabled", reason: "", available: 5, maxQty: 5 });
+});
+test("PICK-37 anything that is not truthy from hasPrice means no price (fail closed), any truthy value means priced", () => {
+    const no = [false, 0, "", null, undefined, NaN];
+    for (let i = 0; i < no.length; ++i) {
+        const v = no[i];
+        eq(PK.classify(prod("A"), ctx({ hasPrice: () => v })).reason, "no-price");
+    }
+    const yes = [true, 1, "yes", {}, [], -1];
+    for (let j = 0; j < yes.length; ++j) {
+        const w = yes[j];
+        eq(PK.classify(prod("A"), ctx({ hasPrice: () => w })).visibility, "enabled");
+    }
+});
+test("PICK-38 a product already on the order stays addable without a price: a bump never needs one", () => {
+    const r = PK.classify(prod("A"), ctx({ hasPrice: () => false, inOrderQty: () => 2 }));
+    eq(brief(r), { visibility: "enabled", reason: "", available: 5, maxQty: 5 });
+    eq(r.inOrder, 2);
+});
+test("PICK-39 precedence: hidden, then out of stock, then no price, then order full", () => {
+    const noPrice = { hasPrice: () => false };
+    eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, hasPendingMint: () => true })).reason, "pending-mint");
+    eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, unsyncedState: () => "parked" })).reason, "unsynced-edit");
+    eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, availableFor: () => 0 })).reason, "out-of-stock");
+    eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, lineLimitReached: true })).reason, "no-price");
+    eq(PK.classify(prod("A"), ctx({ hasPrice: () => true, lineLimitReached: true })).reason, "order-full");
+    // a draft quantity on a product that is not on the order does not make a missing price acceptable
+    eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, inDraft: () => 3 })).reason, "no-price");
+    eq(noPrice.hasPrice(), false);
+});
+test("PICK-40 a throwing hasPrice disables the row as unavailable", () => {
+    eq(PK.classify(prod("A"), ctx({ hasPrice: () => { throw new Error("boom"); } })).reason, "unavailable");
+});
+test("PICK-41 hasPrice is asked once, with the product object, and only when the row got that far", () => {
+    const asked = [];
+    const p = prod("A");
+    PK.classify(p, ctx({ hasPrice: (x) => { asked.push(x); return true; } }));
+    eq(asked.length, 1);
+    ok(asked[0] === p, "asked with a copy");
+    asked.length = 0;
+    const spy = (x) => { asked.push(x); return true; };
+    PK.classify(p, ctx({ hasPrice: spy, hasPendingMint: () => true }));
+    PK.classify(p, ctx({ hasPrice: spy, availableFor: () => 0 }));
+    PK.classify(p, ctx({ hasPrice: spy, inOrderQty: () => 1 }));
+    eq(asked.length, 0);
+});
+test("PICK-42 summarize keeps a no-price row, disabled, never counted as hidden, and the in-stock filter keeps it", () => {
+    const products = [prod("A"), prod("B")];
+    const c = ctx({ hasPrice: (p) => p.productId !== "B" });
+    const s = PK.summarize(products, c, {});
+    eq(s.rows.map((r) => r.reason), ["", "no-price"]);
+    eq(s.hiddenCount, 0);
+    eq(PK.summarize(products, c, { inStockOnly: true }).rows.map((r) => r.product.productId), ["A", "B"]);
 });

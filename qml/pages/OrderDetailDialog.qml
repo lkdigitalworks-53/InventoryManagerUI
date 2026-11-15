@@ -201,6 +201,7 @@ BottomSheet {
         hasPendingMint: function(id) { return StockBatchStore.hasPendingMint(id) },
         hasQueuedRestock: function(id) { return InventoryStore.hasQueuedRestock(id) },
         unsyncedState: function(id) { return InventoryStore.syncStateOf(id) },
+        hasPrice: function(p) { return NP.priceOf(p) !== null },
         inOrderQty: function(id) { return NP.cartQty(dlg._pickerLinesNow(), id) },
         availableFor: function(p) { return Edit.availableFor(p, dlg._pickerLinesNow(), dlg._pickerCtx()) },
         commitCheck: function(plan) { return Edit.commitCheck(dlg._pickerLinesNow(), plan, dlg._pickerCtx(), dlg._pickerLookup) }

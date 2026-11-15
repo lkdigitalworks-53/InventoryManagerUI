@@ -17,13 +17,17 @@
 //   availableFor(p)      stock the NEW lines may still use, never reduced by the draft (the draft is "N more"):
 //                        new order max(0, stock - cartQty); edit pending max(0, stock - used);
 //                        edit completed max(0, stock + originalQty - used), 0 if the product is gone.
+//   hasPrice(p)          optional (S5a, KNOWN-ISSUES 23): true when the product can start a NEW line, i.e. the dialogs'
+//                        NewOrderPicker.priceOf(p) !== null (a finite price >= 0; 0 is allowed). Absent: not checked here
+//                        (applyPlan still refuses the line, it stays the final gate). Present and false, or anything that
+//                        is not truthy: the row is disabled "no-price" while the product is not on the order yet (a bump of
+//                        an existing line never needs a price, applyPlan never touches a line's price).
 // Guards that stay in the dialog because they are about the ORDER, not the row: the order lock, `busy`,
-// the transaction store's hasMore refusal when editing a completed order, the booked-tax rule on re-add, and
-// a valid selling price (this helper does not look at prices).
+// the transaction store's hasMore refusal when editing a completed order and the booked-tax rule on re-add.
 
 var REASON = {
     pendingMint: "pending-mint", queuedRestock: "queued-restock", unsyncedEdit: "unsynced-edit",
-    deleting: "deleting", outOfStock: "out-of-stock", orderFull: "order-full", unavailable: "unavailable"
+    deleting: "deleting", outOfStock: "out-of-stock", noPrice: "no-price", orderFull: "order-full", unavailable: "unavailable"
 }
 
 function _isProduct(p) {
@@ -52,6 +56,7 @@ function classify(product, ctx) {
         row.inDraft = _whole(_call(c.inDraft, id, 0))
         row.available = _whole(_call(c.availableFor, product, 0))
         if (row.available <= 0) return _disable(row, REASON.outOfStock)
+        if (row.inOrder === 0 && !_call(c.hasPrice, product, true)) return _disable(row, REASON.noPrice)
         if (!!c.lineLimitReached && row.inOrder === 0 && row.inDraft === 0)
             return _disable(row, REASON.orderFull)
         row.maxQty = row.available

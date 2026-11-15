@@ -24,6 +24,7 @@
 
 var REASON_TEXT = {
     "out-of-stock": "Out of stock",
+    "no-price": "No selling price",
     "order-full": "Order is full",
     "unavailable": "Not available right now"
 }
@@ -82,6 +83,7 @@ function _ctx(hooks, orderLines, draft) {
         hasQueuedRestock: h.hasQueuedRestock,
         unsyncedState: h.unsyncedState,
         isDeleting: h.isDeleting,
+        hasPrice: h.hasPrice,
         inOrderQty: h.inOrderQty,
         availableFor: h.availableFor,
         inDraft: function(id) { return _has(draft, id) ? draft[id] : 0 },
@@ -99,6 +101,7 @@ function _unitOf(p) {
 function _pill(row, p, unit) {
     if (row.visibility !== "enabled") {
         if (row.reason === Pick.REASON.outOfStock) return { status: "out of stock", label: "Out of stock" }
+        if (row.reason === Pick.REASON.noPrice) return { status: "inactive", label: "No price" }
         if (row.reason === Pick.REASON.orderFull) return { status: "pending", label: "Order full" }
         return { status: "inactive", label: "Unavailable" }
     }

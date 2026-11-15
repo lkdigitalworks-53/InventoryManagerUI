@@ -113,6 +113,7 @@ TestCase {
     function test_SHEET_05b_a_disabled_row_always_has_words_even_for_a_reason_code_this_() {
         eq(PM.reasonTextFor("out-of-stock"), "Out of stock");
         eq(PM.reasonTextFor("order-full"), "Order is full");
+        eq(PM.reasonTextFor("no-price"), "No selling price");
         eq(PM.reasonTextFor("unavailable"), "Not available right now");
         eq(PM.reasonTextFor("something-new"), "Not available right now");
         eq(PM.reasonTextFor(undefined), "Not available right now");
@@ -595,5 +596,30 @@ TestCase {
             ok(asked <= 1, "the hook was asked more than once in one build");
         }
         ok(seen.open > 20 && seen.refused > 20 && seen.empty > 5 && seen.full > 5 && seen.asked > 50, "the monkey never reached every outcome: " + FX.canon(seen));
+    }
+
+    function test_SHEET_41_a_product_with_no_price_is_shown_disabled_with_words_and_a_n() {
+        const v = mk([prod("A", 5), prod("B", 5, { sellingPrice: undefined })], { hooks: hooks({ hasPrice: (p) => typeof p.sellingPrice === "number" }) });
+        eq([v.rows[0].canAdd, v.rows[0].reasonText, v.rows[0].pillLabel], [true, "", "5 pcs left"]);
+        eq([v.rows[1].canAdd, v.rows[1].reasonText, v.rows[1].pillStatus, v.rows[1].pillLabel, v.rows[1].maxQty, v.rows[1].atMax],
+           [false, "No selling price", "inactive", "No price", 0, false]);
+        eq(v.hiddenCount, 0);
+        eq(ids(mk([prod("A", 5), prod("B", 5)], { inStockOnly: true, hooks: hooks({ hasPrice: (p) => p.productId === "A" }) })), ["A", "B"]);
+    }
+
+    function test_SHEET_42_without_a_hasprice_hook_every_row_is_as_before_and_a_draft_o() {
+        eq(mk([prod("A", 5)]).rows[0].canAdd, true);
+        const v = mk([prod("A", 5), prod("B", 5)], { draft: { A: 2, B: 3 }, hooks: hooks({ hasPrice: (p) => p.productId === "A" }) });
+        eq(v.draft, { A: 2 });
+        eq(v.rows[1].qty, 0);
+        eq(v.canCommit.ok, true);
+    }
+
+    function test_SHEET_43_a_product_already_on_the_order_stays_addable_when_its_price_() {
+        const v = mk([prod("A", 5), prod("B", 5)], { hooks: hooks({ hasPrice: () => false, inOrderQty: (id) => (id === "A" ? 1 : 0) }) });
+        eq([v.rows[0].canAdd, v.rows[0].inOrderLabel], [true, "In this order: 1 pcs"]);
+        eq([v.rows[1].canAdd, v.rows[1].reasonText], [false, "No selling price"]);
+        const t = mk([prod("A", 5), prod("B", 5)], { hooks: hooks({ hasPrice: (p) => { if (p.productId === "B") throw new Error("x"); return true; } }) });
+        eq([t.rows[0].canAdd, t.rows[1].canAdd, t.rows[1].reasonText], [true, false, "Not available right now"]);
     }
 }

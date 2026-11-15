@@ -53,18 +53,19 @@ test("EOW-02 the dialog declares one ProductPickerSheet and binds all four input
         assert.ok(body.includes(line), "missing: " + line);
 });
 
-test("EOW-03 the hooks are the six the helpers expect, each wired to the store or helper that owns the rule, and no isDeleting", () => {
+test("EOW-03 the hooks are the seven the helpers expect, each wired to the store or helper that owns the rule, and no isDeleting", () => {
     const hooks = literal(CODE, "readonly property var _pickerHooks", "{", "}");
     const expected = {
         hasPendingMint: "StockBatchStore.hasPendingMint(id)",
         hasQueuedRestock: "InventoryStore.hasQueuedRestock(id)",
+        hasPrice: "NP.priceOf(p) !== null",
         unsyncedState: "InventoryStore.syncStateOf(id)",
         inOrderQty: "NP.cartQty(dlg._pickerLinesNow(), id)",
         availableFor: "Edit.availableFor(p, dlg._pickerLinesNow(), dlg._pickerCtx())",
         commitCheck: "Edit.commitCheck(dlg._pickerLinesNow(), plan, dlg._pickerCtx(), dlg._pickerLookup)"
     };
     for (const k of Object.keys(expected)) assert.ok(new RegExp(k + ":\\s*function\\([a-z]+\\)\\s*\\{\\s*return " + expected[k].replace(/[().]/g, "\\$&") + "\\s*\\}").test(hooks), k);
-    assert.equal((hooks.match(/\w+:\s*function/g) || []).length, 6);
+    assert.equal((hooks.match(/\w+:\s*function/g) || []).length, 7);
     assert.ok(!/isDeleting/.test(hooks));
     const lookup = literal(CODE, "readonly property var _pickerLookup", "{", "}");
     assert.ok(/productOf:\s*function\(id\)\s*\{\s*return InventoryStore\.getById\(id\)\s*\}/.test(lookup));
@@ -300,4 +301,26 @@ test("EOW-19 PR #196 second sweep: the dialog imports both helpers once each, Ed
     const g = dialogGlue(world, [row("A", NaN), row("C", 1)], "pending");
     g.apply({ adds: [], bumps: [{ productId: "C", qty: 1 }] });
     assert.deepEqual(plain(g.model.rows.map((r) => [r.productId, Number.isNaN(r.quantity) ? "NaN" : r.quantity])), [["A", "NaN"], ["C", 2]]);
+});
+
+// ---- S5a (2026-11-15): the no-price row reason, run through the dialog's real hook literal ----
+test("EOW-20 S5a: the real hooks disable a product that cannot start a line, on a pending and on a completed order, and a row already on the order can still be bumped", () => {
+    const base = { category: "X", stock: 5, sku: "S" };
+    const world = fakeWorld({ products: [
+        Object.assign({ productId: "OK", name: "Ok", sellingPrice: 10 }, base),
+        Object.assign({ productId: "FREE", name: "Free", sellingPrice: 0 }, base),
+        Object.assign({ productId: "OLD", name: "Old", price: 4 }, base),
+        Object.assign({ productId: "NONE", name: "None" }, base),
+        Object.assign({ productId: "NAN", name: "Nan", sellingPrice: NaN }, base)
+    ] });
+    for (const status of ["pending", "completed"]) {
+        const g = dialogGlue(world, [], status, []);
+        const v = viewOf(g, world, {});
+        assert.deepEqual(plain(v.rows.map((r) => [r.productId, r.canAdd, r.reasonText])), [
+            ["OK", true, ""], ["FREE", true, ""], ["OLD", true, ""], ["NONE", false, "No selling price"], ["NAN", false, "No selling price"]], status);
+    }
+    const g2 = dialogGlue(world, [row("NONE", 1, { price: 3 })], "pending");
+    assert.deepEqual(plain(viewOf(g2, world, {}).rows.filter((r) => r.productId === "NONE").map((r) => [r.canAdd, r.maxQty])), [[true, 4]]);
+    g2.apply({ adds: [], bumps: [{ productId: "NONE", qty: 2 }] });
+    assert.deepEqual(plain(g2.model.rows.map((r) => [r.productId, r.quantity, r.price])), [["NONE", 3, 3]]);
 });

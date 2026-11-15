@@ -21,8 +21,8 @@ import "../helper/PickerSheetModel.js" as Model
 //
 // What the dialog supplies (all plain values, so the sheet knows no store):
 //   products    the catalog array (e.g. InventoryStore.products)
-//   hooks       { hasPendingMint(id), hasQueuedRestock(id), unsyncedState(id), isDeleting(id), inOrderQty(id),
-//                 availableFor(product) }  closures; see ProductPickability.js for the contract
+//   hooks       { hasPendingMint(id), hasQueuedRestock(id), unsyncedState(id), isDeleting(id), hasPrice(product) [optional],
+//                 inOrderQty(id), availableFor(product) }  closures; see ProductPickability.js for the contract
 //   orderLines  the order's current lines (for the line cap and for adds versus bumps)
 //   revision    an int the dialog bumps when anything the hooks read may have changed, e.g. the sum of the store
 //               revisions. The sheet re-reads on every change (Skill 78). See the S3 note on pending mints below.
