@@ -32,5 +32,6 @@ Continue at the first unchecked step. Each commit is independent. Never force-pu
 - [x] +K-2, +K-3 pinned (KNOWN-ISSUES 40, 41; design D-AP-11, D-AP-12; Skill 168 rule 10; AGENTS carry-over). Both are AP2's to settle.
 - [x] FIXED: `recordOperation` and `recordMutationsBatch` had no owner/admin gate for staff delete and the `removed_staff` tombstone (KNOWN-ISSUES 42). One shared helper in `functions/index.js`, +10 handler tests (6 failed on the unfixed code), +1 emulator case (CI only), test plan `2026-11-15-owner-only-writes-test-plan.md`. Functions 1766/1766.
 - [ ] CI result on the new head (fill in the test plans).
-- [ ] Taher: D-AP-7, D-AP-4 (earlier), D-AP-11, D-AP-12 (new). Deploy of this PR now touches live endpoints (`index.js`), so it is no longer "dormant only": the role gate goes live on merge.
+- [x] Taher decided 2026-11-15 ("go with recommended"): D-AP-7 refuse offline, D-AP-4 `receipt`, D-AP-8 photo from the live answer, D-AP-11 nonce in the ids, D-AP-12 neutralise in the planner. Contract for AP2 = design section 9.
+- [ ] Next: AP2 client planner (dormant) after this PR merges, or stacked on it. Deploy of this PR now touches live endpoints (`index.js`), so it is no longer "dormant only": the role gate goes live on merge.
 

@@ -79,6 +79,8 @@ AP2 to AP4 above. Also: `AddProductDialog`'s inline supplier row (AP3), imported
 
 ## 7. Questions Taher would be grilled on (recommendation taken above; veto in the PR)
 
+**DECIDED 2026-11-15 by Taher: "go with recommended" on every open question below, and on D-AP-8.** D-AP-7 = A (refuse offline, clear text). D-AP-4 = opening stock stays a `receipt`. D-AP-8 = photo attached from the live answer only. D-AP-11 = A (the nonce goes into the `created` row and feed row ids). D-AP-12 = neutralise `{{` and `}}` in typed text in the planner. D-AP-1 and D-AP-6 stay as taken. Nothing left open for AP2 and AP3 design; the items are the contract for AP2's tests (below).
+
 1. D-AP-7: offline add. A (refuse, recommended), B (queue, product appears later), C (provisional id, rejected).
 2. D-AP-4: opening stock as `receipt` (taken) or a new `opening` kind (a P1 slice of its own, CA input needed).
 3. D-AP-1: server-first split (taken) or one big PR (rejected after #197).
@@ -98,3 +100,10 @@ The sweep read the server code against its connected code and RAN the full suite
 Why it is a decision and not a fix: the ids are built by AP2, not by AP1, and option A trades readable ids for robustness.
 
 **D-AP-12: typed text and the placeholder grammar.** The substitution replaces `{{name}}` in every string of the doc, and the feed title may not hold the stock token. A product typed as `{{prd}}` is stored as its own id; one typed with `{{$stock}}` makes the whole add a 400 (KNOWN-ISSUES 41, test K-3). Options: neutralise `{{` and `}}` in typed strings in the planner, for example `{ {` (recommended: the add always works, the text changes by one space in a case nobody types), or refuse such text in the dialog (the user sees an error for a name they may have pasted), or leave it. A server-side escape is rejected: it would change M6 for every op type.
+
+## 9. Decided 2026-11-15: what AP2 must build and test (contract, from D-AP-11 and D-AP-12)
+
+- **Ids (D-AP-11 = A).** `AddProductPlan.build` writes the `created` transaction id as `tx-c-{{prd}}-<nonce>` and the feed row id as `act-{{prd}}-<nonce>` (and `after.id` / `after.txId` the same), where `<nonce>` is the operation nonce `OperationKeys.addProductKey` already owns, so a replay of the same operation gets the same ids and a new operation never collides with a deleted product's leftover rows. `checkActivityOp` already accepts any `act-` id equal to `after.id`. Planner tests: two adds that mint the same product number (counter reset) produce different ids; a replay produces identical ids; K-2's collision case no longer ends in 409 once the ids carry the nonce (an AP1-level fixture with the new ids must succeed).
+- **Typed text (D-AP-12).** The planner passes every user-typed string (name, SKU, description, supplier text, notes) through one `neutralisePlaceholders` helper that turns `{{` into `{ {` and `}}` into `} }`, before the doc and the feed row are built. Planner tests: a name typed `{{prd}}`, `{{$stock}}` and `}}{{` is stored with the one-space change and never as an id, a stock token or a 400; ordinary text, including a single `{` or `}`, is byte-identical.
+- K-2 and K-3 stay as AP1 server tests: they pin what the server does on its own, and the planner tests above prove it never sends such input.
+
