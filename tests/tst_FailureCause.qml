@@ -304,4 +304,36 @@ TestCase {
         compare(b.text, "The server cannot accept this request. This is an app problem, please report it (" + data.code + ")")
         compare(a.text, b.text)
     }
+
+    // ── add product (atomic-ops AP2) ───────────────────────────────────────
+
+    function test_A1_forAddProduct_person_facing_codes() {
+        var c = FC.forAddProduct({ error: "conflict" }, "Tomato")
+        compare(c.kind, "conflict")
+        verify(c.text.indexOf("Tomato: ") === 0)
+        verify(c.text.indexOf("Nothing was added") > 0)
+        verify(FC.forAddProduct({ error: "conflict" }, "").text.indexOf("Tomato") < 0)
+        var m = FC.forAddProduct({ error: "mint-exhausted" }, "x")
+        compare(m.kind, "limit")
+        verify(m.text.indexOf("product number") > 0)
+        compare(FC.forAddProduct({ error: "request-id-in-use" }, "x").kind, "duplicate")
+    }
+
+    function test_A2_forAddProduct_codes_an_add_can_never_meet_are_app_problems() {
+        var codes = ["not-found", "insufficient-quantity", "operation-too-large", "invalid-activity", "unbound-placeholder"]
+        for (var i = 0; i < codes.length; ++i) {
+            var r = FC.forAddProduct({ error: codes[i] }, "x")
+            compare(r.kind, "bug", codes[i])
+            verify(r.text.indexOf("(" + codes[i] + ")") > 0, codes[i])
+        }
+    }
+
+    function test_A3_forAddProduct_never_returns_empty_text_and_unknown_codes_stay_unknown() {
+        var junk = [null, undefined, 0, "", "x", [], {}, { error: 5 }, { error: {} }, { error: "  " }, { error: "brand-new-code" }]
+        for (var i = 0; i < junk.length; ++i) {
+            var r = FC.forAddProduct(junk[i], junk[i])
+            verify(typeof r.text === "string" && r.text.length > 0, "case " + i)
+        }
+        compare(FC.forAddProduct({ error: "brand-new-code" }, "x").kind, "unknown")
+    }
 }

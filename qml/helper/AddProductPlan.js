@@ -22,6 +22,9 @@ var TOK_SUP = "{{sup}}"
 var TOK_BAT = "{{batch}}"
 
 var _DATE = /^\d{4}-\d{2}-\d{2}$/
+// What Date.toISOString() gives. Stricter than the restock planner's "non-empty": `now` is stored in four docs, so a
+// string that is not a timestamp (or holds `{{`) must never get that far.
+var _ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/
 var _PREFIX = "addProduct:"
 
 function _refuse(reason) { return { ok: false, reason: reason } }
@@ -61,7 +64,7 @@ function _nonceOf(key) { return key.substring(_PREFIX.length) }
 //   stock          finite number >= 0 (the opening stock; 0 = no batch);  minStock finite >= 0
 //   unitCost       finite number >= 0 (cost of the opening batch; the caller resolves the default first)
 //   supplier       null (none) | { id } (a known supplier) | { newName } (create one inside the operation)
-//   now            ISO timestamp, date "yyyy-MM-dd" (the caller formats the local date)
+//   now            ISO timestamp (Date.toISOString()), date "yyyy-MM-dd" (the caller formats the local date)
 // }
 // Returns { ok: true, key, opType: "addProduct", ops, at }  (`at` = index of each op, -1 when absent)
 //      or { ok: false, reason } with reason one of: bad-key, bad-name, bad-price, bad-tax, bad-stock, bad-cost,
@@ -77,7 +80,7 @@ function build(input) {
     // Each factor is finite but the product can overflow (1e308 * 5): JSON turns Infinity into null and the stored
     // `total` would break every sum over the history. Whichever factor is the huge one, it is a cost problem.
     if (!_isNum(inp.unitCost) || inp.unitCost < 0 || !_isNum(inp.stock * inp.unitCost)) return _refuse("bad-cost")
-    if (typeof inp.now !== "string" || inp.now.length === 0 || typeof inp.date !== "string" || !_DATE.test(inp.date))
+    if (typeof inp.now !== "string" || !_ISO.test(inp.now) || typeof inp.date !== "string" || !_DATE.test(inp.date))
         return _refuse("bad-time")
 
     var sup = inp.supplier
@@ -89,7 +92,8 @@ function build(input) {
             newName = _typed(sup.newName)
             if (newName.length === 0) return _refuse("bad-supplier")
             supplierId = TOK_SUP
-        } else if (typeof sup.id === "string" && sup.id.length > 0) {
+        } else if (typeof sup.id === "string" && sup.id.length > 0 && sup.id.indexOf("{{") < 0 && sup.id.indexOf("}}") < 0) {
+            // A known id comes from the supplier store; one holding a brace pair is no id (the server would rewrite it).
             supplierId = sup.id
         } else {
             return _refuse("bad-supplier")
