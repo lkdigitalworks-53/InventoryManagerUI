@@ -323,15 +323,15 @@ test("PICK-38 a product already on the order stays addable without a price: a bu
     eq(r.inOrder, 2);
 });
 test("PICK-39 precedence: hidden, then out of stock, then no price, then order full", () => {
-    const noPrice = { hasPrice: () => false };
     eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, hasPendingMint: () => true })).reason, "pending-mint");
+    eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, hasQueuedRestock: () => true })).reason, "queued-restock");
+    eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, isDeleting: () => true })).reason, "deleting");
     eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, unsyncedState: () => "parked" })).reason, "unsynced-edit");
     eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, availableFor: () => 0 })).reason, "out-of-stock");
     eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, lineLimitReached: true })).reason, "no-price");
     eq(PK.classify(prod("A"), ctx({ hasPrice: () => true, lineLimitReached: true })).reason, "order-full");
     // a draft quantity on a product that is not on the order does not make a missing price acceptable
     eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, inDraft: () => 3 })).reason, "no-price");
-    eq(noPrice.hasPrice(), false);
 });
 test("PICK-40 a throwing hasPrice disables the row as unavailable", () => {
     eq(PK.classify(prod("A"), ctx({ hasPrice: () => { throw new Error("boom"); } })).reason, "unavailable");

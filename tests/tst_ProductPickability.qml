@@ -365,15 +365,15 @@ TestCase {
     }
 
     function test_PICK_39_precedence_hidden_then_out_of_stock_then_no_price_then_order() {
-        const noPrice = { hasPrice: () => false };
         eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, hasPendingMint: () => true })).reason, "pending-mint");
+        eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, hasQueuedRestock: () => true })).reason, "queued-restock");
+        eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, isDeleting: () => true })).reason, "deleting");
         eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, unsyncedState: () => "parked" })).reason, "unsynced-edit");
         eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, availableFor: () => 0 })).reason, "out-of-stock");
         eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, lineLimitReached: true })).reason, "no-price");
         eq(PK.classify(prod("A"), ctx({ hasPrice: () => true, lineLimitReached: true })).reason, "order-full");
         // a draft quantity on a product that is not on the order does not make a missing price acceptable
         eq(PK.classify(prod("A"), ctx({ hasPrice: () => false, inDraft: () => 3 })).reason, "no-price");
-        eq(noPrice.hasPrice(), false);
     }
 
     function test_PICK_40_a_throwing_hasprice_disables_the_row_as_unavailable() {

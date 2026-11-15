@@ -1,5 +1,5 @@
 "use strict";
-// PickerSheetModel (qml/helper/PickerSheetModel.js). Cases SHEET-01..43, plan:
+// PickerSheetModel (qml/helper/PickerSheetModel.js). Cases SHEET-01..44, plan:
 // docs/superpowers/plans/2026-11-04-product-picker-v2-s2-sheet-component.md. The QML twin
 // tests/tst_PickerSheetModel.qml is derived from these bodies (PAIR-01 in pickerDormancy.test.js).
 const test = require("node:test");
@@ -584,4 +584,19 @@ test("SHEET-43 a product already on the order stays addable when its price is go
     eq([v.rows[1].canAdd, v.rows[1].reasonText], [false, "No selling price"]);
     const t = mk([prod("A", 5), prod("B", 5)], { hooks: hooks({ hasPrice: (p) => { if (p.productId === "B") throw new Error("x"); return true; } }) });
     eq([t.rows[0].canAdd, t.rows[1].canAdd, t.rows[1].reasonText], [true, false, "Not available right now"]);
+});
+// PR #200 sweep: the display price must come from the same place as the price the order line gets.
+test("SHEET-44 the row price and the draft total use the legacy price when sellingPrice is null or missing, as the order line does", () => {
+    const products = [
+        prod("A", 9, { sellingPrice: null, price: 3 }),
+        prod("B", 9, { sellingPrice: undefined, price: 4 }),
+        prod("C", 9, { sellingPrice: 0, price: 5 }),
+        prod("D", 9, { sellingPrice: null, price: null }),
+        prod("E", 9, { sellingPrice: NaN, price: 6 })
+    ];
+    const v = mk(products, { draft: { A: 2, B: 1 } });
+    eq(v.rows.map((r) => r.price), [3, 4, 0, 0, 0]);
+    eq(v.totals.amount, 10);
+    eq(PM.priceOf(null), 0);
+    eq(PM.priceOf({ sellingPrice: null, price: 3 }), 3);
 });

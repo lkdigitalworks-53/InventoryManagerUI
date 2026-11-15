@@ -41,9 +41,13 @@ function reasonTextFor(reason) {
     return _has(REASON_TEXT, reason) ? REASON_TEXT[reason] : REASON_TEXT.unavailable
 }
 
+// The DISPLAY price of a row and of the draft total. Same source as the price a NEW order line gets
+// (NewOrderPicker.priceOf): sellingPrice, else the legacy price when sellingPrice is missing OR null. A product with no
+// usable price shows 0 here (its row is disabled "no-price" and cannot be added). PR #200 sweep: null used to skip the
+// legacy price, so the sheet showed 0 and totalled 0 for a line that the order then priced at the legacy price.
 function priceOf(product) {
     if (!product || typeof product !== "object") return 0
-    var p = (product.sellingPrice !== undefined) ? product.sellingPrice : product.price
+    var p = (product.sellingPrice !== undefined && product.sellingPrice !== null) ? product.sellingPrice : product.price
     return (typeof p === "number" && isFinite(p) && p > 0) ? p : 0
 }
 

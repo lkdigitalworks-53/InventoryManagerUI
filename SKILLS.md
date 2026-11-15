@@ -5063,3 +5063,17 @@ Learned in picker S5a (2026-11-15). Plan `docs/superpowers/plans/2026-11-15-prod
 6. **Clean up everything the real server writes, not just what you seeded.** A completion also writes `audit_log` rows and one `stock_movements` row per stock change, keyed by the request id. Delete them by the request-id prefix, and make the hook print leftovers on exit to prove it.
 7. **Commit and push after code and tests, before docs.** A chat turn can end at any tool call; the docs are the part that can be redone from the branch.
 
+
+## Skill 170: Two readers of one value must share one rule, and a sweep tests the SHAPES the rule is for, not the happy product
+
+Learned in the PR #200 sweep (picker S5a, 2026-11-15). Plan section "PR #200 sweep" in `docs/superpowers/plans/2026-11-15-product-picker-v2-s5a-no-price-and-e2e.md`.
+
+1. **When a feature makes a value decide something (here: can this row be added), find every other reader of that value.** `NewOrderPicker.priceOf` decided addability and the line price; `PickerSheetModel.priceOf` painted the row price and the total. They differed on `sellingPrice: null` with a legacy `price`: the row said 0, the order line was priced 3. The PR had a test that pinned the product as addable (NOW-17, product NUL) and never looked at the number next to it. Grep the value's name (`sellingPrice`), not the function, and list every reader.
+2. **Test the value shapes, not one example per branch.** `undefined`, `null`, `0`, `NaN`, negative, text, legacy-only, both missing. A table of shapes found the bug in one assertion (SHEET-44); a "legacy price" case that used `undefined` had passed for weeks.
+3. **Pin an invariant by brute force when two layers must agree.** "The row is never looser than the commit" is a property: enumerate price shapes x cart shapes, ask both layers, assert the implication (NOP-32). It also found the one place the layers differ (a cart line with no usable quantity) and pinned it as the safe direction.
+4. **A mutant that loosens the row must fail a test.** Disable the price check in `classify`: NOP-32 failed. Revert the display fix: SHEET-44 failed. Run both before trusting the new tests.
+5. **A test must not assert its own fixture.** `eq(noPrice.hasPrice(), false)` tested a lambda the test had just written. Read your assertions for the call that touches the code under test.
+6. **Recount, never carry a count.** The test plan said 1786, the PR said 1791, the run said 1791. Re-run, write the measured number (Skill rule from the learnings file).
+7. **A wrong committer email is a process finding, not a rewrite.** Say it in the PR notes; do not force-push a PR under review.
+
+**The check:** for the value, `grep` every reader; for each, feed the same eight shapes; for each decision made from it, name the test that fails when a reader changes.

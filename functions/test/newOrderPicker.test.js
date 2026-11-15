@@ -1,5 +1,5 @@
 "use strict";
-// NewOrderPicker (qml/helper/NewOrderPicker.js). Cases NOP-01..27 and NOP-28..30, plan:
+// NewOrderPicker (qml/helper/NewOrderPicker.js). Cases NOP-01..27 and NOP-28..32, plan:
 // docs/superpowers/plans/2026-11-11-product-picker-v2-s3-new-order.md. The QML twin tests/tst_NewOrderPicker.qml is
 // derived from these bodies (PAIR-01 in pickerDormancy.test.js). The carried requirements this closes (dry run,
 // valid price, id matching) are in docs/superpowers/KNOWN-ISSUES.md, "Product picker v2: carried requirements".
@@ -459,4 +459,39 @@ test("NOP-31 a bump keeps a fractional quantity the line already holds; a line w
     const r3 = NP.applyPlan([line("A", 2.5)], plan([], [e("A", 5)]), lk([prod("A", 5)]));
     eq(r3.lines[0].qty, 4.5);
     eq(r3.skipped, [{ productId: "A", name: "Name A", reason: "reduced", added: 2, asked: 5 }]);
+});
+
+// PR #200 sweep: the sheet row (ProductPickability with the dialogs' hasPrice / inOrderQty hooks) and the commit
+// (applyPlan) read "is this a new line?" differently: the row counts a line only when its quantity is above 0, applyPlan
+// by the line's presence. The row must never be the LOOSER one, or the sheet would offer an add that the commit refuses.
+test("NOP-32 the row is never looser than the commit on price: an enabled row is never refused as no-price by applyPlan, over 9 price shapes x 6 carts (Node only)", () => {
+    const PK = load("ProductPickability.js");
+    const shapes = [{ sellingPrice: 10 }, { sellingPrice: 0 }, { sellingPrice: null, price: 3 }, { price: 3 }, {},
+                    { sellingPrice: NaN }, { sellingPrice: -1 }, { sellingPrice: "5" }, { sellingPrice: null, price: null }];
+    const carts = [[], [line("P", 1)], [line("P", 0)], [line("P", NaN)], [line("P", -2)], [line(7, 1)]];
+    let enabled = 0, disabled = 0;
+    for (const sh of shapes) {
+        for (const cart of carts) {
+            const id = typeof cart[0] === "object" && typeof cart[0].productId === "number" ? "7" : "P";
+            const p = Object.assign({ productId: id, name: "N", stock: 5 }, sh);
+            const row = PK.classify(p, {
+                hasPendingMint: () => false, unsyncedState: () => "",
+                hasPrice: (x) => NP.priceOf(x) !== null,
+                inOrderQty: (i) => NP.cartQty(cart, i),
+                availableFor: (x) => NP.availableFor(x, cart)
+            });
+            const res = NP.applyPlan(cart, { adds: [{ productId: id, qty: 1 }], bumps: [] }, lk([p]));
+            const refusedNoPrice = res.skipped.some((s) => s.reason === "no-price");
+            if (row.visibility === "enabled") { enabled++; ok(!refusedNoPrice, "row enabled but commit says no-price: " + JSON.stringify([sh, cart])); }
+            else disabled++;
+        }
+    }
+    ok(enabled > 10 && disabled > 10, "the matrix did not reach both outcomes: " + enabled + "/" + disabled);
+    // the known, safe gap: a line that holds no usable quantity is "not on the order" for the row, a bump for the commit
+    const zero = [line("P", 0)];
+    const p0 = { productId: "P", name: "N", stock: 5 };
+    const row0 = PK.classify(p0, { hasPendingMint: () => false, unsyncedState: () => "", hasPrice: (x) => NP.priceOf(x) !== null,
+                                   inOrderQty: (i) => NP.cartQty(zero, i), availableFor: (x) => NP.availableFor(x, zero) });
+    eq(row0.reason, "no-price");
+    eq(NP.applyPlan(zero, { adds: [], bumps: [{ productId: "P", qty: 1 }] }, lk([p0])).lines[0].qty, 1);
 });

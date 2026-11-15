@@ -622,4 +622,19 @@ TestCase {
         const t = mk([prod("A", 5), prod("B", 5)], { hooks: hooks({ hasPrice: (p) => { if (p.productId === "B") throw new Error("x"); return true; } }) });
         eq([t.rows[0].canAdd, t.rows[1].canAdd, t.rows[1].reasonText], [true, false, "Not available right now"]);
     }
+
+    function test_SHEET_44_the_row_price_and_the_draft_total_use_the_legacy_price_when_() {
+        const products = [
+            prod("A", 9, { sellingPrice: null, price: 3 }),
+            prod("B", 9, { sellingPrice: undefined, price: 4 }),
+            prod("C", 9, { sellingPrice: 0, price: 5 }),
+            prod("D", 9, { sellingPrice: null, price: null }),
+            prod("E", 9, { sellingPrice: NaN, price: 6 })
+        ];
+        const v = mk(products, { draft: { A: 2, B: 1 } });
+        eq(v.rows.map((r) => r.price), [3, 4, 0, 0, 0]);
+        eq(v.totals.amount, 10);
+        eq(PM.priceOf(null), 0);
+        eq(PM.priceOf({ sellingPrice: null, price: 3 }), 3);
+    }
 }
