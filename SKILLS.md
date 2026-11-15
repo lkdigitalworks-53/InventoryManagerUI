@@ -5077,3 +5077,22 @@ Learned in the PR #200 sweep (picker S5a, 2026-11-15). Plan section "PR #200 swe
 7. **A wrong committer email is a process finding, not a rewrite.** Say it in the PR notes; do not force-push a PR under review.
 
 **The check:** for the value, `grep` every reader; for each, feed the same eight shapes; for each decision made from it, name the test that fails when a reader changes.
+
+## Skill 171: Plan against the real server in Node, make every id the plan invents carry the operation, and neutralise or validate EVERY string that reaches a substitution grammar
+
+**Why:** AP2 builds the client half of a server operation. The server's `{{bind}}` substitution rewrites any string in a stored doc, so text the plan did not write itself (a typed name, a timestamp, a supplier id) can become an id, a stock token or a 400. A deterministic id derived from a counter number can collide with rows that outlive their product.
+
+**Rules:**
+1. The planner is tested through the REAL `validateOperationRequest` and `applyOperation` on the strict fake DB (the helpers load with their real text through `qmlHelpers.js`), for every combination of the optional parts (supplier none, known, new; stock 0, fractional, whole). "The client plans what the server accepts" is a test, not a belief.
+2. `reflect` reads ONLY the results (it must work after a relaunch when the plan is gone), checks every cross-doc fact (a batch exists exactly when stock > 0 and its quantities equal the stock; a supplier doc exists exactly when its id was minted and the product and batch carry it; both history ids carry the same nonce) and refuses on any doubt. Prove it by damaging a good answer in 38 named ways and by a seeded monkey.
+3. An id derived from a counter number alone is only as unique as the counter. Put the operation nonce in the ids of history rows that outlive the thing they describe; a replay has the same key and so the same ids.
+4. Neutralise with a LOOKAHEAD, not split/join: `"{{{".split("{{").join("{ {")` leaves a `{{`. Pin the triple and the quadruple.
+5. Typed text is not the only string that reaches the grammar. The seeded monkey found `now: "{{{"` going into four docs. Validate the format of every caller-supplied string (an ISO timestamp, a known id without a brace pair), and write the monkey as an INVARIANT over every string of every created doc (no brace pair outside the planner's own tokens), never as an output comparison. Walk the strings of the docs: `JSON.stringify` of a nested doc contains `}}` by structure.
+6. Keep the key-list drift guards: the planned product doc, batch doc, `created` row and its snapshot are compared with the keys the legacy code builds (the legacy function bodies are executed from the QML source), so the new path cannot silently drop a field the History or the register reads.
+7. Hand mutants: a mutant whose search string does not match the source proves nothing. Treat "no match" as a survivor and fix the mutant (the first run here had one).
+8. When the pure helper starts to name an op type, NARROW the dormancy pin (skip `qml/helper/`) instead of deleting it, and add a guard that nothing outside the helpers calls the planner. The slice that wires the client deletes both.
+9. Reuse a generator under a per-op name (`addProductNonce` = `restockNonce`) instead of renaming it; share the validator (`_validNonce`) so the two key kinds cannot drift.
+10. Findings that are not this slice's job go to KNOWN-ISSUES the same turn (here: the restock planner's lenient `now`, the dialog values the planner now refuses), and the next slice's checklist goes into the design (section 6).
+
+**The check:** does `reflect(apply(build(x)))` round-trip for every combination, and does a fuzzer that types brace pairs into every field find any string that is not the planner's own token?
+
