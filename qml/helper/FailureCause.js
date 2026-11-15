@@ -86,6 +86,27 @@ function forRestock(rejection, name) {
     return forRejection(rejection, name)
 }
 
+// Same as forRejection, for a rejected ADD PRODUCT operation (atomic-ops AP2). A rejection writes nothing, so every
+// text here may say "nothing was added". `name` = the typed product name ("" when unknown). An add reads no existing
+// record and consumes no stock, so not-found, insufficient-quantity and operation-too-large mean an app bug.
+function forAddProduct(rejection, name) {
+    var code = (rejection && typeof rejection === "object") ? _str(rejection.error) : ""
+    var who = _str(name)
+    switch (code) {
+    case "conflict":
+        return { kind: "conflict", text: (who ? who + ": " : "") + "another device added something with the same number at the same time. Nothing was added. Try again" }
+    case "mint-exhausted":
+        return { kind: "limit", text: "The server could not reserve a new product number. Nothing was added. Try again in a moment; if it keeps failing, please report it (mint-exhausted)" }
+    case "request-id-in-use":
+        return { kind: "duplicate", text: "This request was already used for a different change. Try again" }
+    case "not-found":
+    case "insufficient-quantity":
+    case "operation-too-large":
+        return _bug(code)
+    }
+    return forRejection(rejection, name)
+}
+
 // The one wording for "the server refused your membership" (HTTP 403 `no-tenant-context`), shared by a
 // stuck write (forWriteError) and a lock acquire (lockState below) so the two can never drift. Never
 // "try again": retrying cannot help until an owner or admin restores the member.

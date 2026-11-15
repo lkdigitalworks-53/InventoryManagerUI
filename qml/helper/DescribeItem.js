@@ -29,7 +29,7 @@ var NOUN_PLURAL = {
 var VERB = { create: "Added", update: "Edited", "delete": "Deleted" }
 
 // Operation types (Gateway.recordOperation). Unknown ones fall back below.
-var OPERATION = { completeOrder: "Order completion", restock: "Restock" }
+var OPERATION = { completeOrder: "Order completion", restock: "Restock", addProduct: "Add product" }
 
 function _has(map, key) {
     return typeof key === "string" && Object.prototype.hasOwnProperty.call(map, key)
@@ -83,6 +83,16 @@ function _restockDetail(ops) {
     return qty > 0 ? qty + " \u00d7 " + who : who
 }
 
+// An add's label: the typed product name (from the product doc; its first ops are server-side mints), else "".
+function _addProductDetail(ops) {
+    for (var i = 0; i < ops.length; ++i) {
+        var op = ops[i]
+        if (op && typeof op === "object" && op.entity === "inventory" && op.action === "create")
+            return _text(op.after && op.after.name)
+    }
+    return ""
+}
+
 // -> { title, detail }. `detail` is the record's name, else its id, else "".
 function describe(item) {
     if (!item || typeof item !== "object") return { title: "Pending change", detail: "" }
@@ -90,7 +100,8 @@ function describe(item) {
     if (Array.isArray(item.ops)) {
         return {
             title: _has(OPERATION, item.opType) ? OPERATION[item.opType] : "Multi-step change",
-            detail: item.opType === "restock" ? _restockDetail(item.ops) : _opDetail(item.ops)
+            detail: item.opType === "restock" ? _restockDetail(item.ops)
+                  : item.opType === "addProduct" ? _addProductDetail(item.ops) : _opDetail(item.ops)
         }
     }
 

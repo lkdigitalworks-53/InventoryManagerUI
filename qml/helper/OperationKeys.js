@@ -51,9 +51,12 @@ function restockNonce(nowMs, random) {
 }
 
 // "" when the nonce is not a short plain token (the server also refuses "/", "~" and long ids).
+function _validNonce(nonce) {
+    return typeof nonce === "string" && nonce.length > 0 && nonce.length <= MAX_NONCE && _NONCE.test(nonce)
+}
+
 function restockKey(nonce) {
-    if (typeof nonce !== "string" || nonce.length === 0 || nonce.length > MAX_NONCE || !_NONCE.test(nonce)) return ""
-    return "restock:" + nonce
+    return _validNonce(nonce) ? "restock:" + nonce : ""
 }
 
 function isRestockKey(key) {
@@ -64,4 +67,32 @@ function isRestockKey(key) {
 // batch id is, and a replay can never produce a second one. Same "tx-p-" prefix purchases always had.
 function purchaseTxId(batchId) {
     return "tx-p-" + batchId
+}
+
+// ---- add product (atomic-ops AP2, design 2026-11-15-ap2-add-product-client-plan-design.md) ----
+//
+// Same rules as a restock key: made ONCE at the tap, kept with the queued operation, so a resend replays the
+// first result. The nonce is the restock one (time + two random draws); the server enforces the prefix
+// `addProduct:` for opType addProduct, so a restock key can never start an add.
+function addProductNonce(nowMs, random) {
+    return restockNonce(nowMs, random)
+}
+
+function addProductKey(nonce) {
+    return _validNonce(nonce) ? "addProduct:" + nonce : ""
+}
+
+function isAddProductKey(key) {
+    return typeof key === "string" && key.indexOf("addProduct:") === 0 && addProductKey(key.substring(11)) === key
+}
+
+// The two history rows of an add carry the operation nonce (design D-AP-11 = A): a product NUMBER can be handed out
+// twice (damaged counter, a deleted top product whose rows stay), the nonce never. A replay has the same key, so the
+// same ids. `productId` is the server's `{{prd}}` token when planning and the real id when reading an answer.
+function createdTxId(productId, nonce) {
+    return "tx-c-" + productId + "-" + nonce
+}
+
+function productAddedActId(productId, nonce) {
+    return "act-" + productId + "-" + nonce
 }
