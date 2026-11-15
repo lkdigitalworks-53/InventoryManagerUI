@@ -209,7 +209,13 @@ test("R-1 every refusal reason, with the input that earns it", () => {
         ["bad-cost", { unitCost: -1 }], ["bad-cost", { unitCost: NaN }], ["bad-cost", { unitCost: "1" }], ["bad-cost", { unitCost: 1e308, stock: 5 }], ["bad-cost", { unitCost: 5, stock: 1e308 }],
         ["bad-supplier", { supplier: "Acme" }], ["bad-supplier", { supplier: 5 }], ["bad-supplier", { supplier: {} }], ["bad-supplier", { supplier: { id: "" } }], ["bad-supplier", { supplier: { newName: "  " } }],
         ["bad-supplier", { supplier: { id: 7 } }], ["bad-supplier", { supplier: { id: "SUP-{{prd}}" } }], ["bad-supplier", { supplier: { id: "a}}b" } }],
-        ["bad-time", { now: "" }], ["bad-time", { now: 5 }], ["bad-time", { now: "{{{" }], ["bad-time", { now: "2026-06-15" }], ["bad-time", { now: "2026-06-15T12:00:00" }], ["bad-time", { now: "2026-06-15T12:00:00.0000Z" }], ["bad-time", { date: "15/06/2026" }], ["bad-time", { date: "2026-6-5" }], ["bad-time", { date: undefined }]
+        ["bad-time", { now: "" }], ["bad-time", { now: 5 }], ["bad-time", { now: "{{{" }], ["bad-time", { now: "2026-06-15" }], ["bad-time", { now: "2026-06-15T12:00:00" }], ["bad-time", { now: "2026-06-15T12:00:00.0000Z" }], ["bad-time", { date: "15/06/2026" }], ["bad-time", { date: "2026-6-5" }], ["bad-time", { date: undefined }],
+        // PR #201 sweep F1: the right SHAPE is not a real instant. Each of these matched the old regex and no Date can read it
+        // (month 13, hour 25, 24:00, 31 February that rolls into March, zero month and day).
+        ["bad-time", { now: "2026-13-45T10:00:00Z" }], ["bad-time", { now: "2026-06-15T25:61:61Z" }], ["bad-time", { now: "2026-06-15T24:00:00Z" }],
+        ["bad-time", { now: "2026-02-31T10:00:00Z" }], ["bad-time", { now: "0000-00-00T00:00:00Z" }], ["bad-time", { now: "2026-06-15T12:60:00Z" }],
+        ["bad-time", { date: "2026-13-45" }], ["bad-time", { date: "2026-02-31" }], ["bad-time", { date: "2026-02-29" }], ["bad-time", { date: "0000-00-00" }],
+        ["bad-time", { date: "1900-02-29" }], ["bad-time", { date: "2026-04-31" }]
     ];
     for (const [reason, over] of cases) {
         const p = build(over);
@@ -220,6 +226,15 @@ test("R-1 every refusal reason, with the input that earns it", () => {
 test("R-2 boundaries that are allowed: zero price, zero cost, zero min stock, tax 0 and 100, a tiny and a huge finite stock", () => {
     for (const over of [{ price: 0, sellingPrice: 0 }, { unitCost: 0 }, { minStock: 0 }, { taxPercent: 0 }, { taxPercent: 100 }, { stock: 1e-9 }, { stock: 1e15, unitCost: 1 }, { taxable: false }])
         assert.equal(build(over).ok, true, JSON.stringify(over));
+});
+
+test("R-6 time boundaries that ARE real are accepted: leap days, year ends, every ISO fraction length", () => {
+    for (const now of ["2028-02-29T23:59:59Z", "2026-06-15T12:00:00.5Z", "2026-06-15T12:00:00.12Z", "2026-12-31T23:59:59.999Z", "1970-01-01T00:00:00Z", "2026-01-01T00:00:00.000Z"])
+        assert.equal(build({ now }).ok, true, now);
+    for (const date of ["2028-02-29", "2000-02-29", "2026-12-31", "2026-01-01", "2026-04-30", "2026-02-28"])
+        assert.equal(build({ date }).ok, true, date);
+    // the check must not depend on the caller's time zone or on `date` agreeing with `now` (a local date near midnight differs from the UTC one)
+    assert.equal(build({ now: "2026-06-15T23:30:00.000Z", date: "2026-06-16" }).ok, true);
 });
 
 test("R-3 not an object: refused, never thrown", () => {
@@ -461,7 +476,9 @@ function prng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013
 
 test("M-1 monkey: 3000 random inputs never throw; an accepted plan always passes the real validator and has no stray brace pair", () => {
     const rnd = prng(20261115);
-    const junk = [undefined, null, "", " ", "x", "{{prd}}", "{{$stock}}", "}}{{", "{{{", "é", "😀", "a".repeat(300), 0, -1, 1, 2.5, 1e308, -1e308, NaN, Infinity, true, false, {}, [], { id: "S" }, { newName: "N" }, { newName: "{{sup}}" }, { id: "" }];
+    const junk = [undefined, null, "", " ", "x", "{{prd}}", "{{$stock}}", "}}{{", "{{{", "é", "😀", "a".repeat(300), 0, -1, 1, 2.5, 1e308, -1e308, NaN, Infinity, true, false, {}, [], { id: "S" }, { newName: "N" }, { newName: "{{sup}}" }, { id: "" },
+        // time-shaped values, so `now` and `date` are reached with near misses and with real ones (F1)
+        "2026-13-45T10:00:00Z", "2026-02-31", "2026-06-15T12:00:00.000Z", "2026-06-16", "2026-06-15T24:00:00Z"];
     const pick = () => junk[Math.floor(rnd() * junk.length)];
     const reasons = new Set(["bad-key", "bad-name", "bad-price", "bad-tax", "bad-stock", "bad-cost", "bad-supplier", "bad-time", "too-large"]);
     let accepted = 0, refused = 0;
@@ -473,6 +490,10 @@ test("M-1 monkey: 3000 random inputs never throw; an accepted plan always passes
             accepted++;
             const v = OL.validateOperationRequest({ requestId: p.key, opType: p.opType, ops: p.ops });
             assert.equal(v.ok, true, JSON.stringify({ inp, v }));
+            // F1 invariant: whatever got through holds a real instant and a real calendar day (an invalid Date would throw here)
+            const stamp = p.ops[p.at.created].after.timestamp, day = p.ops[p.at.created].after.date;
+            assert.equal(new Date(stamp).toISOString().slice(0, 19), stamp.slice(0, 19), "real instant: " + stamp);
+            assert.equal(new Date(day + "T00:00:00Z").toISOString().slice(0, 10), day, "real day: " + day);
             for (const s of textsOf(p.ops)) {
                 const rest = s.replace(/\{\{(prd|sup|batch)\}\}/g, "");
                 assert.equal(rest.indexOf("{{") < 0 && rest.indexOf("}}") < 0, true, s);

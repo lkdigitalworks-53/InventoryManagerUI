@@ -174,7 +174,19 @@ TestCase {
             { tag: "bad-supplier empty id", reason: "bad-supplier", over: { supplier: { id: "" } } },
             { tag: "bad-supplier braces", reason: "bad-supplier", over: { supplier: { id: "SUP-{{prd}}" } } },
             { tag: "bad-time now", reason: "bad-time", over: { now: "{{{" } },
-            { tag: "bad-time date", reason: "bad-time", over: { date: "15/06/2026" } }
+            { tag: "bad-time date", reason: "bad-time", over: { date: "15/06/2026" } },
+            // PR #201 sweep F1: the right shape is not a real instant. Month 13 and hour 25 are not a Date in any engine;
+            // 31 February and 24:00 parse in some engines and roll over, so the planner compares the round trip.
+            { tag: "bad-time month 13", reason: "bad-time", over: { now: "2026-13-45T10:00:00Z" } },
+            { tag: "bad-time hour 25", reason: "bad-time", over: { now: "2026-06-15T25:61:61Z" } },
+            { tag: "bad-time 24:00", reason: "bad-time", over: { now: "2026-06-15T24:00:00Z" } },
+            { tag: "bad-time 31 Feb now", reason: "bad-time", over: { now: "2026-02-31T10:00:00Z" } },
+            { tag: "bad-time zero now", reason: "bad-time", over: { now: "0000-00-00T00:00:00Z" } },
+            { tag: "bad-time date month 13", reason: "bad-time", over: { date: "2026-13-45" } },
+            { tag: "bad-time date 31 Feb", reason: "bad-time", over: { date: "2026-02-31" } },
+            { tag: "bad-time date 29 Feb 2026", reason: "bad-time", over: { date: "2026-02-29" } },
+            { tag: "bad-time date 1900 not leap", reason: "bad-time", over: { date: "1900-02-29" } },
+            { tag: "bad-time date 31 April", reason: "bad-time", over: { date: "2026-04-31" } }
         ]
     }
 
@@ -189,6 +201,17 @@ TestCase {
         var list = [{ price: 0, sellingPrice: 0 }, { unitCost: 0 }, { minStock: 0 }, { taxPercent: 0 }, { taxPercent: 100 }, { stock: 1e-9 }, { taxable: false }]
         for (var i = 0; i < list.length; ++i)
             verify(AP.build(_input(list[i])).ok, JSON.stringify(list[i]))
+    }
+
+    function test_R2b_real_times_are_accepted_leap_days_year_ends_and_every_fraction_length() {
+        var nows = ["2028-02-29T23:59:59Z", "2026-06-15T12:00:00.5Z", "2026-06-15T12:00:00.12Z", "2026-12-31T23:59:59.999Z", "1970-01-01T00:00:00Z"]
+        for (var i = 0; i < nows.length; ++i)
+            verify(AP.build(_input({ now: nows[i] })).ok, nows[i])
+        var dates = ["2028-02-29", "2000-02-29", "2026-12-31", "2026-01-01", "2026-04-30", "2026-02-28"]
+        for (var j = 0; j < dates.length; ++j)
+            verify(AP.build(_input({ date: dates[j] })).ok, dates[j])
+        // a local date near midnight differs from the UTC one: `date` need not agree with `now`
+        verify(AP.build(_input({ now: "2026-06-15T23:30:00.000Z", date: "2026-06-16" })).ok)
     }
 
     function test_R3_not_an_object_is_refused_not_thrown() {

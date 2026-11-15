@@ -27,6 +27,14 @@ var _DATE = /^\d{4}-\d{2}-\d{2}$/
 var _ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/
 var _PREFIX = "addProduct:"
 
+// The regexes above prove a SHAPE only: 2026-13-45T25:61:61Z has it and no Date can read it (PR #201 sweep F1). A real
+// instant parses AND comes back unchanged to the second, which also refuses 31 February (it rolls into March) and 24:00.
+// The round trip, not Date.parse alone, so the answer does not depend on how lenient the engine's parser is.
+function _realTime(s) {
+    var t = Date.parse(s)
+    return isFinite(t) && new Date(t).toISOString().substring(0, 19) === s.substring(0, 19)
+}
+
 function _refuse(reason) { return { ok: false, reason: reason } }
 function _isNum(n) { return typeof n === "number" && isFinite(n) }
 function _text(v) { return typeof v === "string" ? v : "" }
@@ -80,7 +88,8 @@ function build(input) {
     // Each factor is finite but the product can overflow (1e308 * 5): JSON turns Infinity into null and the stored
     // `total` would break every sum over the history. Whichever factor is the huge one, it is a cost problem.
     if (!_isNum(inp.unitCost) || inp.unitCost < 0 || !_isNum(inp.stock * inp.unitCost)) return _refuse("bad-cost")
-    if (typeof inp.now !== "string" || !_ISO.test(inp.now) || typeof inp.date !== "string" || !_DATE.test(inp.date))
+    if (typeof inp.now !== "string" || !_ISO.test(inp.now) || !_realTime(inp.now)
+        || typeof inp.date !== "string" || !_DATE.test(inp.date) || !_realTime(inp.date + "T00:00:00Z"))
         return _refuse("bad-time")
 
     var sup = inp.supplier
