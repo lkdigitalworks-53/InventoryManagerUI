@@ -13,6 +13,9 @@ Scope read: the whole PR diff (25 files) plus the code it connects to (`NewOrder
 - [ ] Process finding for Taher: both S5a commits and the PR body say `dextran52@gmail.com`, the project rule is `lkdwtaher@gmail.com`. Not rewritten (force push on a PR under review). Sweep commit has the right one.
 - Open, not changed (KNOWN-ISSUES 43): "0.00 / pcs" on a no-price row; same `null` pattern in the legacy `_rebuildCatalog`; row stricter than commit for a line with no usable quantity.
 
+## Decisions 2026-11-15 (Taher)
+Q1 yes, Q2 delete legacy seed, Q3 measure first (KNOWN-ISSUES 44). Keep "0.00 / pcs" on a no-price row, he decides after a device check. Next code slice: S5b (new branch from main after #200 merges): one stock formula for the stepper and `_save()`, delete `catalog` / `_rebuildCatalog`, device checks, test plan, Skill 170.
+
 ## Done (S5a, original session)
 - [x] Read roadmap: S1 to S4 merged; S5 split into S5a (this), S5b stock formula, S5c touch targets/Back key, S5d measure then tune, S5e a11y/themes/font scale/final device pass.
 - [x] `hasPrice` hook in `ProductPickability` (no-price reason, only for rows not on the order), `PickerSheetModel` words and pill, both dialogs wired.

@@ -43,6 +43,8 @@ NOT in S5a: any layout change, any change to a completed-order edit, any server 
 Pure helpers stay at 100% branch coverage by hand mutants (6 new mutants on the new branch, all killed; first run no survivors). The E2E and the Felgo layer cannot be line-measured. CI is the oracle for the three E2E tests and the regenerated QML twins.
 
 ## Questions for Taher (none block the merge of S5a)
+**Decided 2026-11-15 (Taher, "as recommended"): Q1 yes, Q2 delete the legacy seed, Q3 measure on a device first (no cap yet). Detail below is the original text.**
+
 - **Q1 (S5b).** Should the cart-row `+` stepper and `_save()` both ask `Edit.availableFor` / `NP.availableFor`? For: one formula, no disagreement on a fractional stock. Against: it changes a money path that no device has confirmed, and a stepper for a product that LEFT the catalog goes from "unlimited +1 then refused at Save" to "cannot go up". Recommendation: yes, in S5b with its own device checks.
 - **Q2 (S5b, KI 30).** Delete the legacy seed that turns an order with no `products` array into two lines of the first two catalog products? It stores invented lines as real ones on Save. Recommendation: delete it, and `catalog` and `_rebuildCatalog` go with it. Cost: a very old order (if any exists; dev data only) opens empty.
 - **Q3 (S5e, KI 29).** Cap a completed-order edit below 60 new lines, or measure check 82 on a device first? Recommendation: measure first; a cap without a number is a guess.
