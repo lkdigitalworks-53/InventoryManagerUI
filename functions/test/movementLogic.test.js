@@ -33,7 +33,7 @@ test("validateMovements: defaults reason '' and valueAtCost 0", () => {
 test("validateMovements: every kind accepts its own direction", () => {
     for (const kind of M.MOVEMENT_KINDS) {
         const dir = M.KIND_DIRECTION[kind] || 1;
-        assert.equal(M.validateMovements([{ kind: kind, qty: 3 * dir }]).ok, true, kind);
+        assert.equal(M.validateMovements([{ kind: kind, qty: 3 * dir, reason: "water damage" }]).ok, true, kind);
     }
 });
 
@@ -76,7 +76,7 @@ test("validateMovements: rejects a qty sign that contradicts the kind", () => {
     fail([mv({ kind: "receipt", qty: -1 })], "invalid-movement-qty");
     fail([mv({ kind: "sales_return", qty: -1 })], "invalid-movement-qty");
     for (const kind of ["sale", "loss", "theft", "destroyed", "write_off", "free_sample", "gift"])
-        fail([mv({ kind: kind, qty: 1 })], "invalid-movement-qty");
+        fail([mv({ kind: kind, qty: 1 })], "invalid-movement-qty");   // direction is checked before the reason
 });
 
 test("validateMovements: rejects bad valueAtCost", () => {

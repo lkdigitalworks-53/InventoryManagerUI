@@ -26,6 +26,9 @@ var KIND_DIRECTION = {
 }
 var MAX_MOVEMENTS = 50
 var MAX_REASON = 500
+// P1 S2e-1: kinds that cannot be recorded without a reason (mirror of movementLogic.js REASON_REQUIRED).
+var REASON_REQUIRED = ["loss", "theft", "destroyed", "write_off", "gift"]
+var MIN_REASON_LENGTH = 3
 var EPSILON = 1e-9
 
 function _hasKeys(obj) {
@@ -44,6 +47,19 @@ function _sameFloors(a, b) {
         if (!Object.prototype.hasOwnProperty.call(fb, ka[i]) || fa[ka[i]] !== fb[ka[i]]) return false
     }
     return true
+}
+
+// True when this kind needs a reason before it may be recorded (the picker uses it to show the field as
+// required and to keep its confirm button off).
+function reasonRequired(kind) {
+    return REASON_REQUIRED.indexOf(kind) >= 0
+}
+
+// "" when `reason` is enough for `kind`, else the words for the person. Counted after trim, like the server.
+function reasonProblem(kind, reason) {
+    if (!reasonRequired(kind)) return ""
+    var text = (typeof reason === "string") ? reason.trim() : ""
+    return text.length >= MIN_REASON_LENGTH ? "" : "Add a short reason (at least " + MIN_REASON_LENGTH + " characters)."
 }
 
 // True for a non-empty movements array (the only shape that means "explicit movements").
@@ -85,6 +101,7 @@ function validate(entity, deltas, clamps, movements) {
         if (m.reason !== undefined && m.reason !== null
                 && (typeof m.reason !== "string" || m.reason.length > MAX_REASON))
             return "invalid-movement-reason"
+        if (reasonProblem(m.kind, m.reason) !== "") return "movement-reason-required"
         sum += m.qty
     }
     if (Math.abs(sum - deltas.stock) > EPSILON) return "movement-qty-mismatch"

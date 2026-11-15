@@ -24,6 +24,19 @@ const KIND_DIRECTION = {
 };
 const MOVEMENT_KINDS = Object.keys(KIND_DIRECTION);
 
+// P1 S2e-1 reason policy (design docs/superpowers/specs/2026-11-13-p1-s2e1-reason-policy-and-cost-design.md).
+// A kind in REASON_REQUIRED cannot be recorded without a reason of at least MIN_REASON_LENGTH characters
+// (after trim): these are the events an auditor, an insurer or a tax officer asks "what happened" about, and
+// all of them are ITC-blocked under CGST 17(5)(h). free_sample is optional on purpose (high volume, and the ITC
+// block on it is under review), adjustment and the supply kinds are optional. Mirrored client side in
+// qml/helper/StockMovements.js; functions/test/stockMovementsParity.test.js fails when they drift.
+const REASON_REQUIRED = ["loss", "theft", "destroyed", "write_off", "gift"];
+const MIN_REASON_LENGTH = 3;
+
+// Kinds whose cost value the SERVER stamps (the six non-supply outward events of CGST 56(2)): qty x the
+// product's cost (`price`, as stored when the row is written), never a client-sent number.
+const VALUE_KINDS = ["loss", "theft", "destroyed", "write_off", "free_sample", "gift"];
+
 // Default kind for a stock change the client did not describe, by operation.
 // Anything else defaults to "adjustment".
 const DEFAULT_KIND_BY_OPTYPE = { completeOrder: "sale" };
@@ -64,7 +77,10 @@ function validateMovements(raw) {
         const reason = (m.reason === undefined || m.reason === null) ? "" : m.reason;
         if (typeof reason !== "string" || reason.length > MAX_REASON) return _fail("invalid-movement-reason");
 
-        movements.push({ kind: m.kind, qty: m.qty, reason: reason.trim(), valueAtCost: value, derived: false });
+        const trimmed = reason.trim();
+        if (REASON_REQUIRED.indexOf(m.kind) >= 0 && trimmed.length < MIN_REASON_LENGTH) return _fail("movement-reason-required");
+
+        movements.push({ kind: m.kind, qty: m.qty, reason: trimmed, valueAtCost: value, derived: false });
     }
     return { ok: true, movements: movements };
 }
@@ -131,6 +147,24 @@ function nameFor(before, after) {
 // serverTimestamp, clientTimestamp, requestId, productName?, operationId?, opType?, opIndex? }.
 // `baseId` is the audit_log id of the write that carries the movements, so a
 // retried request (which replays from that audit entry) never writes a row twice.
+// The product's cost per unit as stored (`price` is COST in this app, `sellingPrice` is what customers pay).
+// 0 when the product has no usable cost: a loss must still be recorded, so a missing cost is never an error.
+function unitCostOf(doc) {
+    const c = doc && typeof doc === "object" ? doc.price : undefined;
+    return (typeof c === "number" && isFinite(c) && c > 0) ? c : 0;
+}
+
+// valueAtCost of one movement: stamped for VALUE_KINDS (client value ignored), untouched otherwise.
+// Rounded to paise. `unitCost` undefined means the caller has no product doc: leave the value as it is.
+function valueFor(m, unitCost) {
+    if (unitCost === undefined || VALUE_KINDS.indexOf(m.kind) < 0) return m.valueAtCost;
+    // Round half-up to paise. The absolute 1e-6 paise nudge undoes binary float error at exact halves
+    // (2.5 x 19.99 is 49.974999999999994 in floats, but 49.975 on paper = 49.98). It is ABSOLUTE, not relative:
+    // a relative nudge would move a big honest value (1e13 paise) by whole paise.
+    const v = Math.round(Math.abs(m.qty) * unitCost * 100 + 1e-6) / 100;
+    return isFinite(v) ? v : 0;
+}
+
 function buildRows(movements, ctx) {
     return movements.map(function (m, j) {
         const id = ctx.baseId + "~m" + j;
@@ -140,7 +174,7 @@ function buildRows(movements, ctx) {
             kind: m.kind,
             qty: m.qty,
             reason: m.reason,
-            valueAtCost: m.valueAtCost,
+            valueAtCost: valueFor(m, ctx.unitCost),
             derived: m.derived === true,
             actorUid: ctx.actorUid,
             actorRole: ctx.actorRole,
@@ -160,6 +194,6 @@ function buildRows(movements, ctx) {
 }
 
 module.exports = {
-    KIND_DIRECTION, MOVEMENT_KINDS, DEFAULT_KIND_BY_OPTYPE, MAX_MOVEMENTS, MAX_REASON, MAX_TXN_WRITES, MAX_PRODUCT_NAME,
+    KIND_DIRECTION, MOVEMENT_KINDS, REASON_REQUIRED, MIN_REASON_LENGTH, VALUE_KINDS, unitCostOf, valueFor, DEFAULT_KIND_BY_OPTYPE, MAX_MOVEMENTS, MAX_REASON, MAX_TXN_WRITES, MAX_PRODUCT_NAME,
     cleanProductName, nameFor, validateMovements, totalsMatch, deriveMovement, stockOf, deriveForMutation, buildRows
 };

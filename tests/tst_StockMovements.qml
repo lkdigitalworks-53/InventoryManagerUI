@@ -80,8 +80,40 @@ TestCase {
         var kinds = Object.keys(SM.KIND_DIRECTION)
         for (var i = 0; i < kinds.length; ++i) {
             var dir = SM.KIND_DIRECTION[kinds[i]] || 1
-            compare(SM.validate("inventory", { stock: 3 * dir }, {}, [{ kind: kinds[i], qty: 3 * dir }]), "", kinds[i])
+            compare(SM.validate("inventory", { stock: 3 * dir }, {}, [{ kind: kinds[i], qty: 3 * dir, reason: "water damage" }]), "", kinds[i])
         }
+    }
+
+    // ── P1 S2e-1: which kinds need a reason (mirror of functions/lib/movementLogic.js REASON_REQUIRED) ──────
+    function test_reason_policy_constants() {
+        compare(SM.MIN_REASON_LENGTH, 3)
+        compare(SM.REASON_REQUIRED.join(","), "loss,theft,destroyed,write_off,gift")
+    }
+    function test_reason_required_by_kind() {
+        var need = ["loss", "theft", "destroyed", "write_off", "gift"]
+        for (var i = 0; i < need.length; ++i) verify(SM.reasonRequired(need[i]), need[i])
+        var free = ["receipt", "sales_return", "sale", "free_sample", "adjustment"]
+        for (var j = 0; j < free.length; ++j) verify(!SM.reasonRequired(free[j]), free[j])
+        verify(!SM.reasonRequired("constructor"))
+        verify(!SM.reasonRequired(undefined))
+    }
+    function test_reason_problem_words_only_when_needed() {
+        compare(SM.reasonProblem("theft", ""), "Add a short reason (at least 3 characters).")
+        compare(SM.reasonProblem("theft", "  ab "), "Add a short reason (at least 3 characters).")
+        compare(SM.reasonProblem("theft", undefined), "Add a short reason (at least 3 characters).")
+        compare(SM.reasonProblem("theft", "abc"), "")
+        compare(SM.reasonProblem("theft", "  abc  "), "")
+        compare(SM.reasonProblem("free_sample", ""), "")
+        compare(SM.reasonProblem("adjustment", undefined), "")
+    }
+    function test_validate_refuses_a_required_kind_without_a_reason() {
+        compare(SM.validate("inventory", { stock: -3 }, {}, [{ kind: "theft", qty: -3 }]), "movement-reason-required")
+        compare(SM.validate("inventory", { stock: -3 }, {}, [{ kind: "gift", qty: -3, reason: " " }]), "movement-reason-required")
+        compare(SM.validate("inventory", { stock: -3 }, {}, [{ kind: "gift", qty: -3, reason: "ab" }]), "movement-reason-required")
+        compare(SM.validate("inventory", { stock: -3 }, {}, [{ kind: "gift", qty: -3, reason: "for staff" }]), "")
+        compare(SM.validate("inventory", { stock: -3 }, {}, [{ kind: "free_sample", qty: -3 }]), "")
+        // direction is checked before the reason, as on the server
+        compare(SM.validate("inventory", { stock: 3 }, {}, [{ kind: "theft", qty: 3 }]), "invalid-movement-qty")
     }
     function test_validate_accepts_a_split_float_noise_null_reason_and_the_cap() {
         compare(SM.validate("inventory", { stock: 7 }, {}, [{ kind: "receipt", qty: 10 }, { kind: "sale", qty: -3 }]), "")

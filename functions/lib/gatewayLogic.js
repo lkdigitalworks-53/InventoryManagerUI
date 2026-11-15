@@ -316,7 +316,8 @@ async function applyDelta(db, params) {
             actorRole: params.actorRole,
             serverTimestamp: params.serverTimestamp,
             clientTimestamp: params.clientTimestamp,
-            requestId: params.requestId
+            requestId: params.requestId,
+            unitCost: MovementLogic.unitCostOf(current)
         });
         for (const row of rows) txn.set(db.doc("tenants/" + params.tenantId + "/stock_movements/" + row.id), row.data);
         txn.set(auditRef, {
