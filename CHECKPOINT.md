@@ -1,26 +1,28 @@
-# CHECKPOINT: 2026-11-17 PR #204 (P1 S2e-1) second full-sweep review - resume here
+# CHECKPOINT: 2026-11-16 AP3a (add product wired to the atomic operation) - resume here
 
-**Branch:** `feat/2026-11-13-p1-s2e1-reason-policy-and-cost-snapshot` (PR #204). Fixes go in THIS PR (not stacked). Earlier checkpoints: `docs/superpowers/specs/2026-11-13-p1-s2e1-prev-CHECKPOINT.md` and `docs/superpowers/specs/2026-11-17-p1-s2e1-sweep1-CHECKPOINT.md` (first sweep).
-**Commit identity (this sweep):** `Taher (via Claude session) <lkdigitalworks@gmail.com>` per the saved working rules; the first five commits of the PR carry `taher.lkdw@gmail.com` (KNOWN-ISSUES S2e-1 item 19). Taher: say which one you want and it is fixed with a squash-merge.
-**Rules in force:** no build or run; no Qt in the sandbox (CI decides); push without asking; no parallel agents; tests + test plan for every change; out-of-scope findings to `docs/superpowers/KNOWN-ISSUES.md`.
-**Skills used (applied by hand, no subagents):** superpowers:requesting-code-review, qt-development-skills:qt-qml-review, ponytail:ponytail-audit.
+**Branch:** `feat/2026-11-16-ap3a-add-product-wire`, cut from `main` @ `503adda` (#201 merged, device tested by Taher). Contract: `docs/superpowers/specs/2026-11-13-add-product-atomic-operation-design.md` sections 7 to 9; this slice: `docs/superpowers/specs/2026-11-16-ap3a-add-product-wire-design.md`.
+**Commit rule (current, Taher 2026-11-16):** every commit message carries the line `lkdwtaher@gmail.com`; git user `Taher (via Claude session) <lkdwtaher@gmail.com>`. PAT per command via `git -c http.extraHeader`, never in `.git/config`, the repo or memory.
+**Rules in force:** no build or run; no Qt in the sandbox (CI is the oracle); always a branch; push without asking; tests + test plan for every change; out-of-scope findings go to `docs/superpowers/KNOWN-ISSUES.md`; no parallel agents. Node tests of `functions/` DO run here (`cd functions && npm ci && node --test`).
+**Previous checkpoint archived:** `specs/2026-11-16-pr201-merged-prev-CHECKPOINT.md`.
+**Test plan:** `docs/superpowers/test-plans/2026-11-16-ap3a-add-product-wire-test-plan.md`.
 
-## Steps
-- [x] 0. Re-cloned repo, PR #204 head `bdc93e9` (CI green, clean), read design, test plan, KNOWN-ISSUES.
-- [x] 1. Server review (`movementLogic`, `gatewayLogic`, `operationLogic`, `batchMutationLogic`): derive-only paths confirmed, replay path confirmed.
-- [x] 2. PROBED the real module with invisible/control/tag characters. FOUND D-1b (bug): the first D-1 fix still let NUL, C0, DEL, C1 controls and Unicode TAG characters (U+E0000-E03FF) count as a visible reason.
-- [x] 3. FIX D-1b: `INVISIBLE_RE` now has `\u0000-\u001F`, `\u007F-\u009F` and a surrogate-pair branch for the tag block; mirrored in `qml/helper/StockMovements.js` (BMP escapes, no `u` flag).
-- [x] 4. Tests: 12 new refused shapes + 6 accepted shapes in the battery (715 checks per run, counted), 12 new mutants (49 total), RP-06 (all 65,536 code units and the whole tag block, server and client, against an independent hex-range table), 2 QML twins (`tst_StockMovements.qml`), 1 QML pin (`tst_InventoryStore_movementKinds.qml`).
-- [x] 5. Evidence (Node, measured after `npm ci`): `functions` 1899/1899; `movementLogic.js` 100% line/branch/function. QML not run (CI).
-- [x] 6. Latent finding: `InventoryStore._movementsFor` silently degrades a required kind without a real reason to an unreasoned derived adjustment. Pinned by a test + CAUTION comment; decision recorded (KNOWN-ISSUES 17).
-- [x] 7. Docs: README, design (stale "stacked" wording and D-1b amendment), test plan (counts re-measured, curl cases, CI-red meaning), KNOWN-ISSUES 4/17/18/19 and item 39/12 text restored, Skill 173 rules 15 + 16, this checkpoint.
-- [x] 8. Committed + pushed `427d71c`; CI green on it (QML incl. the tag-character twin, Functions, Rules, E2E, PR comment): Qt's engine reads the surrogate-pair branch like Node.
+## Step 2 arc (add product with opening stock)
+AP1 server (#199), AP2 client pure layer (#201) merged. **AP3 is split (D-AP3-1):** AP3a (THIS BRANCH) = `AddProductFlow.js`, `InventoryStore.addProduct` rewrite + apply/answer hooks, `DataModel` route, e2e helpers, guards; the dialog gets only the status handling. AP3b = dialog (inline supplier "Use" row, strict number parsing, limits, submit body tested in Node). AP4 = docs + device test of the whole arc.
 
-## OPEN for Taher
-- 17 (decision for S2e-2): should `_movementsFor` REFUSE a required kind with no real reason, instead of degrading? Recommendation: refuse.
-- 18 (unverified): does Firestore store a reason with a lone surrogate or a NUL inside? Needs a 2-case emulator test; emulator cannot run in the sandbox.
-- 19: commit email mismatch (see above).
-- Earlier, still open: D-2 (delete of a product with stock, KNOWN-ISSUES 16), D-3 (punctuation-only reasons: recommendation NO).
+## Steps (tick as done)
+- [x] 0. Clone, memory, read STATUS section 14/15, designs AP1/AP2, store, dialog, DataModel, e2e files. Next task = AP3.
+- [x] 1. Branch cut, previous checkpoint archived, this file written.
+- [ ] 2. Design doc + test plan skeleton.
+- [ ] 3. `AddProductFlow.js` + `RestockFlow.queuedNewSupplierClash` covers addProduct ops; Node tests.
+- [ ] 4. `InventoryStore.addProduct` rewrite, `applyAddProductResults`, answer hooks, remove `_resolveSupplierId`.
+- [ ] 5. `DataModel` route (call site + Connections).
+- [ ] 6. Dialog status handling only.
+- [ ] 7. e2e: 5 `_createProduct` helpers (scoped online flip), 3 files point `operationFunctionUrl` at the emulator.
+- [ ] 8. Guards: delete AP1 G-1 and AP2 G-1, update SB-4, P-2, add wiring pins.
+- [ ] 9. QML twins (CI-only).
+- [ ] 10. Run `node --test` in `functions/`, fix, commit, push.
+- [ ] 11. Docs: STATUS section 16, KNOWN-ISSUES, README/AGENTS/SKILLS, test plan numbers.
+- [ ] 12. Push, read CI if reachable, final report (done / next).
 
-## NEXT
-S2e-2 (pickers with the reason field, `reasonProblem`; send no `valueAtCost`) or S4b-2 (register page). Taher picks.
+## NEXT (if this session stops)
+Continue at the first unchecked step. Each commit is independent. Do not force-push.
