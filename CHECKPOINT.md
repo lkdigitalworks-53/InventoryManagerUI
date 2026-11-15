@@ -17,7 +17,7 @@
 - [x] 1. Evidence read: `addProduct` (7 independent writes), `RestockPlan`, `operationLogic`, `counterRegistry`, `movementLogic` (create derives a `receipt` row), no role gate on `recordOperation` (same as `recordMutation`), drift guard, e2e twin pattern.
 - [x] 2. Design doc written (this commit).
 - [x] 3. SERVER: `product` counter, `addProduct` opType, activity kind tied to opType, `checkActivityOp(opType)` (commit 704d761).
-- [x] 4. TESTS: 32 new + guard rows/5 mutants + 2 handler + 3 emulator (CI only) + 4 flipped pins. Functions 1720 -> 1754 green, 100% line/branch/func on both files, 16/16 hand mutants killed.
+- [x] 4. TESTS: 32 new + guard rows/5 mutants + 2 handler + 3 emulator (CI only) + 4 flipped pins. Functions 1720 -> 1754 green (1766 after the PR #199 sweep: +K-2, +K-3, +10 role-gate), 100% line/branch/func on both files, 16/16 hand mutants killed.
 - [x] 5. DOCS: test plan, README, AGENTS, SKILLS 168 + index, STATUS section 14, KNOWN-ISSUES 34-39, test-plans README row.
 - [ ] 6. Push, open PR, read CI.
 
@@ -25,3 +25,12 @@
 
 ## NEXT (if this session stops)
 Continue at the first unchecked step. Each commit is independent. Never force-push this branch.
+
+## PR #199 review sweep, 2026-11-15 (done; pushed to this branch)
+- [x] Read diff + connected code; full functions suite with coverage: 100% line/branch/func on `counterRegistry.js` and `operationLogic.js`.
+- [x] Three lenses run one after another (no parallel agents): code review, QML review (no QML in the PR, nothing to lint), ponytail audit. AP1's own server code: no defect.
+- [x] +K-2, +K-3 pinned (KNOWN-ISSUES 40, 41; design D-AP-11, D-AP-12; Skill 168 rule 10; AGENTS carry-over). Both are AP2's to settle.
+- [x] FIXED: `recordOperation` and `recordMutationsBatch` had no owner/admin gate for staff delete and the `removed_staff` tombstone (KNOWN-ISSUES 42). One shared helper in `functions/index.js`, +10 handler tests (6 failed on the unfixed code), +1 emulator case (CI only), test plan `2026-11-15-owner-only-writes-test-plan.md`. Functions 1766/1766.
+- [ ] CI result on the new head (fill in the test plans).
+- [ ] Taher: D-AP-7, D-AP-4 (earlier), D-AP-11, D-AP-12 (new). Deploy of this PR now touches live endpoints (`index.js`), so it is no longer "dormant only": the role gate goes live on merge.
+

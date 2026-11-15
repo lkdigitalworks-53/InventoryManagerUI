@@ -1,7 +1,7 @@
 # Test plan — owner/admin-only writes on every endpoint (KNOWN-ISSUES 42)
 
-Branch `fix/2026-11-15-owner-only-writes-all-endpoints`, cut from `main` @ `024a6f6`. Found in the review sweep of PR #199 (add product, AP1). Standard format (Skill 49).
-Honesty note: this changes `functions/index.js` (one helper, three call sites) and NO QML and NO rules. Every Node test below was RUN in the sandbox: functions suite 1720 -> 1730, all green; the new test file was run RED against the unfixed code first (6 of 10 failed, exactly the six that assert the gate; the four that guard existing behaviour passed), then GREEN after the fix. The lines added to `index.js` are all covered (none is in the uncovered list of `--experimental-test-coverage`). The one emulator case is CI-only (no emulator here): written, not run.
+Fixed inside PR #199 (add product, AP1) on branch `feat/2026-11-13-ap1-add-product-server-op`; the bug itself is older than AP1 and exists on `main`. Found in the review sweep of that PR. Standard format (Skill 49).
+Honesty note: this changes `functions/index.js` (one helper, three call sites) and NO QML and NO rules. Every Node test below was RUN in the sandbox: functions suite 1720 -> 1730 measured on the fix alone, 1766 with AP1 and the two gap pins, all green; the new test file was run RED against the unfixed code first (6 of 10 failed, exactly the six that assert the gate; the four that guard existing behaviour passed), then GREEN after the fix. The lines added to `index.js` are all covered (none is in the uncovered list of `--experimental-test-coverage`). The one emulator case is CI-only (no emulator here): written, not run.
 
 ## What changed
 `recordMutation` refused a `staff` delete, any `removed_staff` write and an `inventory` delete for every role except owner/admin. `recordOperation` and `recordMutationsBatch` did not, and their validators accept the first two, so a lowest-role token could delete a staff record or plant a tombstone with one POST. Now one helper, `isOwnerAdminOnlyWrite(entity, action)`, is called by all three endpoints right after the membership context: 403 `role-not-allowed`, zero writes, the WHOLE operation (or batch) refused.
@@ -15,7 +15,7 @@ No client sends such a write through an operation or a batch (the app deletes st
 The test file keeps its OWN copy of the rule (`OWNER_ONLY`) on purpose: if the rule in the code drifts, the table does not move with it.
 
 ## 2. Regression tests
-- All 366 handler tests (`index.handlers.*.test.js`) pass unchanged; the full functions suite is 1730/1730.
+- All handler tests (`index.handlers.*.test.js`) pass unchanged; the full functions suite is 1730/1730.
 - `recordMutation`'s behaviour is byte-identical (its inline flags became the helper; the F3b membership tests for product delete and staff delete pass unedited).
 
 ## 3. E2E (real emulator, CI only)
