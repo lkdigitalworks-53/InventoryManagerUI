@@ -15,10 +15,17 @@ AP1 server (merged #199). **AP2 client pure layer (THIS BRANCH):** `OperationKey
 - [x] 2. Node tests: `functions/test/addProductPlan.test.js` 42/42, drift test C-2 widened, AP1 G-1 narrowed; full suite 1861/1861 (baseline 1819); 35 of 35 hand mutants killed (runner was throwaway in /tmp, list in the test plan).
 - [x] 3. QML twins written (`tst_AddProductPlan.qml` + rows in OperationKeys, FailureCause, DescribeItem); 180 rows green in a throwaway Node harness; the real qmltestrunner result is CI's.
 - [x] 4. Docs: design (D-AP2-1..11), test plan, README, AGENTS, SKILLS 170 + index (169 is taken by the picker S5a branch), STATUS section 15, KNOWN-ISSUES 40/41 updated + 43-45, test-plans README row.
-- [ ] 5. Push, open PR, read CI.
+- [x] 5. Pushed, PR #201 opened, CI all green on `1a99696` (QML, Functions, Rules, E2E; Deploy skipped).
+- [ ] 6. Taher reviews PR #201 and answers the grill questions below; merge. Then AP3.
 
 ## Found, not fixed (documented)
 KNOWN-ISSUES 43 (`RestockPlan` accepts any non-empty `now`), 44 (dialog values the planner refuses = AP3 checklist), 45 (skill numbers).
 
+## Grill questions for Taher (veto in the PR)
+1. D-AP2-2: planner refuses bad numbers and tax outside 0..100 (stricter than today). OK?
+2. D-AP2-5: typed text is trimmed before storing. OK?
+3. D-AP2-7: `created` row stores exact stock (old path rounded 2.5 to 2).
+
 ## NEXT (if this session stops)
+AP3 after #201 merges: read design section 6 checklist first.
 Continue at the first unchecked step. Each commit is independent. Never force-push this branch.

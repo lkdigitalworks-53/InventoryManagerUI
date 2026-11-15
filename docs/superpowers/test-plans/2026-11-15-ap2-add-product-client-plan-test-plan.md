@@ -47,5 +47,5 @@ Two minutes of rapid add / restock / order from the dialog and the list: no cras
 ### Not testable on device until AP3
 The plan itself, the id from the answer, the photo, the offline refusal.
 
-## 5. CI result (fill after push)
-Pending.
+## 5. CI result
+PR #201 head `1a99696`: QML Tests success (the new twins ran on the real qmltestrunner), Functions Tests success, Firestore + Storage Rules Tests success, E2E Tests success; Deploy Check skipped (nothing to deploy).
