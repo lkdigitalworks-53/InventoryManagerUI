@@ -1,31 +1,32 @@
-# CHECKPOINT: 2026-11-15 AP2, add product client PURE layer, dormant - resume here
+# CHECKPOINT: 2026-11-15 PR #201 (AP2) deep review sweep + rebase onto #200 - resume here
 
-**Branch:** `feat/2026-11-15-ap2-add-product-client-plan`, cut from `main` @ `59734ce` (#199 AP1 merged). Contract: `docs/superpowers/specs/2026-11-13-add-product-atomic-operation-design.md` section 9 (D-AP-11 nonce in ids, D-AP-12 neutralise `{{`/`}}`; both decided by Taher). This slice's own design: `docs/superpowers/specs/2026-11-15-ap2-add-product-client-plan-design.md`.
-**Commit rule:** every commit message ends with a line `allibaas52@gmail.com` (user instruction 2026-11-15; git user `Taher (via Claude session)`). PAT per command via `git -c http.extraHeader`, never in a URL, `.git/config`, the repo or memory.
-**Rules in force:** no build or run; no Qt in the sandbox (CI is the oracle); always a branch; push without asking; tests + test plan for every change; out-of-scope findings go to `docs/superpowers/KNOWN-ISSUES.md`. Node tests of `functions/` DO run here (`cd functions && npm ci && node --test`, baseline 1819/1819 on `59734ce`).
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-15-pr199-merged-prev-CHECKPOINT.md`.
+**Branch:** `feat/2026-11-15-ap2-add-product-client-plan` (PR #201). Rebased onto `main` @ `5dee56d` (#200 merged) on 2026-11-15; the four original commits were replayed (SHAs changed, force-with-lease, on Taher's explicit instruction). Contract: `docs/superpowers/specs/2026-11-13-add-product-atomic-operation-design.md` section 9. This slice's design: `docs/superpowers/specs/2026-11-15-ap2-add-product-client-plan-design.md`.
+**Commit rule (current):** every commit message carries a line `lkdigitalworks@gmail.com`; git user `Taher (via Claude session) <lkdigitalworks@gmail.com>`. The four ORIGINAL commits of this PR carry `allibaas52@gmail.com` (older instruction); not rewritten again. PAT per command via `git -c http.extraHeader`, never in `.git/config`, the repo or memory.
+**Rules in force:** no build or run; no Qt in the sandbox (CI is the oracle); always a branch; push without asking; tests + test plan for every change; out-of-scope findings go to `docs/superpowers/KNOWN-ISSUES.md`; no parallel agents this sweep. Node tests of `functions/` DO run here (`cd functions && npm ci && node --test`, 1882/1882 on this branch).
+**Previous checkpoints archived:** `specs/2026-11-15-pr199-merged-prev-CHECKPOINT.md` (AP2 start), `specs/2026-11-15-pr200-merged-prev-CHECKPOINT.md` (main's picker S5a checkpoint, archived at this rebase).
 **Test plan:** `docs/superpowers/test-plans/2026-11-15-ap2-add-product-client-plan-test-plan.md`.
 
 ## Step 2 arc
-AP1 server (merged #199). **AP2 client pure layer (THIS BRANCH):** `OperationKeys.addProductNonce/addProductKey/isAddProductKey/createdTxId/productAddedActId`, `qml/helper/AddProductPlan.js` (`build`, `reflect`, `neutralisePlaceholders`), `FailureCause.forAddProduct`, `DescribeItem` label. Nothing calls it (dormant). AP3 = wire `InventoryStore.addProduct` + `AddProductDialog` + `DataModel` route (D-AP-7 refuse offline, D-AP-8 photo from live answer, both decided). AP4 = docs + device test. Then step 3 (new order, `_tryAdjustOrder`, imported completion, reverse), step 4 (import chunking; G5, G9 need designs).
+AP1 server (merged #199). **AP2 client pure layer (THIS BRANCH, dormant):** keys, `AddProductPlan.js` (`build`, `reflect`, `neutralisePlaceholders`), `FailureCause.forAddProduct`, `DescribeItem` label. AP3 = wire `InventoryStore.addProduct` + `AddProductDialog` + `DataModel` route (read design section 6 FIRST, incl. the new `malformed-results` bullet). AP4 = device test.
 
-## Steps
-- [x] 0. Clone, memory, skills, STATUS, design read; baseline 1819/1819; branch cut.
-- [x] 1. Code: OperationKeys, AddProductPlan.js, FailureCause.forAddProduct, DescribeItem (smoke-tested against the real server validator).
-- [x] 2. Node tests: `functions/test/addProductPlan.test.js` 42/42, drift test C-2 widened, AP1 G-1 narrowed; full suite 1861/1861 (baseline 1819); 35 of 35 hand mutants killed (runner was throwaway in /tmp, list in the test plan).
-- [x] 3. QML twins written (`tst_AddProductPlan.qml` + rows in OperationKeys, FailureCause, DescribeItem); 180 rows green in a throwaway Node harness; the real qmltestrunner result is CI's.
-- [x] 4. Docs: design (D-AP2-1..11), test plan, README, AGENTS, SKILLS 170 + index (169 is taken by the picker S5a branch), STATUS section 15, KNOWN-ISSUES 40/41 updated + 43-45, test-plans README row.
-- [x] 5. Pushed, PR #201 opened, CI all green on `1a99696` (QML, Functions, Rules, E2E; Deploy skipped).
-- [ ] 6. Taher reviews PR #201 and answers the grill questions below; merge. Then AP3.
+## This session's steps (PR #201 sweep)
+- [x] 0. Clone (public, no token in config), memory, skills (requesting-code-review, qt-qml-review, ponytail-audit), PR #201 read: 22 files +1494 -40, `mergeable_state: dirty`, CI green on `ba29ccc`.
+- [x] 1. Rebase onto main: conflicts were `CHECKPOINT.md` (kept this branch's, main's archived above) and `SKILLS.md` / `SKILLS-INDEX.md` (main took Skills 169 and 170; AP2's entry renumbered 170 -> 171 in SKILLS, the index, AGENTS and KNOWN-ISSUES 45). Pushed at once (`b211dcf`).
+- [x] 2. Phase 1 lint on the four touched QML tests: 71 hits on added lines = 67 JS-1 (`var`, house style), 3 JS-2 (linter false positive on `!==`), 1 STY-1 (no `id: root`, house style). No code change.
+- [x] 3. Phase 2 deep review, single-threaded. Read: `AddProductPlan.js`, the three helper diffs, the server `operationLogic.js` validator and apply path, `DocLimits`, both Node test files, the QML twin, design, test plan, all `tx-c-` / `act-` consumers. Domains 2-5 of the QML review (layout, loaders, delegates, states) are N/A: this PR has no visual QML. Chain probe: 4000 adversarial inputs through build, real validator, real apply, reflect, stored-doc round trip: 0 failures.
+- [x] 4. F1 FIXED (`49abb69`, pushed): a timestamp or day with only the right shape passed `build`; now a real instant (`_realTime`). Test first (red), then fix; 4 mutants (3 killed, 1 proven equivalent); QML twin rows added.
+- [x] 5. F2 FIXED (docs, this commit): the old add path never had the `{{prd}}` hole; KNOWN-ISSUES 41, STATUS and the test plan's on-device step corrected. Counts refreshed (1882, 43, 60, 68 rows, 39 mutants); KNOWN-ISSUES 46 records the sweep; design section 6 gets the `malformed-results` bullet; Skill 171 rule 5 extended.
+- [ ] 6. CI on the PR head after the docs push: read it and write the result into test plan section 5. If a QML twin row fails on the real engine, fix the row, not the planner, unless the planner is wrong.
+- [ ] 7. Taher reviews PR #201, answers the grill questions, merges. Then AP3.
 
-## Found, not fixed (documented)
-KNOWN-ISSUES 43 (`RestockPlan` accepts any non-empty `now`), 44 (dialog values the planner refuses = AP3 checklist), 45 (skill numbers).
+## Open (judged, not changed) - KNOWN-ISSUES 43-46
+43 `RestockPlan` accepts any non-empty `now` (recipe: AP2's `_realTime`). 44 dialog values the planner refuses = AP3 checklist. 46a `reflect` can refuse an answer the server has already committed: AP3 must define the dialog's behaviour. 46b restock REFUSES token-equal text, add NEUTRALISES it.
 
 ## Grill questions for Taher (veto in the PR)
 1. D-AP2-2: planner refuses bad numbers and tax outside 0..100 (stricter than today). OK?
 2. D-AP2-5: typed text is trimmed before storing. OK?
-3. D-AP2-7: `created` row stores exact stock (old path rounded 2.5 to 2).
+3. D-AP2-7: `created` row stores exact stock (old path rounded 2.5 to 2; the Purchased analytics sum `quantity` and `total` of `created` rows, so fractional stock now counts fully there).
+4. NEW: after a committed add whose answer fails `reflect`, should AP3 refresh and NOT offer retry (recommended), or show an error? See design section 6.
 
 ## NEXT (if this session stops)
-AP3 after #201 merges: read design section 6 checklist first.
-Continue at the first unchecked step. Each commit is independent. Never force-push this branch.
+Read CI on the PR head; record it; then AP3 after #201 merges. Continue at the first unchecked step. Each commit is independent. Do not force-push again without Taher's instruction.
