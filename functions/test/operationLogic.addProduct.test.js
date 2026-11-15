@@ -458,14 +458,15 @@ test("K-3 DOCUMENTED GAP (KNOWN-ISSUES 41): typed text is not escaped: a bound {
 
 // ------------------------------------------------------------------ guards
 
-test("G-1 dormancy: no QML file sends the addProduct operation yet (AP3 removes this guard when it wires the client)", () => {
+test("G-1 dormancy: no store, model or page sends the addProduct operation yet (AP3 removes this guard when it wires the client). AP2 narrowed it: the pure helpers in qml/helper (planner, label) name the op type by design; addProductPlan.test.js G-1 guards that nothing calls them", () => {
     const root = path.join(__dirname, "..", "..", "qml");
     const hits = [];
     (function walk(dir) {
         for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
             const p = path.join(dir, e.name);
             if (e.isDirectory()) walk(p);
-            else if (/\.(qml|js)$/.test(e.name) && /["']addProduct["']/.test(fs.readFileSync(p, "utf8"))) hits.push(path.relative(root, p));
+            else if (/\.(qml|js)$/.test(e.name) && path.relative(root, dir).split(path.sep)[0] !== "helper"
+                     && /["']addProduct["']/.test(fs.readFileSync(p, "utf8"))) hits.push(path.relative(root, p));
         }
     })(root);
     assert.deepEqual(hits, []);
