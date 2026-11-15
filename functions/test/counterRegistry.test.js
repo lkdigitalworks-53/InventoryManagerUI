@@ -7,7 +7,7 @@ const R = require("../lib/counterRegistry");
 test("isKnownCounter: only registry keys, never inherited object names", () => {
     assert.equal(R.isKnownCounter("supplier"), true);
     assert.equal(R.isKnownCounter("stock_batch"), true);
-    for (const bad of ["product", "order", "staff", "", "toString", "constructor", "__proto__", "hasOwnProperty", null, undefined, 5, {}])
+    for (const bad of ["order", "staff", "inventory", "", "toString", "constructor", "__proto__", "hasOwnProperty", null, undefined, 5, {}])
         assert.equal(R.isKnownCounter(bad), false, String(bad));
 });
 

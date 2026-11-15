@@ -5032,3 +5032,21 @@ Rules:
 16. (PR #196 second sweep) A helper that only passes a call through to another helper is a facade nobody asked for: `EditOrderPicker.cartQty` and `.skippedNote` were deleted, the dialog imports `NewOrderPicker.js` and calls it. Do the delete and pin both ends (the dialog's two calls, and no such export left in the helper, EOW-19).
 
 **The check:** for the dialog, list every way a row changes (stepper, remove, price, discount, picker) and which one recomputes when; for every number the picker decides, name the status it depends on and the field it reads; for every tax or price field of an existing row, show the test that fails if the picker touches it.
+
+## Skill 168: Split a client-and-server feature so the SERVER half merges and deploys first, dormant, then every client slice is device-testable while its own PR is open
+
+**Why:** PR #197 (R5b) carried a server half and a client half in one PR. Functions deploy only from `main` after merge, so Taher's device test of the open PR ran the new client against the OLD server and got a terminal 400 `unsupported-entity`, shown as "The server cannot accept this request" (KNOWN-ISSUES 33). Nothing was wrong with the code; the sequence was impossible.
+
+**Rules:**
+1. A feature that needs a new server capability is cut in slices whose FIRST slice is the server alone, additive and dormant: nothing in the app sends the new request, so the deploy cannot change behaviour, a revert is safe, and the approval can be given at once.
+2. Prove "dormant" with a test, not a sentence: a guard reads every QML and helper file and fails if the new op type's name appears (AP1 G-1). The slice that wires the client DELETES that guard in its own diff, which makes the switch-on visible in review.
+3. The ops the server accepts and the ops the client plans are checked against each other in Node: the client planner runs against the REAL server validator, so "the client plans what the server accepts" is a test. The server slice therefore needs no per-op-type shape check (D-AP-6): a second source of truth deployed in lock-step is a second place to drift.
+4. Tie every per-opType allowance to ONE table and derive the lists from it (`ACTIVITY_KIND_BY_OPTYPE`, `opTypes: Object.keys(...)`). Two lists that must agree will one day not.
+5. A rule that WIDENS an older rule (the feed row may now be written by two op types) leaves the older rule byte-identical and pins it with a regression case (V-12), and the old assertions that said "restock only" are flipped in the same commit with a name that says why.
+6. Reuse the engine, do not extend it: the `product` counter is ONE registry entry; the id substitution, the collision probe, the heal, the replay marker, the rollback-without-a-trace and the ledger derivation were all proven by earlier slices and are re-proved here only through the new shape (B-1..B-15).
+7. When two writers share a counter doc (the server mint and the client's single and bulk mints), extend the drift guard to pin BOTH client minters and mutation-test the guard (5 new mutants).
+8. A known hole that is not this slice's job is written as a test that pins today's behaviour and says so (K-1: a non-numeric stock leaves no ledger row; `recordMutation` has the same hole), so the day it is fixed the test flips on purpose.
+9. Deploy order is part of the design: server first, client later, and the PR says which slice a device test belongs to.
+10. An id derived from a COUNTER number is only as unique as the counter. When a counter can be damaged and re-seeded (here any member can write it) and the rows derived from it outlive the thing they describe (history of a deleted product), a deterministic id turns "never overwrite" into a permanent 409 on every retry. Derive such ids from the operation as well (its nonce), and pin the dead end as a test before the planner is built (K-2). Same for typed text that goes through a substitution grammar: neutralise the delimiters where the text is built (K-3).
+
+**The check:** can the server half be merged and deployed with the app untouched, and would a revert change nothing a user can see? If not, the slice is too big.
