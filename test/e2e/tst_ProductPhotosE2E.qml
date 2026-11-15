@@ -38,6 +38,7 @@ TestCase {
     readonly property string realUploadUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/uploadProductPhoto"
     readonly property string realDeleteUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/deleteProductPhoto"
     readonly property string realFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
+    readonly property string realOperationFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordOperation"
 
     // 1x1 white-pixel JPEG, base64 -- small, real, and passes photoValidation's JPEG-magic-byte
     // check without needing an actual asset file on disk (this directory's XHR file:// reads need
@@ -136,6 +137,8 @@ TestCase {
         // emulatorFunctionsBase already and don't go through Gateway at all
         // -- only the setup helper does.
         Gateway.functionUrl = emulatorFunctionsBase + "/recordMutation"
+        // AP3a: add product is one recordOperation now; without this it hit the REAL cloud URL.
+        Gateway.operationFunctionUrl = emulatorFunctionsBase + "/recordOperation"
         AuthStore.idToken = fixture.idToken
         AuthStore.uid = fixture.uid
         AuthStore.tenantId = fixture.tenantId
@@ -145,18 +148,27 @@ TestCase {
     function cleanup() {
         FirebaseService.emulatorHost = ""
         Gateway.functionUrl = realFunctionUrl
+        Gateway.operationFunctionUrl = realOperationFunctionUrl
         AuthStore.idToken = ""
         AuthStore.tenantId = ""
     }
 
     function _createProduct(name, sku) {
         var createdId = "", done = false
-        InventoryStore.addProduct(
-            name, sku, "General", "", 100, "pc", 10, 2,
-            120, false, 0, fixture.supplierName, 80, "",
-            function(ok, id) { done = true; createdId = ok ? id : "" }
-        )
-        tryVerify(function() { return done }, 5000, "addProduct callback never fired")
+        // AP3a (design D-AP-7): adding a product needs a connection and is ONE awaited operation (recordOperation). This helper is
+        // setup for other features, so it makes the app "online" only for the add and restores it. CI is the oracle for this seam.
+        var wasOnline = AuthService.isOnline
+        AuthService.isOnline = true
+        try {
+            InventoryStore.addProduct(
+                name, sku, "General", "", 100, "pc", 10, 2,
+                120, false, 0, fixture.supplierName, 80, "",
+                function(ok, id) { done = true; createdId = ok ? id : "" }
+            )
+            tryVerify(function() { return done }, 5000, "addProduct callback never fired")
+        } finally {
+            AuthService.isOnline = wasOnline
+        }
         verify(createdId.length > 0, "addProduct did not return a productId")
         var docPath = "tenants/" + fixture.tenantId + "/inventory/" + createdId
         _pollDoc(docPath, createdId, function(d) { return d !== null }, 5000,

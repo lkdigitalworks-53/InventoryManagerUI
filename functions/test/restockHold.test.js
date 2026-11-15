@@ -167,7 +167,7 @@ test("P-1 updateProduct asks updateRefusal before it clones or mutates anything"
     assert.ok(body.indexOf("return refusal") > at && body.indexOf("return refusal") < body.indexOf("_clone()"), "a refusal returns before any change");
 });
 
-test("P-2 the only whole-record inventory writers are updateProduct (update), deleteProduct (delete), addProduct and the import (create)", () => {
+test("P-2 the only whole-record inventory writers are updateProduct (update), deleteProduct (delete) and the import (create); addProduct is an operation since AP3a", () => {
     const calls = [];
     for (const f of walk(path.join(HELPER_DIR, ".."))) {
         const text = fs.readFileSync(f, "utf8");
@@ -177,11 +177,11 @@ test("P-2 the only whole-record inventory writers are updateProduct (update), de
             if (m) calls.push(path.relative(path.join(HELPER_DIR, ".."), f) + ": " + m[0].trim());
         }
     }
-    assert.equal(calls.length, 4, "a NEW whole-record inventory writer must go through restockHoldMessage first:\n" + calls.join("\n"));
+    assert.equal(calls.length, 3, "a NEW whole-record inventory writer must go through restockHoldMessage first:\n" + calls.join("\n"));
     assert.ok(calls.every((c) => c.startsWith("model/InventoryStore.qml: ")));
     assert.equal(calls.filter((c) => c.includes("recordEdit(\"inventory\", productId, \"update\"")).length, 1);
     assert.equal(calls.filter((c) => c.includes("recordMutation(\"inventory\", productId, \"delete\"")).length, 1);
-    assert.equal(calls.filter((c) => c.includes("\"create\"")).length, 1, "addProduct's create");
+    assert.equal(calls.filter((c) => c.includes("\"create\"")).length, 0, "addProduct no longer writes a whole record: it sends ONE operation (AP3a)");
     assert.equal(calls.filter((c) => c.includes("recordMutations(\"inventory\", mutationItems)")).length, 1);
     // ...and the import's bulk call only ever sends creates; its overwrites go through logic.updateProduct.
     const sync = extractFunction("model/InventoryStore.qml", "_upsertManySync");

@@ -10,6 +10,8 @@ import "../helper/PhotoQueueLogic.js" as PQL
 import "../helper/StockMovements.js" as StockMovements
 import "../helper/RestockPlan.js" as RestockPlan
 import "../helper/RestockFlow.js" as RestockFlow
+import "../helper/AddProductPlan.js" as AddProductPlan
+import "../helper/AddProductFlow.js" as AddProductFlow
 import "../helper/FailureCause.js" as FailureCause
 
 QtObject {
@@ -304,7 +306,8 @@ QtObject {
     // reject a completely ordinary single-user edit as a false conflict —
     // not a rare race, a near-certainty on the second touch of any record.
     // Verified consistent as of this date; re-check both functions together
-    // whenever either one changes.
+    // whenever either one changes. AP3a: the doc addProduct sends is now built by
+    // AddProductPlan.build (server-minted ids); a drift test pins its key list to this one.
     function _clone() {
         var a = [];
         for (var i = 0; i < products.length; ++i) {
@@ -566,6 +569,9 @@ QtObject {
 
     // Async — see FirebaseService.mintCounterValue for why max(existing)+1
     // isn't safe (id reuse after delete, concurrent-add collisions).
+    // AP3a: NO production caller any more (addProduct's id is minted inside the server transaction). Kept only because
+    // operationLogic.addProduct.test.js R-1 pins the server counter's id format to this body; delete it and repoint
+    // that test when the bulk import (step 4) moves to the server mint too.
     function nextProductId(callback) {
         var seedMax = 0;
         for (var i = 0; i < products.length; ++i) {
@@ -604,110 +610,130 @@ QtObject {
         return parseInt(String(productId).split('-')[1]);
     }
 
-    // The `party` legacy argument is now treated as a SUPPLIER ID for new
-    // callers; old callers that still pass a name string are routed via
-    // SupplierStore.findByName/addSupplier so legacy code paths keep working.
-    // `unitCost` is the cost-per-unit of the initial-stock batch (defaults
-    // to product cost `price` when not supplied — matches the previous
-    // implicit assumption).
+    // atomic-ops AP3a (design 2026-11-16-ap3a-add-product-wire-design.md). One tap = ONE atomic server operation: the product, its
+    // opening batch (only when stock > 0), a NEW supplier (only for a new name), the "created" history row and the Activity
+    // row are written in one transaction and the server mints every id. A refused or repeated add burns no number and leaves
+    // no orphan supplier or batch-less product. Needs a connection (D-AP-7): offline there is no id to show.
+    readonly property string addOfflineMessage: AddProductFlow.OFFLINE_TEXT
+    readonly property string addQueuedMessage: AddProductFlow.QUEUED_TEXT
+    readonly property string addUnconfirmedMessage: AddProductFlow.UNCONFIRMED_TEXT
+    readonly property string addDiscardedMessage: AddProductFlow.DISCARDED_TEXT
+    // key -> true while a live callback has already settled the operation, so the Gateway signal that always follows
+    // (onAddProductApplied/Rejected) does not repeat the effects. key -> typed name is this launch only.
+    property var _addSettled: ({})
+    property var _addNames: ({})
+
+    // `party` may be "", a supplierId, an existing supplier name, a brand-new name, or the structured { id } / { newName }
+    // (RestockFlow.supplierFor decides; a new supplier is created INSIDE the operation). `sellingPrice`, `unitCost`,
+    // `taxPercent` and `minStock` default as AddProductFlow.makeInput says.
+    // callback(ok, productId, refusal, status), exactly once:
+    //   (true,  id, undefined, "applied")      the server applied it; the product, batch, history and Activity are in the local stores
+    //   (true,  "", undefined, "queued")       saved but not answered yet (slow link); the product appears when the server answers
+    //   (true,  "", undefined, "unconfirmed")  the server answered but the answer could not be read: the lists are re-read and NO retry is
+    //                                          offered (a new tap is a new key, so a second product)
+    //   (false, "", message)                   nothing was saved; `message` is the cause, show it instead of "try again"
     function addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent, party, unitCost, size, callback) {
-        // Size check first, before a productId is minted or a supplier created. A draft doc with
-        // a placeholder id is enough: the id is a few bytes, the description is the whole risk.
-        var draft = _newProductDoc("PRD-0000000000", name, sku, category, stock, minStock, price,
-                                   (sellingPrice !== undefined && sellingPrice !== null) ? sellingPrice : price,
-                                   !!taxable, taxPercent || 0, size || "", unit, description, party || "")
-        if (DocLimits.exceedsDoc(draft)) {
-            if (callback) callback(false, "", tooLargeMessage)
+        function finish(ok, id, refusal, status) { if (callback) callback(ok, id, refusal, status) }
+        // Pure checks first: a refusal queues nothing, burns no key and (D-AP3-2) shows its own text even when offline.
+        var made = AddProductFlow.makeInput({
+            key: AddProductFlow.newKey(Date.now(), Math.random), name: name, sku: sku, category: category, unit: unit, size: size,
+            description: description, price: price, sellingPrice: sellingPrice, taxable: taxable, taxPercent: taxPercent, stock: stock,
+            minStock: minStock, unitCost: unitCost, party: party, suppliers: SupplierStore.suppliers, now: new Date() })
+        var plan = made.ok ? AddProductPlan.build(made.input) : made
+        if (!plan.ok) {
+            console.warn("[InventoryStore] add product refused:", plan.reason)
+            finish(false, "", plan.reason === "too-large" ? tooLargeMessage : AddProductFlow.refusalText(plan.reason))
             return
         }
-        // Resolve supplier first (only actually async when `party` is a
-        // brand-new name that needs a fresh supplierId minted — an existing
-        // id/name resolves synchronously-fast via the callback), then mint
-        // the productId, then build+persist the product. Both mints go
-        // through FirebaseService.mintCounterValue (see its comment for why).
-        _resolveSupplierId(party, function(supplierId, supplierFailed) {
-            if (supplierFailed) {
-                console.warn("[InventoryStore] could not create the requested supplier — add aborted")
-                if (callback) callback(false, "")
+        // A supplier a queued restock or add creates is unknown to SupplierStore until the server answers, and the server does not
+        // dedupe by name: the same new name now would make a second supplier. Known suppliers and "none" are not affected.
+        var newSupplier = made.input.supplier
+        if (newSupplier && typeof newSupplier.newName === "string"
+                && RestockFlow.queuedNewSupplierClash(newSupplier.newName, OutboxStore.items)) {
+            finish(false, "", AddProductFlow.supplierPendingText(newSupplier.newName))
+            return
+        }
+        var online = (typeof AuthService !== "undefined" && AuthService) ? AuthService.isOnline === true : false
+        if (!online) { finish(false, "", addOfflineMessage); return }
+
+        _addNames[plan.key] = String(name === undefined || name === null ? "" : name).trim()
+        Gateway.recordOperation("addProduct", plan.ops, plan.key, { awaitServer: true }, function(res) {
+            var kind = AddProductFlow.classify(res)
+            if (kind === "queued") { finish(true, "", undefined, "queued"); return }
+            _addSettled[plan.key] = true
+            if (kind === "applied") {
+                var out = _applyAddProduct(plan.key, res.results, res.idempotentReplay === true)
+                if (out.ok) finish(true, out.productId, undefined, "applied")
+                else finish(true, "", undefined, "unconfirmed")
                 return
             }
-            nextProductId(function(id) {
-                if (!id) {
-                    console.warn("[InventoryStore] could not mint a productId — add aborted")
-                    if (callback) callback(false, "")
-                    return
-                }
-                var arr = _clone();
-                var sp = (sellingPrice !== undefined && sellingPrice !== null) ? sellingPrice : price;
-                var tx = !!taxable;
-                var tp = (typeof taxPercent === "number" && !isNaN(taxPercent)) ? taxPercent : 0;
-                var sz = size || "";
-                var doc = _newProductDoc(id, name, sku, category, stock, minStock,
-                                         price, sp, tx, tp, sz, unit, description, supplierId);
-                arr.push(doc);
-                // Optimistic local update; persist this one product via the gateway
-                // (a per-doc create, not the legacy bulk PUT of the whole collection).
-                products = arr;
-                Gateway.recordMutation("inventory", id, "create", null, doc);
-                ActivityLog.record("product_added",
-                                   "Product added: " + name,
-                                   (sku ? sku + " · " : "") + "stock " + stock,
-                                   id);
-                var batchCost = (typeof unitCost === "number" && !isNaN(unitCost)) ? unitCost : (price || 0);
-
-                // Always record creation (even with 0 initial stock) so the product
-                // details "History" section opens with a true creation row instead of
-                // looking like the product was restocked.
-                TransactionStore.recordCreated(id, name, stock, batchCost, {
-                    sku: sku || "",
-                    category: category || "",
-                    unit: unit || "",
-                    sellingPrice: sp,
-                    taxable: tx,
-                    taxPercent: tp,
-                    size: sz,
-                    minStock: minStock || 0,
-                    description: description || "",
-                    supplierId: supplierId
-                }, supplierId);
-
-                // Initial stock is treated as the first FIFO batch. Skip when stock
-                // is 0 — there's nothing to consume from a zero-quantity batch.
-                // addBatch is async (mints its own batchId) — fire-and-forget here,
-                // same as before this call site's return value was ever used.
-                if (stock > 0) {
-                    StockBatchStore.addBatch(id, supplierId, stock, batchCost, "Initial stock");
-                }
-                if (callback) callback(true, id)
-            })
+            finish(false, "", _addFailureText(plan.key, res))
         })
     }
 
-    // Internal: turn a free-text "party" argument into a stable supplierId.
-    // Empty input calls back with "". A name that already maps to a supplier
-    // calls back with that id. A new name promotes the supplier on the fly
-    // (async — see SupplierStore.addSupplier) so legacy call sites (which
-    // haven't been updated to pass an id) still produce first-class supplier
-    // records. Always calls back via the callback, even on the fast/already-
-    // resolved paths, so callers don't have to special-case sync vs async.
-    function _resolveSupplierId(party, callback) {
-        if (!party) { callback("", false); return }
-        var raw = String(party);
-        // Already an id?
-        if (raw.indexOf("SUP-") === 0) {
-            var byId = SupplierStore.getById(raw);
-            callback(byId ? byId.supplierId : raw, false);
-            return;
+    function _addFailureText(key, rejection) {
+        var typed = _addNames[key] || ""
+        delete _addNames[key]
+        if (rejection && rejection.discarded === true) return addDiscardedMessage
+        return FailureCause.forAddProduct(rejection, typed).text
+    }
+
+    // The ONE place a confirmed add reaches the local stores, whether the answer arrived to a waiting caller or later through
+    // Gateway.operationApplied (queued, await window over, relaunch, replay). A replayed answer carries the product as of the
+    // FIRST application, which can be older than the server's (sales since), so a replay adds nothing to the list and re-reads
+    // the inventory instead. An answer that cannot be read as exactly one add ({ ok: false }) changes nothing locally and re-reads
+    // everything the operation could have written (D-AP3-4: the server may have committed it; never offer a plain retry).
+    function _applyAddProduct(key, results, replay) {
+        delete _addNames[key]
+        var out = applyAddProductResults(results, { replay: replay })
+        if (out.ok && !replay) return out
+        syncFromFirebase()
+        StockBatchStore.syncFromFirebase()
+        if (!out.ok) { SupplierStore.syncFromFirebase(); TransactionStore.syncFromFirebase() }
+        return out
+    }
+
+    // Reflects a server-confirmed add into the local stores WITHOUT sending anything. Returns AddProductPlan.reflect's outcome;
+    // when the answer is not exactly one add ({ ok: false }) NOTHING is applied. Idempotent: the supplier, batch, history row and
+    // Activity row are skipped when already present, and the product is not added twice (a sync may have landed it first).
+    // `opts.replay === true` leaves the product out (see _applyAddProduct).
+    function applyAddProductResults(results, opts) {
+        var out = AddProductPlan.reflect(results)
+        if (!out.ok) {
+            console.warn("[InventoryStore] add product results not applied:", out.detail)
+            return out
         }
-        var byName = SupplierStore.findByName(raw);
-        if (byName) { callback(byName.supplierId, false); return; }
-        SupplierStore.addSupplier({ name: raw }, function(created) {
-            // `failed` is true only when the caller asked for a genuinely
-            // new supplier and creation didn't happen (network drop etc) —
-            // distinct from an empty party, which is a legitimate "no
-            // supplier requested" and never a failure.
-            callback(created ? created.supplierId : "", !created);
-        });
+        if (out.supplier) SupplierStore.addLocalSupplier(out.supplier)
+        if (out.batch) StockBatchStore.addLocalBatch(out.batch)
+        TransactionStore.addLocalEntries([out.created])
+        ActivityLog.adopt(out.activity)
+        if (!(opts && opts.replay === true)) _addLocalProduct(out.product)
+        return out
+    }
+
+    // The same field list _clone() reads and addProduct has always sent (see the _clone() invariant above).
+    function _addLocalProduct(doc) {
+        if (findIndexById(doc.productId) >= 0) return false
+        var arr = _clone()
+        arr.push(_newProductDoc(doc.productId, doc.name, doc.sku, doc.category, doc.stock, doc.minStock, doc.price, doc.sellingPrice,
+                                !!doc.taxable, doc.taxPercent, doc.size || "", doc.unit, doc.description, doc.supplierId || ""))
+        products = arr
+        return true
+    }
+
+    // DataModel routes Gateway.operationApplied / operationRejected for opType "addProduct" here. Both are no-ops when the live
+    // callback already settled the same key.
+    function onAddProductApplied(requestId, results, replay) {
+        if (_addSettled[requestId]) { delete _addSettled[requestId]; return }
+        _applyAddProduct(requestId, results, replay === true)
+    }
+
+    // -> the message to announce, or "" (settled live already, or the person discarded it on purpose). Nothing exists server-side
+    // after a rejection and nothing was applied locally, so there is nothing to undo.
+    function onAddProductRejected(requestId, rejection) {
+        if (_addSettled[requestId]) { delete _addSettled[requestId]; return "" }
+        var text = _addFailureText(requestId, rejection)
+        return (rejection && rejection.discarded === true) ? "" : "A queued product was not added. " + text
     }
 
     // Book the ledger side-effects for an imported product so analytics

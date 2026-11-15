@@ -269,15 +269,18 @@ Item {
                 return
             }
             InventoryStore.addProduct(name, sku, category, description, price, unit, stock, minStock, sellingPrice, taxable, taxPercent,
-                undefined, undefined, undefined, function(ok, productId, refusal) {
+                undefined, undefined, undefined, function(ok, productId, refusal, status) {
                     if (!ok) {
-                        // refusal = over the 1 MiB doc limit (nothing was queued); otherwise a
-                        // mint/supplier failure that a retry can fix.
+                        // refusal = the cause (offline, over the 1 MiB doc limit, a value the planner refuses, a server
+                        // refusal); nothing was queued, so there is nothing to retry blindly.
                         if (refusal) dispatcher.errorOccurred("inventory", refusal)
                         else dispatcher.errorOccurred("network", "Could not add product — try again")
                         return
                     }
-                    dispatcher.productAdded(productId)
+                    // AP3a: queued = saved, the product appears when the server answers (onOperationApplied settles it), so no
+                    // productAdded yet. unconfirmed = the server may have saved it: say so, offer no retry.
+                    if (status === "unconfirmed") { dispatcher.errorOccurred("inventory", InventoryStore.addUnconfirmedMessage); return }
+                    if (status === "applied") dispatcher.productAdded(productId)
                 })
         }
 
@@ -669,6 +672,8 @@ Item {
             if (opType === "completeOrder" && open && open.undo) dataModel._settleApplied(requestId, results)
             // R4: a restock confirmed after its caller left (queued offline, slow, relaunch, replay).
             else if (opType === "restock") InventoryStore.onRestockApplied(requestId, results, replay)
+            // AP3a: an add confirmed after its caller left (slow link, relaunch, replay).
+            else if (opType === "addProduct") InventoryStore.onAddProductApplied(requestId, results, replay)
         }
         function onOperationRejected(requestId, opType, rejection) {
             var open = dataModel._openCompletions[requestId]
@@ -677,6 +682,11 @@ Item {
                 var failure = InventoryStore.onRestockRejected(requestId, rejection)
                 if (failure.length > 0 && dispatcher && typeof dispatcher.errorOccurred === "function")
                     dispatcher.errorOccurred("inventory", failure)
+            }
+            else if (opType === "addProduct") {
+                var addFailure = InventoryStore.onAddProductRejected(requestId, rejection)
+                if (addFailure.length > 0 && dispatcher && typeof dispatcher.errorOccurred === "function")
+                    dispatcher.errorOccurred("inventory", addFailure)
             }
         }
         // A write got parked, or Retry/Discard/prune un-parked one: the caption must follow.

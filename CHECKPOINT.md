@@ -12,15 +12,15 @@ AP1 server (#199), AP2 client pure layer (#201) merged. **AP3 is split (D-AP3-1)
 ## Steps (tick as done)
 - [x] 0. Clone, memory, read STATUS section 14/15, designs AP1/AP2, store, dialog, DataModel, e2e files. Next task = AP3.
 - [x] 1. Branch cut, previous checkpoint archived, this file written.
-- [ ] 2. Design doc + test plan skeleton.
-- [ ] 3. `AddProductFlow.js` + `RestockFlow.queuedNewSupplierClash` covers addProduct ops; Node tests.
-- [ ] 4. `InventoryStore.addProduct` rewrite, `applyAddProductResults`, answer hooks, remove `_resolveSupplierId`.
-- [ ] 5. `DataModel` route (call site + Connections).
-- [ ] 6. Dialog status handling only.
-- [ ] 7. e2e: 5 `_createProduct` helpers (scoped online flip), 3 files point `operationFunctionUrl` at the emulator.
-- [ ] 8. Guards: delete AP1 G-1 and AP2 G-1, update SB-4, P-2, add wiring pins.
+- [ ] 2. Design doc + test plan skeleton (written with the docs step 11, after the code).
+- [x] 3. `AddProductFlow.js` + `RestockFlow.queuedNewSupplierClash` covers addProduct ops; Node tests.
+- [x] 4. `InventoryStore.addProduct` rewrite, `applyAddProductResults`, answer hooks, remove `_resolveSupplierId`.
+- [x] 5. `DataModel` route (call site + Connections).
+- [x] 6. Dialog status handling only.
+- [x] 7. e2e: 5 `_createProduct` helpers (scoped online flip), 3 files point `operationFunctionUrl` at the emulator.
+- [x] 8. Guards: delete AP1 G-1 and AP2 G-1, update SB-4, P-2, add wiring pins.
 - [ ] 9. QML twins (CI-only).
-- [ ] 10. Run `node --test` in `functions/`, fix, commit, push.
+- [~] 10. `node --test` in `functions/`: 1899/1899 pass after steps 3-8 (commit 1 of the code). Still to add: `addProductWire.test.js` (real InventoryStore bodies in Node) then re-run.
 - [ ] 11. Docs: STATUS section 16, KNOWN-ISSUES, README/AGENTS/SKILLS, test plan numbers.
 - [ ] 12. Push, read CI if reachable, final report (done / next).
 

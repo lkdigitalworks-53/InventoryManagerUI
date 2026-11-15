@@ -675,12 +675,14 @@ test("K-6 differential monkey (1500 pairs): the clash agrees with the known-supp
 });
 
 test("K-7 InventoryStore.restock asks AFTER the same-product holds and BEFORE anything is queued, only for a NEW supplier, from the stored queue", () => {
-    const hold = STORE_SRC.indexOf("if (hasQueuedRestock(productId)) { finish(false, false, restockPendingMessage); return }");
-    const ask = STORE_SRC.indexOf("RestockFlow.queuedNewSupplierClash(newSupplier.newName, OutboxStore.items)");
-    const queue = STORE_SRC.indexOf("Gateway.recordOperation(\"restock\"");
-    const names = STORE_SRC.indexOf("_restockNames[plan.key] = current.name");
+    // AP3a: addProduct (earlier in the file) asks the same question, so look inside restock's own body.
+    const body = STORE_SRC.substring(STORE_SRC.indexOf("function restock("), STORE_SRC.indexOf("function _restockFailureText("));
+    const hold = body.indexOf("if (hasQueuedRestock(productId)) { finish(false, false, restockPendingMessage); return }");
+    const ask = body.indexOf("RestockFlow.queuedNewSupplierClash(newSupplier.newName, OutboxStore.items)");
+    const queue = body.indexOf("Gateway.recordOperation(\"restock\"");
+    const names = body.indexOf("_restockNames[plan.key] = current.name");
     assert.ok(hold > 0 && ask > hold && names > ask && queue > names, [hold, ask, names, queue].join(" "));
-    assert.ok(STORE_SRC.indexOf("var newSupplier = made.input.supplier") > hold, "reads the planned supplier, so the string and object party forms are both covered");
-    assert.ok(STORE_SRC.indexOf("typeof newSupplier.newName === \"string\"") > 0, "a known supplier or no supplier is never asked");
-    assert.ok(STORE_SRC.indexOf("RestockFlow.supplierPendingText(newSupplier.newName)") > ask);
+    assert.ok(body.indexOf("var newSupplier = made.input.supplier") > hold, "reads the planned supplier, so the string and object party forms are both covered");
+    assert.ok(body.indexOf("typeof newSupplier.newName === \"string\"") > 0, "a known supplier or no supplier is never asked");
+    assert.ok(body.indexOf("RestockFlow.supplierPendingText(newSupplier.newName)") > ask);
 });

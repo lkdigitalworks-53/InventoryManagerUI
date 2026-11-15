@@ -38,12 +38,13 @@ function expectations(year) {
         { file: "StockBatchStore.qml", label: "batch id prefix per year", re: /return "BAT-" \+ year \+ "-"/ },
         { file: "StockBatchStore.qml", label: "batch id padding", re: /callback\(ok \? \(prefix \+ String\(value\)\.padStart\(3, '0'\)\) : ""\)/ },
         { file: "StockBatchStore.qml", label: "batch doc id = batchId", test: (src) => everyCreateUses(src, "stock_batch", "doc.batchId") },
-        // AP1: the product id. Two client minters write the SAME counter doc (single add, bulk import) and both must format like the server.
+        // AP1: the product id. Two client minters write the SAME counter doc and both must format like the server: the bulk import, and
+        // nextProductId (AP3a: no production caller, kept as this format pin until the import moves to the server mint; the single add
+        // is a server-minted operation now, so its former "doc id = the minted id" row is gone with its create call).
         { file: "InventoryStore.qml", label: "product counter name (single mint)", re: new RegExp('mintCounterValue\\("counters/' + prd.counterName + '"') },
         { file: "InventoryStore.qml", label: "product counter name (import mint)", re: new RegExp('mintCounterBatch\\("counters/' + prd.counterName + '"') },
         { file: "InventoryStore.qml", label: "product id format (single mint)", re: new RegExp("callback\\(ok \\? \\('" + prd.prefix + "' \\+ String\\(value\\)\\.padStart\\(3, '0'\\)\\)") },
-        { file: "InventoryStore.qml", label: "product id format (import mint)", re: new RegExp("return '" + prd.prefix + "' \\+ String\\(prodStart \\+ mintedProductIdx\\)\\.padStart\\(3, '0'\\)") },
-        { file: "InventoryStore.qml", label: "product doc id = the minted id", test: (src) => everyCreateUses(src, "inventory", "id") }
+        { file: "InventoryStore.qml", label: "product id format (import mint)", re: new RegExp("return '" + prd.prefix + "' \\+ String\\(prodStart \\+ mintedProductIdx\\)\\.padStart\\(3, '0'\\)") }
     ];
 }
 function failures(sources, year) {
@@ -55,7 +56,7 @@ test("guard: the QML stores still mint supplier, batch and product ids exactly a
     assert.deepEqual(failures(sources(), "2026"), []);
 });
 
-test("guard: a changed counter name, prefix, padding or doc id in QML is caught (the guard itself is mutation-tested: 12 source mutants)", () => {
+test("guard: a changed counter name, prefix, padding or doc id in QML is caught (the guard itself is mutation-tested: 11 source mutants)", () => {
     const base = sources();
     const mutants = [
         ["SupplierStore.qml", "counters/suppliers", "counters/supplier"],
@@ -68,8 +69,7 @@ test("guard: a changed counter name, prefix, padding or doc id in QML is caught 
         ["InventoryStore.qml", "mintCounterValue(\"counters/products\"", "mintCounterValue(\"counters/product\""],
         ["InventoryStore.qml", "mintCounterBatch(\"counters/products\"", "mintCounterBatch(\"counters/items\""],
         ["InventoryStore.qml", "callback(ok ? ('PRD-' + String(value).padStart(3, '0'))", "callback(ok ? ('PROD-' + String(value).padStart(3, '0'))"],
-        ["InventoryStore.qml", "return 'PRD-' + String(prodStart + mintedProductIdx).padStart(3, '0')", "return 'PRD-' + String(prodStart + mintedProductIdx).padStart(4, '0')"],
-        ["InventoryStore.qml", "Gateway.recordMutation(\"inventory\", id, \"create\"", "Gateway.recordMutation(\"inventory\", doc.sku, \"create\""]
+        ["InventoryStore.qml", "return 'PRD-' + String(prodStart + mintedProductIdx).padStart(3, '0')", "return 'PRD-' + String(prodStart + mintedProductIdx).padStart(4, '0')"]
     ];
     for (const [file, from, to] of mutants) {
         assert.ok(base[file].indexOf(from) >= 0, "mutant target not found: " + from);

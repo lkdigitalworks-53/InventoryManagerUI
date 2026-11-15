@@ -182,6 +182,15 @@ TestCase {
         }, 15000, "Cloud Functions emulator never responded to the recordDelta warm-up call")
         verify(deltaResult.status === 200 || deltaResult.status === 404,
                "warm-up recordDelta call got an unexpected status " + deltaResult.status)
+
+        // AP3a: add product is ONE recordOperation, so the add tests below pay the function's cold start (the emulator spins up
+        // a worker on the FIRST call of each function, see the comment above). An empty operation is refused (400) which is
+        // enough to prove the worker is warm; the 5000 ms budgets of the real tests stay meaningful.
+        var opResult = E2EHelpers.postDirect(this, emulatorFunctionsBase + "/recordOperation", {
+            env: "prd", requestId: "restock:warmup-" + Date.now(), opType: "restock", ops: [],
+            clientTimestamp: new Date().toISOString()
+        }, 15000, "Cloud Functions emulator never responded to the recordOperation warm-up call")
+        verify(opResult.status > 0, "warm-up recordOperation call got no HTTP status")
     }
 
     function init() {
@@ -235,12 +244,20 @@ TestCase {
     function _createProduct(name, sku, stock) {
         var createdId = ""
         var done = false
-        InventoryStore.addProduct(
-            name, sku, "General", "", 100, "pc", stock, 2,
-            120, false, 0, fixture.supplierName, 80, "",
-            function(ok, id) { done = true; createdId = ok ? id : "" }
-        )
-        tryVerify(function() { return done }, 5000, "addProduct callback never fired")
+        // AP3a (design D-AP-7): adding a product needs a connection and is ONE awaited operation (recordOperation). This helper is
+        // setup for other features, so it makes the app "online" only for the add and restores it. CI is the oracle for this seam.
+        var wasOnline = AuthService.isOnline
+        AuthService.isOnline = true
+        try {
+            InventoryStore.addProduct(
+                name, sku, "General", "", 100, "pc", stock, 2,
+                120, false, 0, fixture.supplierName, 80, "",
+                function(ok, id) { done = true; createdId = ok ? id : "" }
+            )
+            tryVerify(function() { return done }, 5000, "addProduct callback never fired")
+        } finally {
+            AuthService.isOnline = wasOnline
+        }
         verify(createdId.length > 0, "addProduct did not return a productId")
         return createdId
     }

@@ -23,6 +23,7 @@ TestCase {
     readonly property string emulatorFirestoreHost: "http://127.0.0.1:8080"
     readonly property string emulatorFunctionsBase: "http://127.0.0.1:5001/inventorymanager-48392/asia-south1"
     readonly property string realFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
+    readonly property string realOperationFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordOperation"
 
     property var fixture: null
     property var lastConflict: null
@@ -57,6 +58,8 @@ TestCase {
         fixture = _loadFixture()
         FirebaseService.emulatorHost = emulatorFirestoreHost
         Gateway.functionUrl = emulatorFunctionsBase + "/recordMutation"
+        // AP3a: add product is one recordOperation now; without this it hit the REAL cloud URL.
+        Gateway.operationFunctionUrl = emulatorFunctionsBase + "/recordOperation"
         AuthStore.idToken = fixture.idToken
         AuthStore.uid = fixture.uid
         AuthStore.tenantId = fixture.tenantId
@@ -70,18 +73,27 @@ TestCase {
         Gateway.mutationConflicted.disconnect(_onMutationConflicted)
         FirebaseService.emulatorHost = ""
         Gateway.functionUrl = realFunctionUrl
+        Gateway.operationFunctionUrl = realOperationFunctionUrl
         AuthStore.idToken = ""
         AuthStore.tenantId = ""
     }
 
     function _createProduct(name, sku) {
         var createdId = "", done = false
-        InventoryStore.addProduct(
-            name, sku, "General", "", 100, "pc", 10, 2,
-            120, false, 0, fixture.supplierName, 80, "",
-            function(ok, id) { done = true; createdId = ok ? id : "" }
-        )
-        tryVerify(function() { return done }, 5000, "addProduct callback never fired")
+        // AP3a (design D-AP-7): adding a product needs a connection and is ONE awaited operation (recordOperation). This helper is
+        // setup for other features, so it makes the app "online" only for the add and restores it. CI is the oracle for this seam.
+        var wasOnline = AuthService.isOnline
+        AuthService.isOnline = true
+        try {
+            InventoryStore.addProduct(
+                name, sku, "General", "", 100, "pc", 10, 2,
+                120, false, 0, fixture.supplierName, 80, "",
+                function(ok, id) { done = true; createdId = ok ? id : "" }
+            )
+            tryVerify(function() { return done }, 5000, "addProduct callback never fired")
+        } finally {
+            AuthService.isOnline = wasOnline
+        }
         verify(createdId.length > 0, "addProduct did not return a productId")
         return createdId
     }
