@@ -495,3 +495,48 @@ test("NOP-32 the row is never looser than the commit on price: an enabled row is
     eq(row0.reason, "no-price");
     eq(NP.applyPlan(zero, { adds: [], bumps: [{ productId: "P", qty: 1 }] }, lk([p0])).lines[0].qty, 1);
 });
+
+// Picker v2, S5b: ONE stock rule. ceilingOf is the most units an order may hold in total; availableFor, the cart-row steppers
+// and Edit Order's save check all read it (KNOWN-ISSUES 24c, 28a, 37a, 39a).
+test("NOP-33 ceilingOf is the whole units on hand: a fractional stock rounds down, anything that is not a positive number or not a product is 0", () => {
+    eq(NP.ceilingOf(prod("A", 5)), 5);
+    eq(NP.ceilingOf(prod("A", 2.5)), 2);
+    eq(NP.ceilingOf(prod("A", 0.9)), 0);
+    eq(NP.ceilingOf(prod("A", 0)), 0);
+    eq(NP.ceilingOf(prod("A", -3)), 0);
+    for (const bad of [NaN, Infinity, -Infinity, undefined, null, "5", [], {}, true])
+        eq(NP.ceilingOf(prod("A", bad)), 0);
+    for (const notProduct of [null, undefined, 5, "A", true])
+        eq(NP.ceilingOf(notProduct), 0);
+    // it does not need a product id (the id rule belongs to availableFor)
+    eq(NP.ceilingOf({ stock: 4 }), 4);
+});
+
+test("NOP-34 availableFor is the ceiling minus what the cart holds: same numbers for every stock shape and cart shape, never negative, 0 for a blank id", () => {
+    const stocks = [0, 1, 2, 2.5, 5, 9.99, -2, NaN, undefined, "3"];
+    const carts = [[], [line("A", 1)], [line("A", 2), line("A", 2)], [line("A", 7)], [line("B", 3)], [line("A", 0)], [line("A", NaN)], [line("A", -2)]];
+    for (const st of stocks) {
+        for (const cart of carts) {
+            const p = prod("A", st);
+            const want = Math.max(0, NP.ceilingOf(p) - NP.cartQty(cart, "A"));
+            eq(NP.availableFor(p, cart), want);
+            ok(NP.availableFor(p, cart) >= 0);
+        }
+    }
+    eq(NP.availableFor(prod("", 5), []), 0);
+    eq(NP.availableFor(null, []), 0);
+});
+
+test("NOP-35 monkey, seeded: over random stocks and carts availableFor never exceeds the ceiling and ceiling minus held is exactly what is left (Node only)", () => {
+    let seed = 33;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+    for (let i = 0; i < 400; i++) {
+        const st = [rnd() * 12, Math.floor(rnd() * 12), -1, NaN][Math.floor(rnd() * 4)];
+        const cart = [];
+        for (let k = Math.floor(rnd() * 4); k > 0; k--) cart.push(line(rnd() < 0.7 ? "A" : "B", Math.floor(rnd() * 6)));
+        const p = prod("A", st);
+        const left = NP.availableFor(p, cart);
+        ok(left >= 0 && left <= NP.ceilingOf(p), "left " + left + " ceiling " + NP.ceilingOf(p));
+        eq(left, Math.max(0, NP.ceilingOf(p) - NP.cartQty(cart, "A")));
+    }
+});

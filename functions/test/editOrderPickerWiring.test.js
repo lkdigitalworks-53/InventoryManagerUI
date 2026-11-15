@@ -1,5 +1,5 @@
 "use strict";
-// Picker v2, slice S4: the Edit Order dialog is wired to the picker sheet. EOW-01..19. Plan:
+// Picker v2, slice S4: the Edit Order dialog is wired to the picker sheet. EOW-01..19; S5b adds EOW-20..25 (one stock rule, the legacy seed gone). Plan:
 // docs/superpowers/plans/2026-11-12-product-picker-v2-s4-edit-order.md. Like newOrderPickerWiring.test.js these read the
 // QML text (qmltestrunner cannot load Felgo), so they pin WIRING, not painting; EOW-12..14 also RUN the dialog's real
 // hook literal, its real row snapshot and its real _applyPicked body in a sandbox against the real helpers and a fake
@@ -33,16 +33,12 @@ function literal(src, head, open, close) {
 const fn = (name) => noComments(extractFunction("pages/OrderDetailDialog.qml", name));
 const OPEN_FOR = fn("openFor");
 
-test("EOW-01 the combo, its names array, its stock helper and the old add button are gone; the catalog stays for legacy-order seeding only", () => {
-    for (const name of ["productCombo", "catalogNames", "_availableStock", "IconActionButton"])
+test("EOW-01 the combo, its names array, its stock helper and the old add button are gone, and so are the catalog and its legacy seed (S5b, KNOWN-ISSUES 30)", () => {
+    for (const name of ["productCombo", "catalogNames", "_availableStock", "IconActionButton", "_rebuildCatalog"])
         assert.ok(!CODE.includes(name), name + " is still in OrderDetailDialog.qml");
     assert.ok(!/AppComboBox\s*\{\s*id:\s*product/.test(CODE));
-    const rebuild = fn("_rebuildCatalog");
-    assert.ok(rebuild.includes("StockBatchStore.hasPendingMint(p.productId)"), "the legacy seed still skips a pending mint");
-    assert.ok(!rebuild.includes("avail") && !rebuild.includes("names"), "no names or availability any more");
-    assert.ok(/catalog\.length >= 2 && itemCount >= 2/.test(CODE) && /catalog\[0\]\.productId/.test(CODE), "the legacy seed still reads the catalog");
-    assert.equal((CODE.match(/_rebuildCatalog\(\)/g) || []).length, 2, "the definition and one call, from openFor");
-    assert.ok(OPEN_FOR.includes("_rebuildCatalog()"));
+    assert.ok(!/\bcatalog\b/.test(CODE), "the dialog still has a catalog");
+    assert.ok(!/hasPendingMint\(p\.productId\)/.test(CODE), "the seed's own pending-mint skip is gone with it");
 });
 
 test("EOW-02 the dialog declares one ProductPickerSheet and binds all four inputs and the one output", () => {
@@ -122,8 +118,9 @@ test("EOW-09 the picker's stock formula and tax rule read the order's SAVED stat
     assert.ok(/return \{ status: dlg\._orderStatus, original: dlg\._originalLines \}/.test(f));
     assert.ok(!/statusCombo/.test(f));
     const open = OPEN_FOR;
-    assert.ok(open.indexOf("_orderStatus = String(o.status") < open.indexOf("_rebuildCatalog()"));
-    assert.ok(open.indexOf("_originalLines = (o.products") < open.indexOf("_rebuildCatalog()"));
+    // both are set before any row is shown, because the sheet's stock formula and booked-tax rule read them
+    assert.ok(open.indexOf("_orderStatus = String(o.status") >= 0 && open.indexOf("_orderStatus = String(o.status") < open.indexOf("products.clear()"));
+    assert.ok(open.indexOf("_originalLines = (o.products") >= 0 && open.indexOf("_originalLines = (o.products") < open.indexOf("products.clear()"));
 });
 
 test("EOW-10 only the two order dialogs use the sheet", () => {
@@ -137,14 +134,13 @@ test("EOW-10 only the two order dialogs use the sheet", () => {
     assert.deepEqual(offenders.sort(), ["qml/pages/NewOrderDialog.qml", "qml/pages/OrderDetailDialog.qml"]);
 });
 
-test("EOW-11 the guards that belong to the order stay in the dialog: lock, busy, stock check on save, history sync for completed edits, the + stepper's own ceiling", () => {
+test("EOW-11 the guards that belong to the order stay in the dialog: lock, busy, stock check on save, history sync for completed edits; the stock rule itself lives in the helper (S5b)", () => {
     const save = fn("_save");
-    for (const needle of ["_lockState", "needFromStock > inv.stock", "TransactionStore.hasMore", "adjustRequested", "busy = true"])
+    for (const needle of ["_lockState", "_stockErrors()", "TransactionStore.hasMore", "adjustRequested", "busy = true"])
         assert.ok(save.includes(needle), "_save lost: " + needle);
-    // the row stepper's ceiling for a completed order is still on-hand plus the original quantity
-    assert.ok(/maxQ = onHand \+ \(orig \? \(orig\.quantity \|\| 0\) : 0\)/.test(CODE));
-    // the helper's completed formula says the same thing
-    assert.ok(/_whole\(product\.stock\) \+ origQty - NP\.cartQty/.test(read("qml/helper/EditOrderPicker.js")));
+    assert.ok(!/needFromStock|inv\.stock|InventoryStore\.getById/.test(save), "_save has its own stock formula again");
+    // the completed order's ceiling is on-hand plus the units it held at completion, written once, in the helper
+    assert.ok(/NP\.ceilingOf\(product\)[\s\S]*?stock \+ \(orig \? _whole\(orig\.quantity\) : 0\)/.test(read("qml/helper/EditOrderPicker.js")));
 });
 
 test("EOW-12 the changed QML and JS files are balanced: braces, parentheses and brackets", () => {
@@ -193,7 +189,7 @@ function dialogGlue(world, rows, status, original) {
     const sandbox = { products: model, Edit: EP, NP: NPH, dlg, Toast: { show: (m) => toasts.push(m) }, stockErrorLabel: label,
                       recomputeSubtotal: () => recomputes.push(model.rows.length),
                       InventoryStore: world.InventoryStore, StockBatchStore: world.StockBatchStore };
-    const script = ["_lineItemArray", "_pickerLinesNow", "_pickerCtx", "_applyPicked"].map((n) => extractFunction("pages/OrderDetailDialog.qml", n)).join("\n")
+    const script = ["_lineItemArray", "_pickerLinesNow", "_pickerCtx", "_applyPicked", "_stockErrors"].map((n) => extractFunction("pages/OrderDetailDialog.qml", n)).join("\n")
         + "\nvar _pickerLookup = (" + literal(CODE, "readonly property var _pickerLookup", "{", "}") + ");"
         + "\nvar _pickerHooks = (" + literal(CODE, "readonly property var _pickerHooks", "{", "}") + ");";
     vm.createContext(sandbox);
@@ -201,7 +197,7 @@ function dialogGlue(world, rows, status, original) {
     dlg._pickerLinesNow = sandbox._pickerLinesNow;
     dlg._pickerCtx = sandbox._pickerCtx;
     dlg._pickerLookup = sandbox._pickerLookup;
-    return { model, toasts, recomputes, label, dlg, apply: sandbox._applyPicked, hooks: sandbox._pickerHooks };
+    return { model, toasts, recomputes, label, dlg, apply: sandbox._applyPicked, hooks: sandbox._pickerHooks, stockErrors: () => plain(sandbox._stockErrors()) };
 }
 function viewOf(g, world, draft, extra) {
     return PM.build(Object.assign({ products: world.w.products, hooks: g.hooks, orderLines: g.dlg._pickerLinesNow(),
@@ -267,7 +263,7 @@ test("EOW-16 a row removed from the model is seen at once: the hooks and _applyP
     assert.deepEqual(plain(g.model.rows.map((r) => [r.productId, r.quantity])), [["C", 1], ["A", 1]]);
 });
 
-test("EOW-17 PR #196 sweep: _findOriginalLine is EditOrderPicker.originalOf, so the stock guard, the tax forecast, the + stepper and the picker match ids the same way; run for real with a numeric id", () => {
+test("EOW-17 PR #196 sweep: _findOriginalLine is EditOrderPicker.originalOf, so the tax forecast and the stock rule (ceilingFor: sheet, + stepper, save check) match ids the same way; run for real with a numeric id", () => {
     const body = fn("_findOriginalLine");
     assert.ok(/^function _findOriginalLine\(productId\)\s*\{\s*return Edit\.originalOf\(_originalLines, productId\)\s*\}$/.test(body.trim()), body);
     assert.ok(!/\.productId\s*===\s*productId/.test(CODE), "no second id matcher is left in the dialog");
@@ -279,8 +275,8 @@ test("EOW-17 PR #196 sweep: _findOriginalLine is EditOrderPicker.originalOf, so 
     for (const blank of ["", undefined, null, "Z"]) assert.equal(run(blank, original), null);
     assert.equal(run("7", []), null);
     assert.equal(run("7", undefined), null);
-    // the three readers in the dialog all go through it
-    assert.equal((CODE.match(/_findOriginalLine\(/g) || []).length, 4, "the definition and the three readers");
+    // the one reader left in the dialog (the tax forecast) goes through it; the stock rule reads originalOf inside the helper (S5b)
+    assert.equal((CODE.match(/_findOriginalLine\(/g) || []).length, 2, "the definition and the tax forecast");
 });
 
 test("EOW-18 PR #196 sweep: closing the dialog also empties the sheet's notifier, after the picker is closed and before the order's state is cleared", () => {
@@ -323,4 +319,124 @@ test("EOW-20 S5a: the real hooks disable a product that cannot start a line, on 
     assert.deepEqual(plain(viewOf(g2, world, {}).rows.filter((r) => r.productId === "NONE").map((r) => [r.canAdd, r.maxQty])), [[true, 4]]);
     g2.apply({ adds: [], bumps: [{ productId: "NONE", qty: 2 }] });
     assert.deepEqual(plain(g2.model.rows.map((r) => [r.productId, r.quantity, r.price])), [["NONE", 3, 3]]);
+});
+
+// ---- S5b: one stock rule ----
+test("EOW-20 the legacy seed is gone: an order with no products array opens with no lines, nothing reads o.items, and the products block has no else branch", () => {
+    assert.ok(!/\bo\.items\b|itemCount\s*=\s*o\.items|catalog\[/.test(OPEN_FOR));
+    const at = OPEN_FOR.indexOf("Array.isArray(o.products)");
+    assert.ok(at >= 0);
+    const block = OPEN_FOR.substring(at, OPEN_FOR.indexOf("recomputeSubtotal()", at));
+    assert.ok(!/\belse\b/.test(block), "the seed's else branch is back");
+    assert.ok(/products\.append\(\{\s*productId: lp\.productId/.test(block), "the stored lines are still appended");
+});
+
+test("EOW-21 the real _stockErrors: per product, whole units, the saved status decides, a product that left the catalog is skipped", () => {
+    const run = (rows, status, original, mutate) => {
+        const world = fakeWorld();
+        if (mutate) mutate(world);
+        return dialogGlue(world, rows, status, original).stockErrors();
+    };
+    assert.deepEqual(run([row("A", 5)], "pending"), []);
+    assert.deepEqual(run([row("A", 6)], "pending"), ["Name A: only 5 in stock, need 1 more"]);
+    // two lines of one product share the stock (the old per-line check passed both)
+    assert.deepEqual(run([row("A", 3), row("A", 3)], "pending"), ["Name A: only 5 in stock, need 1 more"]);
+    // fractional stock: 2.5 is 2 units, as the sheet says
+    assert.deepEqual(run([row("A", 3)], "pending", [], (w) => { w.w.products[0].stock = 2.5; }), ["Name A: only 2 in stock, need 1 more"]);
+    // completed: the order's own units are already out of stock; a return never trips the check, a raise beyond on-hand plus held does
+    const held3 = [{ productId: "A", quantity: 3, taxable: false, taxPercent: 0 }];
+    assert.deepEqual(run([row("A", 3)], "completed", held3, (w) => { w.w.products[0].stock = 0; }), []);
+    assert.deepEqual(run([row("A", 1)], "completed", held3, (w) => { w.w.products[0].stock = 0; }), []);
+    assert.deepEqual(run([row("A", 5)], "completed", held3, (w) => { w.w.products[0].stock = 1; }), ["Name A: only 1 in stock, need 1 more"]);
+    // gone: skipped here, refused by completion later
+    assert.deepEqual(run([row("E", 9)], "pending", [], (w) => { w.w.products = w.w.products.filter((p) => p.productId !== "E"); }), []);
+    assert.deepEqual(run([], "pending"), []);
+});
+
+test("EOW-22 regression: for orders with one line per product and whole stock the new _stockErrors says exactly what the old per-line check said, 400 seeded orders, both statuses", () => {
+    let seed = 22;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+    const ids = ["A", "B", "C", "D", "E"];
+    for (let i = 0; i < 400; i++) {
+        const world = fakeWorld();
+        for (const p of world.w.products) p.stock = Math.floor(rnd() * 8);
+        if (rnd() < 0.3) world.w.products = world.w.products.filter((p) => p.productId !== ids[Math.floor(rnd() * 5)]);
+        const status = rnd() < 0.5 ? "pending" : "completed";
+        const original = status === "completed" ? ids.filter(() => rnd() < 0.5).map((id) => ({ productId: id, quantity: 1 + Math.floor(rnd() * 5), taxable: false, taxPercent: 0 })) : [];
+        const rows = ids.filter(() => rnd() < 0.6).map((id) => row(id, 1 + Math.floor(rnd() * 8)));
+        // the check as _save() had it before S5b
+        const old = [];
+        for (const p of rows) {
+            const inv = world.InventoryStore.getById(p.productId);
+            let need = p.quantity;
+            if (status === "completed") {
+                const o = original.filter((x) => x.productId === p.productId)[0];
+                need = Math.max(0, p.quantity - (o ? (o.quantity || 0) : 0));
+            }
+            if (inv && need > inv.stock) old.push(p.name + ": only " + inv.stock + " in stock, need " + (need - inv.stock) + " more");
+        }
+        assert.deepEqual(dialogGlue(world, rows, status, original).stockErrors(), old, JSON.stringify({ status, rows, original }));
+    }
+});
+
+test("EOW-23 the real + stepper: one more up to the one ceiling; a fractional stock, a product that left the catalog and a blank id cannot be pushed past it; a completed order goes back to what it held", () => {
+    const body = (() => {
+        const at = CODE.indexOf("Edit.stepUp(");
+        assert.ok(at >= 0, "the + stepper no longer calls Edit.stepUp");
+        const start = CODE.lastIndexOf("onClicked: {", at);
+        return literal(CODE.slice(start), "onClicked:", "{", "}");
+    })();
+    assert.ok(!/inv\.stock|maxQ|onHand/.test(body), "the stepper has its own stock formula again");
+    const tap = (rows, idx, status, original, mutate) => {
+        const world = fakeWorld();
+        if (mutate) mutate(world);
+        const g = dialogGlue(world, rows, status, original);
+        const dlg = Object.assign({}, g.dlg, { recomputeSubtotal: () => g.recomputes.push("r") });
+        const box = { Edit: EP, InventoryStore: world.InventoryStore, products: g.model, dlg, row: { rowIdx: idx }, model: Object.assign({}, g.model.rows[idx]) };
+        vm.createContext(box);
+        vm.runInContext(body, box);
+        return { qty: g.model.rows[idx].quantity, recomputes: g.recomputes.length };
+    };
+    assert.deepEqual(tap([row("A", 2)], 0, "pending"), { qty: 3, recomputes: 1 });
+    assert.equal(tap([row("A", 5)], 0, "pending").qty, 5);
+    assert.equal(tap([row("A", 2)], 0, "pending", [], (w) => { w.w.products[0].stock = 2.5; }).qty, 2, "2.5 in stock is 2 units; the old stepper reached 3");
+    assert.equal(tap([row("A", 1)], 0, "pending", [], (w) => { w.w.products[0].stock = 2.5; }).qty, 2);
+    // the other line of the same product shares the ceiling
+    assert.equal(tap([row("A", 2), row("A", 3)], 0, "pending").qty, 2);
+    // left the catalog
+    assert.equal(tap([row("E", 2)], 0, "pending", [], (w) => { w.w.products = w.w.products.filter((p) => p.productId !== "E"); }).qty, 2);
+    const held3 = [{ productId: "E", quantity: 3, taxable: false, taxPercent: 0 }];
+    const gone = (w) => { w.w.products = w.w.products.filter((p) => p.productId !== "E"); };
+    assert.equal(tap([row("E", 1)], 0, "completed", held3, gone).qty, 2);
+    assert.equal(tap([row("E", 3)], 0, "completed", held3, gone).qty, 3);
+    // a blank id
+    assert.equal(tap([row("", 2)], 0, "pending").qty, 2);
+    // completed: on-hand 5 plus 3 held
+    const held = [{ productId: "A", quantity: 3, taxable: false, taxPercent: 0 }];
+    assert.equal(tap([row("A", 7)], 0, "completed", held).qty, 8);
+    assert.equal(tap([row("A", 8)], 0, "completed", held).qty, 8);
+});
+
+test("EOW-24 one rule: the sheet, the + stepper and the save check all bottom out in ceilingFor (and New Order's availableFor and stepper in ceilingOf); no dialog reads a raw stock for a limit", () => {
+    const edit = noComments(read("qml/helper/EditOrderPicker.js"));
+    const np = noComments(read("qml/helper/NewOrderPicker.js"));
+    const body = (src, name) => extractFunction(src === edit ? "helper/EditOrderPicker.js" : "helper/NewOrderPicker.js", name);
+    for (const name of ["stepUp", "stockShortfalls"]) assert.ok(/ceilingFor\(/.test(noComments(body(edit, name))), name + " does not read ceilingFor");
+    const avail = noComments(body(edit, "availableFor"));
+    assert.ok(/ceilingFor\(/.test(avail) && /NP\.availableFor\(/.test(avail), "Edit.availableFor: completed reads ceilingFor, pending is NP.availableFor");
+    assert.ok(/NP\.ceilingOf\(/.test(noComments(body(edit, "ceilingFor"))));
+    assert.ok(/ceilingOf\(/.test(noComments(body(np, "availableFor"))));
+    assert.ok(!/\binv\.stock\b/.test(CODE), "Edit Order reads a raw stock again");
+    const changeQty = noComments(extractFunction("pages/NewOrderDialog.qml", "changeQty"));
+    assert.ok(/Picker\.ceilingOf\(inv\)/.test(changeQty) && !/inv\.stock/.test(changeQty));
+});
+
+test("EOW-25 the changed files stay balanced after the S5b edit: braces, parentheses and brackets of the dialogs and both helpers", () => {
+    for (const f of ["qml/pages/OrderDetailDialog.qml", "qml/pages/NewOrderDialog.qml", "qml/helper/EditOrderPicker.js", "qml/helper/NewOrderPicker.js"]) {
+        const src = noComments(read(f)).replace(/"(?:\\.|[^"\\])*"/g, '""').replace(/\/\[[^\n]*?\/(?=\s*\})/g, "");
+        for (const [open, close] of [["{", "}"], ["(", ")"], ["[", "]"]]) {
+            const o = src.split(open).length - 1, c = src.split(close).length - 1;
+            assert.equal(o, c, f + ": " + open + close + " unbalanced (" + o + " vs " + c + ")");
+        }
+    }
 });

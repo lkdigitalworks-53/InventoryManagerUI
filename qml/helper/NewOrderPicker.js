@@ -61,11 +61,17 @@ function cartQty(lines, productId) {
     return used
 }
 
-// What NEW lines may still use: on-hand stock minus what the cart already holds (units are not deducted until the
+// The most units of this product an order may hold IN TOTAL: the whole units on hand (units leave stock only when the
+// order completes). 0 for something that is not a product (a product that left the catalog holds none). This is the ONE
+// stock rule of the order dialogs (picker v2, S5b): availableFor below, the cart-row steppers and Edit Order's save-time
+// check all read it, so a fractional stock such as 2.5 means 2 everywhere.
+function ceilingOf(product) { return (product && typeof product === "object") ? _whole(product.stock) : 0 }
+
+// What NEW lines may still use: the ceiling minus what the cart already holds (units are not deducted until the
 // order completes). Never negative, whole units, 0 for a product that is not a product.
 function availableFor(product, lines) {
     if (!product || typeof product !== "object" || _blankId(product.productId)) return 0
-    return Math.max(0, _whole(product.stock) - cartQty(lines, product.productId))
+    return Math.max(0, ceilingOf(product) - cartQty(lines, product.productId))
 }
 
 // Unit price of a NEW line: sellingPrice, else the legacy price field. null when it is not a finite number >= 0

@@ -465,4 +465,33 @@ TestCase {
         eq(r3.lines[0].qty, 4.5);
         eq(r3.skipped, [{ productId: "A", name: "Name A", reason: "reduced", added: 2, asked: 5 }]);
     }
+
+    function test_NOP_33_ceilingof_is_the_whole_units_on_hand_a_fractional_stock_roun() {
+        eq(NP.ceilingOf(prod("A", 5)), 5);
+        eq(NP.ceilingOf(prod("A", 2.5)), 2);
+        eq(NP.ceilingOf(prod("A", 0.9)), 0);
+        eq(NP.ceilingOf(prod("A", 0)), 0);
+        eq(NP.ceilingOf(prod("A", -3)), 0);
+        for (const bad of [NaN, Infinity, -Infinity, undefined, null, "5", [], {}, true])
+            eq(NP.ceilingOf(prod("A", bad)), 0);
+        for (const notProduct of [null, undefined, 5, "A", true])
+            eq(NP.ceilingOf(notProduct), 0);
+        // it does not need a product id (the id rule belongs to availableFor)
+        eq(NP.ceilingOf({ stock: 4 }), 4);
+    }
+
+    function test_NOP_34_availablefor_is_the_ceiling_minus_what_the_cart_holds_same_n() {
+        const stocks = [0, 1, 2, 2.5, 5, 9.99, -2, NaN, undefined, "3"];
+        const carts = [[], [line("A", 1)], [line("A", 2), line("A", 2)], [line("A", 7)], [line("B", 3)], [line("A", 0)], [line("A", NaN)], [line("A", -2)]];
+        for (const st of stocks) {
+            for (const cart of carts) {
+                const p = prod("A", st);
+                const want = Math.max(0, NP.ceilingOf(p) - NP.cartQty(cart, "A"));
+                eq(NP.availableFor(p, cart), want);
+                ok(NP.availableFor(p, cart) >= 0);
+            }
+        }
+        eq(NP.availableFor(prod("", 5), []), 0);
+        eq(NP.availableFor(null, []), 0);
+    }
 }
