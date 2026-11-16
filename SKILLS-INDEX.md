@@ -180,3 +180,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 170: Two readers of one value must share one rule, and a sweep tests the SHAPES the rule is for, not the happy product
 - 171: Plan against the real server in Node, make every id the plan invents carry the operation, and neutralise or validate EVERY string that reaches a substitution grammar
 - 172: Put a client's every decision about a statutory report in one pure file: fixed-zone periods, an echoed-window check, and a service that answers exactly once
+- 173: Put a business rule about WHAT must be recorded on the server, mirror it in the client with a parity matrix, and let the server own every number that feeds a tax figure

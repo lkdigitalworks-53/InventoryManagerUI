@@ -5120,3 +5120,24 @@ Rules:
 17. A counter named after "movement" must say which period it covers. The server's `count` is every ledger row of the product, all time, so `moved` (`movementCount > 0`) means "ever moved". Say it in a comment where the row is built, and tell the page author not to label it "moved this period": the period figures are `inTotal` / `outTotal`.
 
 **The check:** for a client of a statutory report, name the zone the periods use, the edge instants tested on both sides, what the client does with an answer whose window differs, what a row hides and where that is counted, how many times a callback can fire, what each flag does when the code between setting and releasing it throws, and which existing guard the new call could break.
+
+## Skill 173: Put a business rule about WHAT must be recorded on the server, mirror it in the client with a parity matrix, and let the server own every number that feeds a tax figure
+
+**Built in P1 S2e-1, 2026-11-13 (`functions/lib/movementLogic.js`, `qml/helper/StockMovements.js`).** Taher's rule: sensitive stock events (loss, theft, destroyed, written off, gift) need a reason; the cost value of those events must be trustworthy.
+
+Rules:
+1. Decide a policy from the law and write the reasoning next to the constant, including what you left OUT and why (free_sample stays optional: highest volume, and the ITC block on it is under review). A policy with no stated "why not" gets widened by the next person.
+2. Put the rule in the one function every entry point already calls (`validateMovements`), then prove BOTH entry points use it (`recordDelta` and an op inside `recordOperation`), including the op index in the refusal.
+3. The server's refusal is a terminal 4xx on a queued stock change, which loses the write. So mirror the rule in the client BEFORE queuing, give the picker the words (`reasonProblem`), and classify the server code as an app problem in `FailureCause.js`. A guard test already fails when the server gains a code the client does not list: add it to the list, and to the QML test that pins the list.
+4. Prove client and server agree with a MATRIX (every kind x about 20 reasons, including non-strings and a 501-char one) and a 3000-list monkey that must reach both outcomes. A table of agreed examples is not enough.
+5. Check order is part of the contract: kind, then direction, then value, then type and length, then required. Test it (a wrong-direction theft with no reason reports the direction), or client and server can each be right and still disagree on the code.
+6. Existing tests that now fail because a fixture is "invalid" are the policy working. Give the fixture a real reason; never loosen the policy or the assertion. Count them honestly (17 tests, 7 fixture lines in 6 files).
+7. A number that feeds a tax figure is stamped by the server, from the document the transaction already read, and a client-sent number is IGNORED (not rejected, so old clients still work). Test with a forged value and require the stamped one. Use the cost at the moment of the event, never the cost at report time.
+8. A missing input must not block recording a real event: unknown cost stamps 0 and the loss is recorded. Write down that 0 is ambiguous (KNOWN-ISSUES 2) rather than pretend it is exact.
+9. Money in floats needs a test at an exact half: `2.5 x 19.99` is `49.974999999999994`, which rounded to 49.97 instead of 49.98. Fix with an ABSOLUTE nudge before rounding (1e-6 paise). A RELATIVE nudge (`x (1 + 1e-12)`) passed that case and then moved a large honest value (99,999,990,000) by whole paise; both cases are tests and both wrong versions are mutants.
+10. Stamp only the kinds that need it and keep the others byte-for-byte (a sale keeps the value it carried): a mutant that stamps `sale` or `receipt` must die.
+11. The replay of an already-applied request must not re-value the row after the product's cost changed; test with a cost change between the two calls.
+12. Say what the change does NOT do for other kinds of business (composition dealers, manufacturers, service-only vendors, vendors outside India) in the design and KNOWN-ISSUES, after checking the code for hard-coded business strings.
+13. Count real checks (about 245 per battery run, 27 mutants), do not estimate.
+
+**The check:** for a "must record X" rule, name the one function that enforces it, the client mirror and the matrix that pins them, the code the failing request returns and how the client classifies it, which number the server stamps and what a forged one does, what a missing input records, and what the fixtures cost to fix.
