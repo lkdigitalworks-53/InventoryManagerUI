@@ -16,20 +16,20 @@ Pure `qml/helper/StockRegisterModel.js` (IST periods, echoed-window check, flat 
 - [x] 3. Merge main into the branch (docs-only conflicts; both sides kept; skill renumbered 167 -> 172; main's CHECKPOINT archived). Pushed `786237a`.
 - [x] 4. Fixes + tests, pushed `e6a1d32`: (a) `load()` cannot strand `loading` on a throw; (b) 2xx bodies not copied per chunk; (c) `window` refusal not retryable; (d) stale guard comment; (e) `moved` / `movementCount` all-time comment. Service battery 130 checks, 60 hand mutants all killed.
 - [x] 5. Docs: Skill 172 rules 14-17, test plan section 4, KNOWN-ISSUES items 12-15, design carry list, this checkpoint.
-- [ ] 6. Push docs commit, read CI for the head, report done / next.
+- [x] 6. Docs pushed (`bfdf504`). CI on `bfdf504`: Functions Tests, Firestore + Storage Rules Tests, QML Tests (the QML twin ran in the real engine for the first time: green), E2E Tests, PR Test Summary all success; deploy jobs skipped (PR).
 
 ## Findings NOT fixed here (and why)
 - 401 may repeat until the session recheck runs (D12, KNOWN-ISSUES S4b-1 item 4): a design trade-off already documented; a second refresh path would break `sessionRecheckWiring`.
 - Workspace change in flight keeps `loading` true up to 125 s, cache not cleared on sign-out: the page (S4b-2) owns `cancel()` / `clear()`; recorded as KNOWN-ISSUES 13 and in the design carry list.
 - The per-chunk body-copy cost is reasoned, not measured (no device, no Qt here).
 - Commit email on the first four commits (KNOWN-ISSUES 14). Dependabot 27 alerts (KNOWN-ISSUES 15).
-- `tests/tst_StockRegisterModel.qml` has never run in the real engine; CI decides.
+- `tests/tst_StockRegisterModel.qml` first ran in the real engine on `bfdf504`'s CI: green.
 
 ## Suites at last run (sandbox)
 Script suite 1061/1061 (after the merge and the fixes). `functions` suite not re-run (no server file touched by this PR; main's own CI covers it). QML not run (no Qt by rule).
 
 ## NEXT (if this session stops)
-1. Read CI for the branch head (`gh api repos/lkdigitalworks-53/InventoryManagerUI/commits/<sha>/check-runs`); fix red if any. The QML twin and the emulator jobs only run there.
+1. CI was green at `bfdf504`. This checkpoint's own commit is docs-only; re-read CI on the final head (`gh api repos/lkdigitalworks-53/InventoryManagerUI/commits/<sha>/check-runs`) before merging.
 2. Taher: veto D2..D12 in the design doc, answer the CA question (P1 design section 8) for S4c, merge PR #198 (squash is fine; see item 14 for the email).
 3. S4b-2 (page): design in the design doc section 5, plus the carried items from the sweep. Add the emulator e2e QML-to-endpoint case there (S4a KNOWN-ISSUES 9).
 If resuming mid-slice: continue at the first unchecked step. The slice is dormant, so any red step can be reverted alone.
