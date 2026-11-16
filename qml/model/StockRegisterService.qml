@@ -4,8 +4,8 @@ import "../helper/StockRegisterModel.js" as StockRegisterModel
 
 // Client for the computeStockRegister Cloud Function (P1 S4a server). Sends one request and hands back a
 // validated answer; every decision (period, wording, row building) lives in StockRegisterModel.js.
-// DORMANT: nothing calls this until the register page (S4b-2); a caller grep in
-// functions/test/stockRegisterClient.guard.test.js pins that.
+// DORMANT: nothing calls this until the register page (S4b-2); SRS-04 in
+// .github/scripts/__tests__/stockRegisterService.test.js pins that.
 // Design: docs/superpowers/specs/2026-11-12-p1-s4b-register-client-design.md
 //
 // Rules this file keeps:
@@ -55,17 +55,21 @@ QtObject {
         if (callback) callback(result)
     }
 
+    // Retry cannot help a refused role or an impossible window (same as StockRegisterModel.classify).
     function _fail(callback, kind) {
-        _answer(callback, { ok: false, kind: kind, message: StockRegisterModel.message(kind), retryable: kind !== "role" })
+        _answer(callback, { ok: false, kind: kind, message: StockRegisterModel.message(kind),
+                            retryable: kind !== "role" && kind !== "window" })
     }
 
     // QTBUG-49896 (Skill 45/76): the XHR can reset `status` to 0 at the 3->4 transition for some non-2xx answers.
-    // Keep the last non-zero status and body seen at HEADERS_RECEIVED / LOADING, as Gateway and LockManager do.
+    // Keep the last non-zero status seen at HEADERS_RECEIVED / LOADING, as Gateway and LockManager do. The body is
+    // kept only for a non-2xx answer (the bug loses those): a register answer can be megabytes, responseText
+    // rebuilds the whole string on every read, and LOADING fires once per chunk.
     function _captureBeforeStatusIsLost(xhr, snap) {
         if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED || xhr.readyState === XMLHttpRequest.LOADING) {
             if (xhr.status !== 0) {
                 snap.status = xhr.status
-                snap.responseText = xhr.responseText
+                if (xhr.status < 200 || xhr.status >= 300) snap.responseText = xhr.responseText
             }
         }
     }
@@ -149,16 +153,26 @@ QtObject {
             _captureBeforeStatusIsLost(xhr, snap)
             if (xhr.readyState !== XMLHttpRequest.DONE) return
             var lost = xhr.status === 0
-            settle(lost ? snap.status : xhr.status, lost ? snap.responseText : xhr.responseText)
+            var text = (lost && snap.responseText !== "") ? snap.responseText : xhr.responseText
+            settle(lost ? snap.status : xhr.status, text)
         }
         xhr.ontimeout = function() { settle(0, "") }
-        xhr.open("POST", functionUrl)
-        xhr.setRequestHeader("Content-Type", "application/json")
-        xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)
-        xhr.timeout = requestTimeoutMs
-        var envelope = StockRegisterModel.requestBody(win)
-        envelope.env = FirebaseService.environment
-        xhr.send(JSON.stringify(envelope))
+        // Anything that throws from here to send() must not leave `loading` stuck (every later load would answer
+        // "busy" with no words, and this caller would never be answered). -1 is no HTTP status: classify() words it
+        // as "unknown".
+        try {
+            xhr.open("POST", functionUrl)
+            xhr.setRequestHeader("Content-Type", "application/json")
+            xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)
+            xhr.timeout = requestTimeoutMs
+            var envelope = StockRegisterModel.requestBody(win)
+            envelope.env = FirebaseService.environment
+            xhr.send(JSON.stringify(envelope))
+        } catch (e) {
+            console.warn("[StockRegisterService] send failed:", e)
+            settle(-1, "")
+            return false
+        }
         return true
     }
 

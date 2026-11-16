@@ -54,6 +54,13 @@ class FakeXHR {
 }
 FakeXHR.UNSENT = 0; FakeXHR.HEADERS_RECEIVED = 2; FakeXHR.LOADING = 3; FakeXHR.DONE = 4; FakeXHR.count = 0;
 
+// Counts reads of responseText (a real engine rebuilds the whole string on every read).
+class CountingXHR extends FakeXHR {
+  constructor() { super(); this.reads = 0; }
+  get responseText() { this.reads++; return this._t; }
+  set responseText(v) { this._t = v; }
+}
+
 const NOW = Date.UTC(2026, 10, 12, 10);
 const WIN = MODEL.presetWindow('month', NOW);
 
@@ -115,8 +122,10 @@ function battery(src) {
   // QTBUG-49896: DONE reports 0 but a real status was seen earlier
   r = R((x) => { x.emit(2, 403, '{"error":"role-not-allowed"}'); x.emit(3, 403, '{"error":"role-not-allowed"}'); x.emit(4, 0, ''); });
   eq('lost status is recovered', kinds(r.calls), ['role']);
+  r = R((x) => { x.emit(2, 200, good(WIN)); x.emit(4, 0, good(WIN)); });
+  eq('lost 200 is recovered (body read at DONE)', kinds(r.calls), ['ok']);
   r = R((x) => { x.emit(2, 200, good(WIN)); x.emit(4, 0, ''); });
-  eq('lost 200 is recovered', kinds(r.calls), ['ok']);
+  eq('lost 200 with no body is refused, never shown', [kinds(r.calls), r.scope.lastBody], [['badAnswer'], null]);
   r = R((x) => { x.emit(2, 403, '{"error":"role-not-allowed"}'); x.emit(3, 0, ''); x.emit(4, 0, ''); });
   eq('a later status 0 does not erase the real one', kinds(r.calls), ['role']);
   r = R((x) => { x.emit(4, 0, ''); });
@@ -181,7 +190,37 @@ function battery(src) {
     eq('role ' + role + ' sends', r.sent, true);
   }
   for (const w of [null, undefined, {}, { ok: false, fromMs: 1, toMs: 2 }, { ok: true }, { ok: true, fromMs: '1', toMs: 2 }, 5, 'x']) {
-    refuse('bad window ' + JSON.stringify(w), { win: w }, 'window');
+    refuse('bad window ' + JSON.stringify(w), { win: w }, 'window', false);   // retry cannot fix an impossible window
+  }
+
+  // a 2xx body is read once, at DONE, never per chunk (a big register would rebuild the string on every chunk)
+  {
+    const scope = scopeFor({ XMLHttpRequest: CountingXHR });
+    const svc = build(src, scope);
+    svc.load(WIN, () => {});
+    const x = FakeXHR.last;
+    const big = good(WIN);
+    x.emit(2, 200, big); x.emit(3, 200, big); x.emit(3, 200, big); x.emit(3, 200, big);
+    eq('2xx chunks do not read the body', x.reads, 0);
+    x.emit(4, 200, big);
+    eq('2xx body is read once, at DONE', x.reads, 1);
+  }
+
+  // a throw between loading = true and send() must not strand the service or leave the caller unanswered
+  for (const [what, over] of [
+    ['open', { XMLHttpRequest: class extends FakeXHR { open() { throw new Error('bad url'); } } }],
+    ['header', { XMLHttpRequest: class extends FakeXHR { setRequestHeader() { throw new Error('bad header'); } } }],
+    ['send', { XMLHttpRequest: class extends FakeXHR { send() { throw new Error('boom'); } } }],
+    ['env', { FirebaseService: null }]
+  ]) {
+    const scope = scopeFor(over);
+    const svc = build(src, scope);
+    const calls = [];
+    const sent = svc.load(WIN, (c) => calls.push(plain(c)));
+    eq('throw in ' + what + ' answers once as unknown', [sent, kinds(calls), calls[0] && calls[0].retryable], [false, ['unknown'], true]);
+    eq('throw in ' + what + ' frees the service', [scope.loading, scope._xhr, scope._pendingCallback], [false, null, null]);
+    scope.XMLHttpRequest = FakeXHR; scope.FirebaseService = { environment: 'dev' };
+    eq('after a throw in ' + what + ' the next load is sent', svc.load(WIN, () => {}), true);
   }
 
   // single flight: a second load while one flies is refused as "busy" and sends nothing
@@ -397,14 +436,22 @@ const MUTANTS = [
   ['status snapshot dropped', '            _captureBeforeStatusIsLost(xhr, snap)\n', ''],
   ['snapshot ignores 0 check', 'if (xhr.status !== 0) {', 'if (true) {'],
   ['snapshot stage', 'if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED || xhr.readyState === XMLHttpRequest.LOADING) {', 'if (xhr.readyState === XMLHttpRequest.DONE) {'],
-  ['lost status not used', 'settle(lost ? snap.status : xhr.status, lost ? snap.responseText : xhr.responseText)', 'settle(xhr.status, xhr.responseText)'],
+  ['lost status not used', 'settle(lost ? snap.status : xhr.status, text)', 'settle(xhr.status, xhr.responseText)'],
+  ['lost body not used', 'var text = (lost && snap.responseText !== "") ? snap.responseText : xhr.responseText', 'var text = xhr.responseText'],
+  ['snapshot copies 2xx bodies', 'if (xhr.status < 200 || xhr.status >= 300) snap.responseText = xhr.responseText', 'snap.responseText = xhr.responseText'],
+  ['snapshot drops error bodies', 'if (xhr.status < 200 || xhr.status >= 300) snap.responseText = xhr.responseText', ''],
+  ['window retryable', ' && kind !== "window"', ''],
+  ['send guard dropped', 'try {\n            xhr.open', '{\n            xhr.open'],
+  ['throw strands the service', 'settle(-1, "")\n            return false', 'return false'],
+  ['throw reports sent', 'settle(-1, "")\n            return false', 'settle(-1, "")\n            return true'],
+  ['throw answers offline', 'settle(-1, "")', 'settle(0, "")'],
   ['timeout not wired', 'xhr.ontimeout = function() { settle(0, "") }', ''],
   ['timeout answers as success', 'xhr.ontimeout = function() { settle(0, "") }', 'xhr.ontimeout = function() { settle(200, "{}") }'],
   ['timeout not set', 'xhr.timeout = requestTimeoutMs', ''],
   ['token header dropped', 'xhr.setRequestHeader("Authorization", "Bearer " + AuthStore.idToken)', ''],
   ['env dropped', 'envelope.env = FirebaseService.environment', ''],
   ['body dates', 'var envelope = StockRegisterModel.requestBody(win)', 'var envelope = { from: new Date(win.fromMs).toISOString(), to: new Date(win.toMs).toISOString() }'],
-  ['sent flag false', '        xhr.send(JSON.stringify(envelope))\n        return true', '        xhr.send(JSON.stringify(envelope))\n        return false'],
+  ['sent flag false', '        }\n        return true\n    }\n\n    // Stops waiting', '        }\n        return false\n    }\n\n    // Stops waiting'],
   ['cancel answers nothing', '_fail(cb, "cancelled")', ''],
   ['cancel does not abort', 'try { if (xhr) xhr.abort() } catch (e) { }', ''],
   ['cancel keeps loading', '        _pendingCallback = null\n        loading = false\n        try', '        _pendingCallback = null\n        try'],

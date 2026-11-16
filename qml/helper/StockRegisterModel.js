@@ -250,6 +250,9 @@ function _validProduct(p) {
 // Server order is kept (named first, case-insensitive, deleted after): one source of truth for the order.
 // Every key of every row is always present, strings/numbers/booleans only (a ListModel fixes its roles from the
 // first row, Skill 161 rule 2). opts.showAll = true keeps quiet rows.
+// movementCount and moved describe the product's ledger rows of ALL time (before, inside and after the window),
+// not the rows in the period (server: createAccumulator counts every classified row). For activity in the period
+// read inTotal / outTotal. A page must not label `moved` as "moved this period".
 function buildView(body, win, opts) {
     var showAll = _isObj(opts) && opts.showAll === true
     var check = validateAnswer(body, win)
