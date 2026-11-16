@@ -18,3 +18,19 @@
 
 ## If this session is cut off
 Everything is pushed except nothing pending; resume at step 5. Counts to re-measure before claiming: `cd functions && npm ci && node --test` (1900 here, Node 22), `node --test .github/scripts/__tests__/*.test.js` (1049).
+
+
+---
+# REVIEW SWEEP 1 of PR #202 (session 2026-11-16, commit rule: `tsadmin@gmail.com` line in every message) - resume here
+**Rules in force (this session):** no build/run; no Qt in sandbox (CI is the oracle); fixes go on THIS branch (same PR); no parallel agents; push without asking; tests + test plan for every change; scope kept small per turn. PAT per command via `git -c http.extraHeader`, never in `.git/config`.
+**Skills used:** requesting-code-review, qt-qml-review (3 phases, run single-threaded), ponytail-audit.
+**Baseline:** PR head `9495756`, base `main@503adda`, CI green (QML 3163, Functions 1900, Rules 129, E2E 121), `mergeable_state: clean`, 2 commits, 18 files +765 -139.
+
+## Sweep steps
+- [x] S0. Clone, scrub PAT from `.git/config`, checkout PR branch, read skills, PR body, CI, plan, production diff.
+- [ ] S1. Phase 1 lint (qt_qml_lint.py) on touched QML + helper reads (`EditOrderPicker.js`, `NewOrderPicker.js` in full).
+- [ ] S2. Deep read: `OrderDetailDialog.qml` `_save`, `_pickerLookup`, `_findOriginalLine` leftovers, `catalog` references anywhere, legacy no-`products` order Save path.
+- [ ] S3. Re-run Node tests here (functions 1900, scripts 1049) before touching code.
+- [ ] S4. Fixes (test first, red then green), one commit each.
+- [ ] S5. Docs: KNOWN-ISSUES, test plan, skills, README as needed. Read CI on the new head.
+- [ ] S6. Final report to Taher: done / next.
