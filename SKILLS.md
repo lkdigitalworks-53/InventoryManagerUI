@@ -5144,3 +5144,22 @@ Rules:
 16. A validator that REJECTS must be checked against every caller that DEGRADES. `InventoryStore._movementsFor` drops any movement the validator refuses so the stock change survives; a new rejection reason (here `movement-reason-required`) silently turns into "recorded as an unreasoned adjustment". Grep the callers of the validator, not just of the function you changed, pin today's behaviour with a test, and put the decision in KNOWN-ISSUES for the slice that wires the caller.
 
 **The check:** for a "must record X" rule, name the one function that enforces it, the client mirror and the matrix that pins them, the code the failing request returns and how the client classifies it, which number the server stamps and what a forged one does, what a missing input records, and what the fixtures cost to fix.
+
+## Skill 172: Wire a store function to a server operation by running its REAL body in Node, and make every outcome (live, slow, replayed, unreadable, rejected) apply exactly once
+
+**Why:** AP3a replaced seven independent writes with one awaited operation. The risk is not the happy path: it is the same answer arriving twice (the waiting caller AND the late `operationApplied` signal), an answer that cannot be read after the server committed, a replay, and a person who taps again. The QML engine is not available in the sandbox, but the store functions are plain JavaScript inside QML text.
+
+**Rules:**
+1. Extract the real function bodies from the `.qml` (`extractFunction`) and run them in a `vm` with fake stores around them, and let the REAL server code (`validateOperationRequest` + `applyOperation`) answer the operation the function queued. Mirror Gateway's one rule in the fake: the waiter fires first, the signal after, always. Then "applies once" is a test, not a hope.
+2. One settled flag per key: the waiter sets it when it applies, the signal consumes it. A queued answer sets nothing, so the later signal applies. Assert the map is EMPTY at the end of a 300-tap monkey: a leftover flag means a signal never followed.
+3. Order inside the function is part of the contract: pure refusals (so a typo shows its own text even offline), then the clash check, then the connection check, then remembering the typed name, then the send. Pin the order by index in the source, and pin that the old path's calls are gone from the body.
+4. A replayed answer reflects only what is idempotent by id (batch, supplier, history) and RE-READS what may have changed since (the product list). Never write a product from a replay.
+5. The server committed but the answer cannot be read: apply nothing, re-read every list the operation touches, tell the person to check the list, and give no retry that would make a second record (a new tap is a new key).
+6. A refusal callback must answer once and at once; a missing callback must never throw on any path (test all three: online, offline, bad value).
+7. A seeded LCG with a power-of-two modulus has short low-bit cycles: `seed % 6` visits only a few values and the monkey silently tests one path. Use the HIGH bits (`(seed >>> 8) % n`) and assert the monkey reached the gateway more than N times.
+8. A key regex must match the generator's alphabet (the nonce is base 36, not hex): assert the key shape the way the real validator does, or call the validator.
+9. When a legacy helper loses its last caller but a test still pins its format, keep it with a comment that names the pin, and put the cleanup in KNOWN-ISSUES.
+10. Existing e2e suites that called the old path offline need a scoped, try/finally online flip and the emulator operation URL; record that as CI-only and unproven.
+
+**The check:** run the wire test with the waiter AND the signal for every answer shape; does any shape change the product list twice, or leave a settled flag behind?
+

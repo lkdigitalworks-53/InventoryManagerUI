@@ -12,17 +12,22 @@ AP1 server (#199), AP2 client pure layer (#201) merged. **AP3 is split (D-AP3-1)
 ## Steps (tick as done)
 - [x] 0. Clone, memory, read STATUS section 14/15, designs AP1/AP2, store, dialog, DataModel, e2e files. Next task = AP3.
 - [x] 1. Branch cut, previous checkpoint archived, this file written.
-- [ ] 2. Design doc + test plan skeleton (written with the docs step 11, after the code).
+- [x] 2. Design doc + test plan written (`specs/2026-11-16-ap3a-add-product-wire-design.md`, `test-plans/2026-11-16-ap3a-add-product-wire-test-plan.md`, README index row).
 - [x] 3. `AddProductFlow.js` + `RestockFlow.queuedNewSupplierClash` covers addProduct ops; Node tests.
 - [x] 4. `InventoryStore.addProduct` rewrite, `applyAddProductResults`, answer hooks, remove `_resolveSupplierId`.
 - [x] 5. `DataModel` route (call site + Connections).
 - [x] 6. Dialog status handling only.
 - [x] 7. e2e: 5 `_createProduct` helpers (scoped online flip), 3 files point `operationFunctionUrl` at the emulator.
 - [x] 8. Guards: delete AP1 G-1 and AP2 G-1, update SB-4, P-2, add wiring pins.
-- [ ] 9. QML twins (CI-only).
-- [~] 10. `node --test` in `functions/`: 1899/1899 pass after steps 3-8 (commit 1 of the code). Still to add: `addProductWire.test.js` (real InventoryStore bodies in Node) then re-run.
-- [ ] 11. Docs: STATUS section 16, KNOWN-ISSUES, README/AGENTS/SKILLS, test plan numbers.
+- [x] 9. QML twins (CI-only): `tests/tst_AddProductFlow.qml` (16), `tests/tst_InventoryStore_addProduct.qml` (12).
+- [x] 10. `node --test` in `functions/`: 1918/1918 pass (1899 + `addProductWire.test.js` 19).
+- [x] 11. Docs: STATUS section 16, KNOWN-ISSUES 47-52, README, AGENTS, SKILLS 172 + index, test plan.
 - [ ] 12. Push, read CI if reachable, final report (done / next).
 
+## CI
+Filled after the push: read the PR checks (QML Tests, Functions Tests, Rules, E2E). Unproven locally: both QML twins, the six e2e files.
+
 ## NEXT (if this session stops)
+If CI is red, fix on this branch first. Then AP3b (dialog inline supplier "Use" row, strict parsing/limits, submit body in Node), AP4 (device test).
+
 Continue at the first unchecked step. Each commit is independent. Do not force-push.
