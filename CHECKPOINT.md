@@ -1,7 +1,7 @@
 # CHECKPOINT: 2026-11-16 AP3a (add product wired to the atomic operation) - resume here
 
 **Branch:** `feat/2026-11-16-ap3a-add-product-wire`, cut from `main` @ `503adda` (#201 merged, device tested by Taher). Contract: `docs/superpowers/specs/2026-11-13-add-product-atomic-operation-design.md` sections 7 to 9; this slice: `docs/superpowers/specs/2026-11-16-ap3a-add-product-wire-design.md`.
-**Commit rule (current, Taher 2026-11-16):** every commit message carries the line `lkdwtaher@gmail.com`; git user `Taher (via Claude session) <lkdwtaher@gmail.com>`. PAT per command via `git -c http.extraHeader`, never in `.git/config`, the repo or memory.
+**Commit rule (current, Taher 2026-11-16, replaces the earlier address):** every commit message carries the line `allibaas52@gmail.com`; git user email `allibaas52@gmail.com`. The PAT is never written to the repo, a doc or memory.
 **Rules in force:** no build or run; no Qt in the sandbox (CI is the oracle); always a branch; push without asking; tests + test plan for every change; out-of-scope findings go to `docs/superpowers/KNOWN-ISSUES.md`; no parallel agents. Node tests of `functions/` DO run here (`cd functions && npm ci && node --test`).
 **Previous checkpoint archived:** `specs/2026-11-16-pr201-merged-prev-CHECKPOINT.md`.
 **Test plan:** `docs/superpowers/test-plans/2026-11-16-ap3a-add-product-wire-test-plan.md`.
@@ -23,6 +23,13 @@ AP1 server (#199), AP2 client pure layer (#201) merged. **AP3 is split (D-AP3-1)
 - [x] 10. `node --test` in `functions/`: 1918/1918 pass (1899 + `addProductWire.test.js` 19).
 - [x] 11. Docs: STATUS section 16, KNOWN-ISSUES 47-52, README, AGENTS, SKILLS 172 + index, test plan.
 - [ ] 12. Push, read CI if reachable, final report (done / next).
+
+## Review sweep of PR #203 (chat session 2026-11-16, no parallel agents)
+- [x] R0. Clone, read memory, fetch `refs/pull/203/head`, check out the PR branch (no rebase needed: `main` still `503adda`).
+- [x] R1. CI read via API: Functions, QML, Rules green on f01a59c; **E2E RED: 29 of 71 failed**, all inside the `_createProduct*` helpers (`addProduct callback never fired` / `did not return a productId`). Raw logs are on a blocked host; the PR bot comment named the tests.
+- [x] R2. Root cause: the helpers flip `AuthService.isOnline = true`; `AuthService.onIsOnlineChanged` runs `init()` because the e2e files set `AuthStore.idToken/uid/tenantId` directly (`isAuthenticated` stays false); `init()` -> `loadSession()` -> `clear()` wipes the fixture; `Gateway._sendOperation` returns silently on an empty token; the awaiting callback never fires. Fix: save the three fields, flip, restore at once (six files). Guard: `functions/test/addProductE2eHelpers.guard.test.js` (25 tests, mutation-checked).
+- [ ] R3. Review the rest (store/DataModel/dialog logic, QML twins, tests, docs, ponytail audit), fix in this PR, push.
+- NOTE for the next session: the E2E result of the R2 fix is UNPROVEN until CI runs it. Read the PR bot comment first. If still red, the next suspects are `DataModel` reconnect refresh and `StockBatchStore.retryPendingMints` reacting to the online flip.
 
 ## CI
 PR #203 opened. Functions Tests + Rules success on b7ccbfd; QML Tests and E2E were still running when last read. Unproven locally: both QML twins, the six e2e files.

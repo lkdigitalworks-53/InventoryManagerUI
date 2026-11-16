@@ -165,7 +165,14 @@ TestCase {
         // AP3a (design D-AP-7): adding a product needs a connection and is ONE awaited operation (recordOperation). This helper is
         // setup for other features, so it makes the app "online" only for the add and restores it. CI is the oracle for this seam.
         var wasOnline = AuthService.isOnline
+        var savedAuth = { idToken: AuthStore.idToken, uid: AuthStore.uid, tenantId: AuthStore.tenantId }
         AuthService.isOnline = true
+        // Going online runs AuthService.init() while AuthStore.isAuthenticated is false (these files set the fields directly), and
+        // init() -> AuthStore.loadSession() -> clear() wipes the fixture token and tenant; Gateway._sendOperation then returns
+        // silently and the callback never fires. The wipe is synchronous inside the assignment, so put the fixture back at once.
+        AuthStore.idToken = savedAuth.idToken
+        AuthStore.uid = savedAuth.uid
+        AuthStore.tenantId = savedAuth.tenantId
         try {
             InventoryStore.addProduct(
                 name, sku, "General", "", 100, "pc", stock, 2,
