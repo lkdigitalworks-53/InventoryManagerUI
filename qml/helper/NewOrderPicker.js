@@ -74,6 +74,18 @@ function availableFor(product, lines) {
     return Math.max(0, ceilingOf(product) - cartQty(lines, product.productId))
 }
 
+// The quantity of a New Order cart row after a tap of + (delta above 0) or - (delta below 0), the same contract as
+// EditOrderPicker.stepUp. + adds at most delta, up to the ceiling (ceilingOf; `product` null or not a product has none),
+// and NEVER lowers or removes a row: a row above the ceiling (stock fell) or a product that ran out keeps its quantity
+// and trySubmit reports it, instead of the tap silently deleting the row and its discount (PR #202 sweep; Skill 172
+// rule 3). - takes exactly delta off whatever the ceiling is; a result of 0 means the caller removes the row. A quantity
+// or a step that is not a finite number is returned as the quantity.
+function stepQty(qty, delta, product) {
+    if (typeof qty !== "number" || !isFinite(qty) || typeof delta !== "number" || !isFinite(delta)) return qty
+    if (delta < 0) return Math.max(0, qty + delta)
+    return Math.max(qty, Math.min(ceilingOf(product), qty + delta))
+}
+
 // Unit price of a NEW line: sellingPrice, else the legacy price field. null when it is not a finite number >= 0
 // (0 stays allowed: a free item was always possible), so a line with no price never reaches the order.
 function priceOf(product) {

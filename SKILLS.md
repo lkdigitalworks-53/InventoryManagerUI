@@ -5187,7 +5187,7 @@ Rules:
 **Rules:**
 1. Name the limit once (`ceilingOf`, `ceilingFor`) and make every reader call it: the "how many more" reader (`availableFor`), the stepper (`stepUp`) and the save check (`stockShortfalls`). A test that greps each reader for the call (EOW-24) stops a fourth formula.
 2. A stepper reads the ceiling PER ROW (ceiling minus the other lines of the product); a save check reads it PER PRODUCT. Both from the same number.
-3. A row already over the ceiling is never pulled down by `+`; Save reports it. Never hide an over-sell by clamping silently.
+3. A row already over the ceiling is never pulled down by `+`, and a `+` never removes a row; Save (or submit) reports it. Never hide an over-sell by clamping silently. This holds for EVERY stepper, not only the one the slice was about: New Order's `changeQty` clamped `+` to the ceiling and deleted a row at stock 0 until the PR #202 sweep (`NP.stepQty`).
 4. Move the QML logic into a small dialog function and a pure helper, then run the REAL dialog text in a Node `vm` sandbox (`_stockErrors`, the `onClicked` block). Arrays made inside a vm have another prototype: wrap results in `plain()` before `deepEqual`.
 5. Prove "nothing else changed" by REPLAYING the old algorithm in the test over a seeded matrix (EOW-22, 400 orders): same messages for the shapes the old code handled.
 6. Name new fields with care: `short` is a JS reserved word that QML refuses; the reserved-word guard (Q-3) failed the full run, not the focused one. Run the whole suite before pushing.

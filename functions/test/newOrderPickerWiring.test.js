@@ -280,9 +280,9 @@ test("NOW-17 S5a: the real hooks disable a product that cannot start a line (no 
     assert.deepEqual(g2.toasts, []);
 });
 
-test("NOW-18 S5b: the real cart-row stepper uses the one stock rule: a fractional stock is whole units, a product that left the catalog can not go up, - still removes at 0", () => {
+test("NOW-18 S5b + sweep: the real cart-row stepper uses the one stock rule: a fractional stock is whole units, + never lowers or removes a row (stock ran out, fell, product gone), - takes one off and removes at 0", () => {
     const fn = extractFunction("pages/NewOrderDialog.qml", "changeQty");
-    assert.ok(/Picker\.ceilingOf\(inv\)/.test(fn) && !/inv\.stock/.test(fn));
+    assert.ok(/Picker\.stepQty\(sp\.qty, delta, inv\)/.test(fn) && !/inv\.stock/.test(fn));
     const stepped = (stock, qty, delta, gone) => {
         const box = { Picker: NP, selectedProducts: [{ name: "W", qty, price: 5, productId: "P" }],
                       InventoryStore: { getById: () => gone ? null : { productId: "P", stock } } };
@@ -294,7 +294,10 @@ test("NOW-18 S5b: the real cart-row stepper uses the one stock rule: a fractiona
     assert.deepEqual(stepped(5, 5, +1), [5]);
     assert.deepEqual(stepped(2.5, 2, +1), [2], "the old stepper reached 2.5 here");
     assert.deepEqual(stepped(2.5, 1, +1), [2]);
-    assert.deepEqual(stepped(0, 1, +1), [], "stock 0: the row is clamped to 0 and removed, as before");
+    assert.deepEqual(stepped(0, 1, +1), [1], "stock ran out: + keeps the row (it used to delete it; trySubmit reports the stock)");
+    assert.deepEqual(stepped(0.5, 1, +1), [1]);
+    assert.deepEqual(stepped(1, 3, +1), [3], "stock fell below the row: + does not pull it down");
+    assert.deepEqual(stepped(1, 3, -1), [2], "- takes exactly one off, also above the ceiling");
     assert.deepEqual(stepped(5, 1, -1), [], "- at 1 removes the row");
     assert.deepEqual(stepped(5, 3, -1), [2]);
     assert.deepEqual(stepped(0, 2, +1, true), [2], "a product that left the catalog: + keeps the row");

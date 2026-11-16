@@ -428,7 +428,8 @@ test("EOW-24 one rule: the sheet, the + stepper and the save check all bottom ou
     assert.ok(/ceilingOf\(/.test(noComments(body(np, "availableFor"))));
     assert.ok(!/\binv\.stock\b/.test(CODE), "Edit Order reads a raw stock again");
     const changeQty = noComments(extractFunction("pages/NewOrderDialog.qml", "changeQty"));
-    assert.ok(/Picker\.ceilingOf\(inv\)/.test(changeQty) && !/inv\.stock/.test(changeQty));
+    assert.ok(/Picker\.stepQty\(/.test(changeQty) && !/inv\.stock/.test(changeQty));
+    assert.ok(/ceilingOf\(/.test(noComments(body(np, "stepQty"))), "New Order's stepQty does not read ceilingOf");
 });
 
 test("EOW-25 the changed files stay balanced after the S5b edit: braces, parentheses and brackets of the dialogs and both helpers", () => {
