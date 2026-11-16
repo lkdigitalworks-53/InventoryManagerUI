@@ -5193,6 +5193,9 @@ Rules:
 6. Name new fields with care: `short` is a JS reserved word that QML refuses; the reserved-word guard (Q-3) failed the full run, not the focused one. Run the whole suite before pushing.
 7. Hand mutants: two survivors on the first run were an equivalent-looking guard and a junk-quantity branch; each became one assertion (the reader is not even asked about a blank id; a non-positive row counts as holding nothing).
 8. Push the code commit BEFORE writing docs: the chat sandbox resets, and an unpushed working tree is lost.
+9. A replay proves only the DOMAIN it generates. The first S5b replay (EOW-22) used one line per product and whole numbers, so it could not see two regressions the PR #202 sweep found: a completed order with two lines of one product or a line of 2.5 was refused on an unchanged Save (F1). Generate every shape the OLD code could hold (duplicate lines, fractional quantities, zero or negative stock, an unchanged order) or write the domain into the test title; EOW-26 and EOP-43 now do.
+10. A test model can pin a bug: EOP-32 asserted `2.5 held + 2.5 stock = 4`, the floor that caused F1. When a fix turns a model red, ask whether the model or the code was wrong before editing it, and say so in the commit.
+11. When code stops sending a key, read what the receiving store does with ABSENT versus EMPTY: `buildOrderUpdate` recomputes total and items when `products` is present, even as `[]` (F2). Pin both with a store test (`tst_OrdersStore_mutations`), not only the sender.
 
-**The check:** `grep` for a raw `.stock` in the dialogs; every hit must be display text, not a limit.
+**The check:** `grep` for a raw `.stock` in the dialogs; every hit must be display text, not a limit. For a stock rule, also run the helper over an UNCHANGED completed order with duplicate and fractional lines at stock 0: it must ask for nothing.
 
