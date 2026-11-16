@@ -12,7 +12,7 @@
 - [x] 2. Client mirror in `qml/helper/StockMovements.js` (`reasonRequired`, `reasonProblem`, validate rule); `movement-reason-required` added to `FailureCause.js` terminal list + `tst_FailureCause.qml`.
 - [x] 3. Tests: `functions/test/reasonPolicy.test.js` RP-01..04 (battery, parity matrix + 3000 monkey, 27 mutants), 10 wiring tests in `movementWiring.test.js`, 1 handler test, QML twin cases in `tests/tst_StockMovements.qml`. Existing fixtures that used a required kind without a reason were given one (no assertion weakened). functions 1686/1686, scripts 1061/1061.
 - [x] 4. Docs: design, test plan + index, KNOWN-ISSUES (S2e-1 section, 14 items), Skill 173 + index, README, AGENTS.
-- [ ] 5. Push (done after this edit), open PR (base = S4b-1 branch), read CI, report.
+- [x] 5. PR #204 (base = S4b-1 branch). Rebased 2026-11-16 onto the updated #198 head b18c53a (another session had merged main into it); skills renumbered 172/173.
 
 ## NEXT
 Read CI. Then S2e-2 (pickers on the product sheet / stock edit with the reason field and `reasonProblem`), S4b-2 (register page with columns Opening | Receipts | Supplies | Other outward | Stock correction | Closing). Pending Taher: which of the two first; merge order #196 -> #198 -> this PR.
