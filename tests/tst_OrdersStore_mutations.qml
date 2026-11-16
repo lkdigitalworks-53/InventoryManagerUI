@@ -285,6 +285,37 @@ TestCase {
         compare(updated.subtotal, 50) // untouched -- only products-driven updates recompute subtotal
     }
 
+    // PR #202 sweep F2: an order with no lines keeps its stored total and items when the update carries no `products`
+    // key (OrderDetailDialog sends none for an order that never stored lines). The same update WITH `products: []`
+    // and `items: 0` zeroes both, which is why the dialog must not send them. Subtotal/tax/discount are recomputed
+    // from the (missing) lines on every update either way (KNOWN-ISSUES 48).
+    function test_updateOrder_without_products_keeps_total_and_items_of_a_lineless_order() {
+        OrdersStore.orders = [{
+            orderId: "ORD-001", customer: "Old", email: "", phone: "",
+            status: "pending", date: "2026-01-01", notes: "", products: [],
+            orderChannel: "", staffId: "", subtotal: 75, discount: 0, tax: 0,
+            taxBreakdown: [], total: 75, items: 3, adjustments: []
+        }]
+        OrdersStore.updateOrder("ORD-001", { customer: "New Name", status: "processing" })
+        var kept = OrdersStore.getById("ORD-001")
+        compare(kept.customer, "New Name")
+        compare(kept.total, 75)
+        compare(kept.items, 3)
+    }
+
+    function test_updateOrder_with_empty_products_zeroes_total_and_items_of_a_lineless_order() {
+        OrdersStore.orders = [{
+            orderId: "ORD-001", customer: "Old", email: "", phone: "",
+            status: "pending", date: "2026-01-01", notes: "", products: [],
+            orderChannel: "", staffId: "", subtotal: 75, discount: 0, tax: 0,
+            taxBreakdown: [], total: 75, items: 3, adjustments: []
+        }]
+        OrdersStore.updateOrder("ORD-001", { customer: "New Name", items: 0, products: [] })
+        var zeroed = OrdersStore.getById("ORD-001")
+        compare(zeroed.total, 0)
+        compare(zeroed.items, 0)
+    }
+
     function test_updateOrder_is_a_no_op_for_an_unknown_orderId() {
         OrdersStore.orders = [{ orderId: "ORD-001", status: "pending" }]
         var before = OrdersStore.revision

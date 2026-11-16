@@ -129,6 +129,18 @@ function stockShortfalls(lines, ctx, productOf) {
     return out
 }
 
+// The line part of the Save payload -> { items, products }, or {} for an order that never stored a products array
+// (`noLinesStored` is exactly true) and still has no rows. Such an order must send NEITHER key: OrdersStore.buildOrderUpdate
+// recomputes total and items from `products` whenever that key is present, so writing [] would zero the order's total
+// and items on any save, even a customer-name edit (PR #202 sweep F2; picker v2 S5b removed the seed that used to invent
+// lines for it). Without the key OrdersStore keeps the stored total and items. Its subtotal, tax and discount are
+// recomputed from the (missing) lines on every update anyway: KNOWN-ISSUES 48, not fixed here. Every other order sends
+// both keys, as they are; anything but a real true reads as "stored".
+function lineFields(noLinesStored, rowCount, items, products) {
+    if (noLinesStored === true && rowCount === 0) return {}
+    return { items: items, products: products }
+}
+
 // The sentence for one shortfall, as the dialog has always worded it: "Widget: only 2 in stock, need 1 more".
 function shortfallText(s) { return s.name + ": only " + s.stock + " in stock, need " + s.need + " more" }
 

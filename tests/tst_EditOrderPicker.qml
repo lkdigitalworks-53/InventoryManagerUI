@@ -621,4 +621,16 @@ TestCase {
         eq(EP.stepUp(2, "A", prod("A", 0), half, [line("A", 2)]), 2);
         eq(EP.stepUp(1, "A", prod("A", 0), half, [line("A", 1)]), 2);
     }
+
+    function test_EOP_44_linefields_pr_202_sweep_f2_an_order_that_never_stored_a_prod() {
+        const prods = [{ productId: "A", quantity: 2 }];
+        eq(EP.lineFields(true, 0, 0, []), {});
+        eq(EP.lineFields(true, 1, 2, prods), { items: 2, products: prods });
+        eq(EP.lineFields(false, 0, 0, []), { items: 0, products: [] });
+        eq(EP.lineFields(false, 2, 5, prods), { items: 5, products: prods });
+        // only a real true means "never stored": anything else reads as stored, so a normal order is never left unsaved
+        for (const junk of [undefined, null, 0, "", "true", 1]) eq(EP.lineFields(junk, 0, 0, []), { items: 0, products: [] });
+        // a row count that is not a real 0 means there are rows
+        for (const n of [undefined, NaN, -1, "0", 3]) eq(EP.lineFields(true, n, 0, []), { items: 0, products: [] });
+    }
 }

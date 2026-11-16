@@ -33,6 +33,9 @@ BottomSheet {
     signal adjustRequested(string orderId, var newLines, var originalLines)
     property string _orderStatus: ""
     property var _originalLines: []
+    // True when the opened order never stored a products array (a very old order). Save then sends neither `items` nor
+    // `products`: writing [] would zero the order's total and items (Edit.lineFields; PR #202 sweep F2).
+    property bool _noLinesStored: false
 
     property string orderId: ""
     property int orderIndex: -1
@@ -283,6 +286,7 @@ BottomSheet {
                                 })
             }
         }
+        _noLinesStored = !Array.isArray(o.products)
         recomputeSubtotal()
         stockErrorLabel.text = ""
 
@@ -318,6 +322,7 @@ BottomSheet {
         products.clear()
         _pickerLines = []   // the sheet's notifier must not keep the closed order's rows
         _originalLines = []
+        _noLinesStored = false
         _orderStatus = ""
         stockErrorLabel.text = ""
     }
@@ -478,26 +483,27 @@ BottomSheet {
                 ? qsTr("Completing order — this can take a few seconds")
                 : qsTr("Saving changes")
         _pendingSaveOrderId = dlg.orderId
-        logic.updateOrder(dlg.orderId, {
+        // Bug fix 2026-08-20: a plain save (this branch only runs
+        // when lines are UNCHANGED — see the linesChanged guard
+        // above) must not touch consumption[], the FIFO batch
+        // lineage stamped at completion. `prods` never carries it
+        // (not a user-editable field), so sending it straight to
+        // OrdersStore.updateOrder's full products replace was
+        // silently wiping it on every save — including this one,
+        // triggered by nothing more than a customer-name edit.
+        // See OrderAdjust.reconcileConsumptionOnSave and
+        // tests/tst_OrderAdjust.qml for the full writeup.
+        // The line part (items, products) goes through Edit.lineFields: an order that never stored a products array and
+        // still has no rows sends neither, so Save can not zero its total and items (PR #202 sweep F2).
+        logic.updateOrder(dlg.orderId, Object.assign({
                               customer: customerField.text,
                               email: emailField.text,
                               phone: phoneField.text,
                               status: statuses[Math.max(0, statusCombo.currentIndex)] || "pending",
-                              items: itemCount,
-                              // Bug fix 2026-08-20: a plain save (this branch only runs
-                              // when lines are UNCHANGED — see the linesChanged guard
-                              // above) must not touch consumption[], the FIFO batch
-                              // lineage stamped at completion. `prods` never carries it
-                              // (not a user-editable field), so sending it straight to
-                              // OrdersStore.updateOrder's full products replace was
-                              // silently wiping it on every save — including this one,
-                              // triggered by nothing more than a customer-name edit.
-                              // See OrderAdjust.reconcileConsumptionOnSave and
-                              // tests/tst_OrderAdjust.qml for the full writeup.
-                              products: OrderAdjust.reconcileConsumptionOnSave(prods, _originalLines),
                               orderChannel: channel,
                               staffId: staffId
-                          })
+                          }, Edit.lineFields(_noLinesStored, products.count, itemCount,
+                                             OrderAdjust.reconcileConsumptionOnSave(prods, _originalLines))))
         // dlg.orderUpdated + dlg.close() now happen in the Connections
         // block below, once logic actually confirms this specific save —
         // not here, synchronously, before the real write has even started.

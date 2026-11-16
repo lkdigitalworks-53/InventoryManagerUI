@@ -473,3 +473,33 @@ test("EOW-26 PR #202 sweep F1: the real _stockErrors never refuses a COMPLETED o
     world.w.products[0].stock = 1;
     assert.deepEqual(dialogGlue(world, [row("A", 3), row("A", 2), row("A", 2)], "completed", [held("A", 3), held("A", 2)]).stockErrors(), ["Name A: only 1 in stock, need 1 more"]);
 });
+
+test("EOW-27 PR #202 sweep F2: the real save payload of an order that never stored a products array and still has no rows carries neither items nor products (OrdersStore.buildOrderUpdate would turn its money into 0); every other order carries both; the flag is set on open and cleared on close", () => {
+    const save = fn("_save");
+    assert.ok(/Edit\.lineFields\(\s*_noLinesStored,\s*products\.count,\s*itemCount,/.test(save), "the line part of the payload no longer goes through Edit.lineFields");
+    assert.ok(!/items:\s*itemCount|products:\s*OrderAdjust/.test(save), "the payload writes items or products on its own again");
+    assert.ok(/_noLinesStored\s*=\s*!Array\.isArray\(o\.products\)/.test(OPEN_FOR), "openFor no longer records that the order stored no lines");
+    assert.ok(/onClosed:\s*\{[\s\S]*?_noLinesStored\s*=\s*false/.test(CODE), "onClosed no longer clears the flag");
+    const call = literal(save, "logic.updateOrder", "(", ")");
+    const run = (noLines, count, prodsArr) => {
+        const sent = [];
+        const box = {
+            dlg: { orderId: "O1" }, logic: { updateOrder: (id, f) => sent.push([id, f]) },
+            customerField: { text: "Zed" }, emailField: { text: "z@x.io" }, phoneField: { text: "99" },
+            statuses: ["pending", "processing", "completed"], statusCombo: { currentIndex: 1 },
+            channel: "web", staffId: "S1", itemCount: count, prods: prodsArr, products: { count },
+            _noLinesStored: noLines, _originalLines: [], OrderAdjust: { reconcileConsumptionOnSave: (p) => p }, Edit: EP
+        };
+        vm.createContext(box);
+        vm.runInContext("logic.updateOrder" + call, box);
+        assert.equal(sent.length, 1);
+        assert.equal(sent[0][0], "O1");
+        return plain(sent[0][1]);
+    };
+    const base = { customer: "Zed", email: "z@x.io", phone: "99", status: "processing", orderChannel: "web", staffId: "S1" };
+    assert.deepEqual(run(true, 0, []), base);
+    const line = { productId: "A", name: "Name A", price: 10, quantity: 2 };
+    assert.deepEqual(run(true, 1, [line]), Object.assign({}, base, { items: 1, products: [line] }));
+    assert.deepEqual(run(false, 0, []), Object.assign({}, base, { items: 0, products: [] }));
+    assert.deepEqual(run(false, 1, [line]), Object.assign({}, base, { items: 1, products: [line] }));
+});

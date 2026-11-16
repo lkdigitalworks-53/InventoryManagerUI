@@ -692,3 +692,15 @@ test("EOP-43 monkey, seeded: a COMPLETED order saved with its lines unchanged or
         eq(got, whole === 0 ? [1] : []);
     }
 });
+
+test("EOP-44 lineFields (PR #202 sweep F2): an order that never stored a products array and still has no rows sends neither items nor products; every other order sends both, as they are", () => {
+    const prods = [{ productId: "A", quantity: 2 }];
+    eq(EP.lineFields(true, 0, 0, []), {});
+    eq(EP.lineFields(true, 1, 2, prods), { items: 2, products: prods });
+    eq(EP.lineFields(false, 0, 0, []), { items: 0, products: [] });
+    eq(EP.lineFields(false, 2, 5, prods), { items: 5, products: prods });
+    // only a real true means "never stored": anything else reads as stored, so a normal order is never left unsaved
+    for (const junk of [undefined, null, 0, "", "true", 1]) eq(EP.lineFields(junk, 0, 0, []), { items: 0, products: [] });
+    // a row count that is not a real 0 means there are rows
+    for (const n of [undefined, NaN, -1, "0", 3]) eq(EP.lineFields(true, n, 0, []), { items: 0, products: [] });
+});
