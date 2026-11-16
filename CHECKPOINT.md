@@ -30,8 +30,9 @@ AP1 server (#199), AP2 client pure layer (#201) merged. **AP3 is split (D-AP3-1)
 - [x] R2. Root cause: the helpers flip `AuthService.isOnline = true`; `AuthService.onIsOnlineChanged` runs `init()` because the e2e files set `AuthStore.idToken/uid/tenantId` directly (`isAuthenticated` stays false); `init()` -> `loadSession()` -> `clear()` wipes the fixture; `Gateway._sendOperation` returns silently on an empty token; the awaiting callback never fires. Fix: save the three fields, flip, restore at once (six files). Guard: `functions/test/addProductE2eHelpers.guard.test.js` (25 tests, mutation-checked).
 - [x] R2b. CI on 83ed1e0: Functions, QML, Rules AND E2E green. The fix is proven.
 - [x] R3. Store twin `tests/tst_InventoryStore_addProduct.qml` strengthened (+3 functions: stock 0, sync-first, no bookkeeping; vacuous replay assertion made strict). qt-qml-review lint on changed lines: nothing to fix (KNOWN-ISSUES 55). ponytail-audit: `nextProductId` kept on purpose (issue 50). KNOWN-ISSUES 49 rewritten, 53..55 added; test plan and Skill 172 updated. Functions suite 1943/1943.
-- [ ] R4. Still open: read CI of this commit (twin additions are CI-only); the `PR Test Summary Comment` job shows failure on both runs (cause not read, probably the bot comment step, not a test); then AP3b, AP4.
-- NOTE for the next session: read the PR bot comment and the E2E/QML jobs of the latest commit first; the 3 new QML twin functions are unproven until CI runs them.
+- [x] R4. CI on 710bef6: Functions, QML (incl. the 3 new twin cases), Rules, E2E all GREEN. `PR Test Summary Comment` job fails even with every test job green (so it is the bot step, not a test; cause not read, annotations only show Node 20 deprecation warnings).
+- [ ] R5. Next session: AP3b (dialog inline supplier "Use" row, strict parsing/limits, submit body in Node), then AP4 (docs + device test). Seed SupplierStore in ProductPhotosE2E and StockBatchStoreE2E with a CI run (KNOWN-ISSUES 54).
+- NOTE for the next session: PR #203 is review-clean and green; only the human review and the device test (test plan, on-device section) remain.
 
 ## CI
 PR #203 opened. Functions Tests + Rules success on b7ccbfd; QML Tests and E2E were still running when last read. Unproven locally: both QML twins, the six e2e files.
