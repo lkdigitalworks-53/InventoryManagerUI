@@ -46,18 +46,19 @@ test("NOW-02 the dialog declares one ProductPickerSheet and binds all five input
         assert.ok(body.includes(line), "missing: " + line);
 });
 
-test("NOW-03 the hooks are the six the helpers expect, each wired to the store that owns the guard, and no isDeleting", () => {
+test("NOW-03 the hooks are the seven the helpers expect, each wired to the store that owns the guard, and no isDeleting", () => {
     const hooks = literal(CODE, "readonly property var _pickerHooks", "{", "}");
     const expected = {
         hasPendingMint: "StockBatchStore.hasPendingMint(id)",
         hasQueuedRestock: "InventoryStore.hasQueuedRestock(id)",
+        hasPrice: "Picker.priceOf(p) !== null",
         unsyncedState: "InventoryStore.syncStateOf(id)",
         inOrderQty: "Picker.cartQty(dlg.selectedProducts, id)",
         availableFor: "Picker.availableFor(p, dlg.selectedProducts)",
         commitCheck: "Picker.opsCheck(dlg.selectedProducts, plan, dlg._pickerLookup)"
     };
     for (const k of Object.keys(expected)) assert.ok(new RegExp(k + ":\\s*function\\([a-z]+\\)\\s*\\{\\s*return " + expected[k].replace(/[().]/g, "\\$&") + "\\s*\\}").test(hooks), k);
-    assert.equal((hooks.match(/\w+:\s*function/g) || []).length, 6);
+    assert.equal((hooks.match(/\w+:\s*function/g) || []).length, 7);
     assert.ok(!/isDeleting/.test(hooks));
     const lookup = literal(CODE, "readonly property var _pickerLookup", "{", "}");
     assert.ok(/productOf:\s*function\(id\)\s*\{\s*return InventoryStore\.getById\(id\)\s*\}/.test(lookup));
@@ -103,7 +104,7 @@ test("NOW-08 closing the order sheet closes the picker; opening it leaves the pi
     assert.ok(!/picker/.test(opened));
 });
 
-test("NOW-09 only New Order uses the sheet: Edit Order keeps its combo until S4", () => {
+test("NOW-09 New Order and Edit Order are the only users of the sheet (Edit Order was wired in S4; its own pins are EOW-01..16)", () => {
     const offenders = [];
     const walk = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, e.name);
@@ -111,9 +112,8 @@ test("NOW-09 only New Order uses the sheet: Edit Order keeps its combo until S4"
         else if (/\.qml$/.test(e.name) && /ProductPickerSheet\s*\{/.test(fs.readFileSync(full, "utf8"))) offenders.push(path.relative(ROOT, full).split(path.sep).join("/"));
     } };
     walk(path.join(ROOT, "qml"));
-    assert.deepEqual(offenders.filter((f) => f !== "qml/components/ProductPickerSheet.qml"), ["qml/pages/NewOrderDialog.qml"].filter((f) => offenders.includes(f)));
-    assert.deepEqual(offenders, ["qml/pages/NewOrderDialog.qml"]);
-    assert.ok(read("qml/pages/OrderDetailDialog.qml").includes("productCombo"));
+    assert.deepEqual(offenders.sort(), ["qml/pages/NewOrderDialog.qml", "qml/pages/OrderDetailDialog.qml"]);
+    assert.ok(!read("qml/pages/OrderDetailDialog.qml").includes("productCombo"));
 });
 
 test("NOW-10 the submit check stays the final guard: busy first, then name, at least one line, and stock per line", () => {
@@ -250,4 +250,32 @@ test("NOW-16 the real hooks refuse an order the planner could not complete in on
     // the cheap line cap is still the first gate: the hook is not what stops a 61st line
     const full = viewOf(g, world, draftOf(1), { orderLines: Array.from({ length: 60 }, (_, i) => ({ productId: "L" + i, qty: 1 })) });
     assert.equal(full.canCommit.reason, "too-many-lines");
+});
+
+// ---- S5a (2026-11-15): the no-price row reason, run through the dialog's real hook literal ----
+test("NOW-17 S5a: the real hooks disable a product that cannot start a line (no price, NaN, negative, text), keep 0 and the legacy price, and a product on the order can still be bumped", () => {
+    const base = { category: "X", stock: 5, sku: "S" };
+    const world = fakeWorld({ products: [
+        Object.assign({ productId: "OK", name: "Ok", sellingPrice: 10 }, base),
+        Object.assign({ productId: "FREE", name: "Free", sellingPrice: 0 }, base),
+        Object.assign({ productId: "OLD", name: "Old", price: 4 }, base),
+        Object.assign({ productId: "NUL", name: "Nul", sellingPrice: null, price: 3 }, base),
+        Object.assign({ productId: "NONE", name: "None" }, base),
+        Object.assign({ productId: "NAN", name: "Nan", sellingPrice: NaN }, base),
+        Object.assign({ productId: "NEG", name: "Neg", sellingPrice: -1 }, base),
+        Object.assign({ productId: "TXT", name: "Txt", sellingPrice: "5" }, base)
+    ] });
+    const g = dialogGlue(world, []);
+    const v = viewOf(g, world, {});
+    assert.deepEqual(plain(v.rows.map((r) => [r.productId, r.canAdd, r.reasonText])), [
+        ["OK", true, ""], ["FREE", true, ""], ["OLD", true, ""], ["NUL", true, ""],
+        ["NONE", false, "No selling price"], ["NAN", false, "No selling price"], ["NEG", false, "No selling price"], ["TXT", false, "No selling price"]]);
+    assert.equal(v.hiddenCount, 0);
+    // an old order line of a product that has lost its price: still bumpable, and the line keeps its own price
+    const g2 = dialogGlue(world, [{ name: "None", qty: 1, price: 3, productId: "NONE", discountType: "flat", discountValue: 0 }]);
+    const v2 = viewOf(g2, world, {});
+    assert.deepEqual(plain(v2.rows.filter((r) => r.productId === "NONE").map((r) => [r.canAdd, r.maxQty])), [[true, 4]]);
+    g2.apply(PD.commitPlan(PD.step({}, "NONE", 2, 4), g2.dlg.selectedProducts));
+    assert.deepEqual(plain(g2.dlg.selectedProducts.map((l) => [l.productId, l.qty, l.price])), [["NONE", 3, 3]]);
+    assert.deepEqual(g2.toasts, []);
 });

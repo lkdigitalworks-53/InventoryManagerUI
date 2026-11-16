@@ -37,17 +37,23 @@ test("C-1 the scan finds the codes it should (so a regex that stops matching can
         assert.ok(codes.has(c), c);
 });
 
-test("C-2 every server code is a known person-facing cause or an app bug, for completion and for restock", () => {
+test("C-2 every server code is a known person-facing cause or an app bug, for completion, for restock and for add product", () => {
     for (const code of serverCodes()) {
         const comp = plain(FC.forRejection({ error: code }, "P"));
         const rest = plain(FC.forRestock({ error: code }, "P"));
-        assert.ok(comp.text && rest.text, code);
+        const add = plain(FC.forAddProduct({ error: code }, "P"));
+        assert.ok(comp.text && rest.text && add.text, code);
         if (Object.prototype.hasOwnProperty.call(COMPLETION_KIND, code)) {
             assert.equal(comp.kind, COMPLETION_KIND[code], "completion " + code);
+            // an add reads no existing record and consumes no stock: those three are an app bug there (AP2)
+            const addBug = ["not-found", "insufficient-quantity", "operation-too-large"].indexOf(code) >= 0;
+            assert.equal(add.kind, addBug ? "bug" : COMPLETION_KIND[code], "add product " + code);
         } else if (code === "mint-exhausted") {
-            // only a restock mints; forRejection has no wording for it on purpose
+            // only a restock or an add mints; forRejection has no wording for it on purpose
             assert.equal(rest.kind, "limit", code);
+            assert.equal(add.kind, "limit", code);
         } else {
+            assert.equal(add.kind, "bug", "add product: " + code + " must be a bug code, not '" + add.kind + "'");
             assert.equal(comp.kind, "bug", "completion: " + code + " must be a bug code, not '" + comp.kind + "'");
             assert.equal(rest.kind, "bug", "restock: " + code + " must be a bug code, not '" + rest.kind + "'");
             assert.ok(comp.text.indexOf("(" + code + ")") > 0, "the code is shown so a report can name it");

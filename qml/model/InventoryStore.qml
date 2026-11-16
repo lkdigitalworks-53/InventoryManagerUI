@@ -1381,7 +1381,10 @@ QtObject {
     function _applyRestock(key, results, replay) {
         delete _restockNames[key]
         var out = applyRestockResults(results, { replay: replay })
-        if (out.ok) {
+        // R5b D-R5b-7, legacy only: a restock queued by a build that sent no feed op is answered without a feed row, so
+        // this device writes it the old way. Every answer to a restock sent by this build carries the server's row,
+        // which applyRestockResults has already adopted. shortcut: remove with the next release after R5b is deployed.
+        if (out.ok && !out.activity) {
             var text = RestockFlow.activityText(out, out.supplierId ? SupplierStore.nameOf(out.supplierId) : "")
             ActivityLog.record("product_restocked", text.title, text.subtitle, out.productId)
         }
@@ -1535,6 +1538,9 @@ QtObject {
         if (out.supplier) SupplierStore.addLocalSupplier(out.supplier)
         StockBatchStore.addLocalBatch(out.batch)
         TransactionStore.addLocalEntries([out.purchase])
+        // R5b: the feed row the SERVER wrote inside the operation (null for an answer to a legacy restock).
+        // adopt() ignores an id it already holds, so a replayed answer adds nothing twice.
+        if (out.activity) ActivityLog.adopt(out.activity)
         if (!(opts && opts.replay === true)) applyRemoteStock(out.productId, out.stock)
         return out
     }
@@ -1569,7 +1575,7 @@ QtObject {
         }
         // Per-field events recorded after the local mutation succeeds. The
         // stock field uses recordStockAdjustment to distinguish a manual
-        // edit from a Restock-dialog flow (which calls recordPurchase).
+        // edit from a Restock-dialog flow (a restock is one operation since R4).
         var fieldChanges = []   // { field, before, after }
         var stockChange = null  // { before, after }
         function _maybe(field, after) {

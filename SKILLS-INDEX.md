@@ -173,4 +173,10 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 163: Build a report over an append-only ledger from the ledger alone, in half-open periods, streamed, with the mutable document as a cross-check only
 - 164: A step that creates something must not run before the confirm that needs it; take a structured value, not an overloaded string, and let a limit have exactly one source of truth
 - 165: Close a class of bug with one helper, give it a table-driven test over every handler, and pick each handler's failure code by what the CLIENT does with it
-- 167: Put a client's every decision about a statutory report in one pure file: fixed-zone periods, an echoed-window check, and a service that answers exactly once
+- 166: Put a derived feed row inside the transaction that causes it, stamp who and when on the server, and open an entity to ONE operation type instead of to every endpoint
+- 167: Wire a second dialog to a shared helper with an optional hook, apply the plan in place by row index, and read the live rows
+- 168: Split a client-and-server feature so the SERVER half merges and deploys first, dormant, then every client slice is device-testable while its own PR is open
+- 169: Mirror an apply-time refusal as a disabled row reason with an optional hook, and dry-run a Node E2E offline before CI
+- 170: Two readers of one value must share one rule, and a sweep tests the SHAPES the rule is for, not the happy product
+- 171: Plan against the real server in Node, make every id the plan invents carry the operation, and neutralise or validate EVERY string that reaches a substitution grammar
+- 172: Put a client's every decision about a statutory report in one pure file: fixed-zone periods, an echoed-window check, and a service that answers exactly once

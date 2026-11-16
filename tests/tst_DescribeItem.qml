@@ -253,4 +253,23 @@ TestCase {
         compare(DI.describe({ opType: "completeOrder", ops: [{ entity: "order", entityId: "o1", after: { customer: "Ann" } }] }).title, "Order completion")
         compare(DI.describe({ opType: "mystery", ops: [{ entity: "order", entityId: "o1" }] }).title, "Multi-step change")
     }
+
+    // ── add product (atomic-ops AP2) ───────────────────────────────────────
+
+    function test_addProduct_label_uses_the_typed_product_name_not_a_mint() {
+        var ops = [{ kind: "mint", counter: "product", bind: "prd" },
+                   { kind: "mutation", entity: "inventory", entityId: "{{prd}}", action: "create", after: { name: "Tomato", sku: "T-1" } }]
+        var d = DI.describe({ opType: "addProduct", ops: ops })
+        compare(d.title, "Add product")
+        compare(d.detail, "Tomato")
+    }
+
+    function test_addProduct_label_survives_junk_ops() {
+        var shapes = [[], [null], [undefined, 1, "x", []], [{ kind: "mint" }], [{ entity: "inventory", action: "create" }], [{ entity: "inventory", action: "create", after: { name: 5 } }]]
+        for (var i = 0; i < shapes.length; ++i) {
+            var d = DI.describe({ opType: "addProduct", ops: shapes[i] })
+            compare(d.title, "Add product", "shape " + i)
+            verify(typeof d.detail === "string", "shape " + i)
+        }
+    }
 }

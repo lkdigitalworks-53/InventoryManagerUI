@@ -17,7 +17,7 @@ Done: S1a/S1b server rows, S2a-c cleanup + inventory lock, S2d-1 typed kinds, S2
 - [x] 2b. `qml/model/StockRegisterService.qml` written + qmldir entry (tests: step 4).
 - [x] 3. `tests/tst_StockRegisterModel.qml` (13 functions, shim-run 13/13 in Node; CI is the oracle).
 - [x] 4. Service tests `stockRegisterService.test.js` SRS-01..05 (fake XHR, monkey, wiring, dormancy, 52 mutants). 401 uses `ensureFreshToken` (sessionRecheckWiring caught `refreshIdToken(true)`).
-- [x] 5. Docs: test plan + index row, KNOWN-ISSUES (S4b-1 section, S4a item 4 amended), Skill 167 + SKILLS-INDEX, README, AGENTS.
+- [x] 5. Docs: test plan + index row, KNOWN-ISSUES (S4b-1 section, S4a item 4 amended), Skill 172 + SKILLS-INDEX, README, AGENTS.
 - [ ] 6. Push (done after this edit), read CI, report done / pending / next.
 
 ## Suites at last run (sandbox)

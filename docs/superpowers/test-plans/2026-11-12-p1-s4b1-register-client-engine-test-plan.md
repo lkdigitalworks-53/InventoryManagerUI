@@ -10,7 +10,7 @@ Branch `feat/2026-11-12-p1-s4b1-register-client-engine`. Design: `specs/2026-11-
 | `.github/scripts/__tests__/stockRegisterService.test.js` | SRS-01..05: one battery (about 100 checks), 2000-run monkey, wiring, dormancy, 52 hand mutants | RUN | Real function text against a fake XHR: request shape, token header, timeout, status snapshot (QTBUG-49896), every failure kind, answer-exactly-once under timeout/double DONE/cancel/late answers, single flight (`busy`), local refusals (no token, role, bad window) send nothing, workspace/role change drops the answer, `cached` per window/workspace/role, `clear`, 401 uses the silent door |
 | `tests/tst_StockRegisterModel.qml` | 13 functions | CI only | Main contract in the real Qt JS engine (shim-run in Node 13/13) |
 
-Suites after the change: script suite 1061/1061 (the first run was 1060: `sessionRecheckWiring` caught a direct `refreshIdToken(true)` call, fixed, Skill 167 rule 9), `functions` 1671/1671 (untouched).
+Suites after the change: script suite 1061/1061 (the first run was 1060: `sessionRecheckWiring` caught a direct `refreshIdToken(true)` call, fixed, Skill 172 rule 9), `functions` 1671/1671 (untouched).
 
 ## 2. Functional / rules / e2e
 - Functional: the behaviour tests above (real function bodies, fake edges, real model, real server math in SRM-05).

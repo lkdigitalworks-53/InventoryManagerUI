@@ -88,7 +88,7 @@ test("F-8 makeInput: assembles the planner input; now and date come from ONE Dat
     assert.equal(r.ok, true);
     assert.deepEqual(r.input, {
         key: KEY, productId: "p1", productName: "Tomato", category: "Veg", qty: 5, unitCost: 10, reason: "weekly",
-        now: NOW.toISOString(), date: "2026-06-15", supplier: null
+        now: NOW.toISOString(), date: "2026-06-15", supplier: null, supplierName: ""
     });
     // 23:59:59.9 local: the ISO text and the local date describe the same instant.
     assert.equal(new Date(r.input.now).getTime(), NOW.getTime());

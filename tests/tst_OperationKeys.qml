@@ -45,4 +45,43 @@ TestCase {
         compare(OK.repairBatchId("ORD-1", 1, 3), "BAT-RPR-ORD-1-1-3")
         verify(OK.repairBatchId("ORD-1", 1, 3) !== OK.repairBatchId("ORD-1", 1, 4))
     }
+
+    // ── add product (atomic-ops AP2) ───────────────────────────────────────
+
+    function test_addProductKey_format_and_refusals() {
+        compare(OK.addProductKey("a-b_c.1"), "addProduct:a-b_c.1")
+        var bad = ["", "a/b", "a~b", "a b", "a:b", null, undefined, 5, {}, []]
+        for (var i = 0; i < bad.length; ++i)
+            compare(OK.addProductKey(bad[i]), "", "nonce " + String(bad[i]))
+        compare(OK.addProductKey(new Array(101).join("x")), "addProduct:" + new Array(101).join("x"))
+        compare(OK.addProductKey(new Array(102).join("x")), "")
+    }
+
+    function test_isAddProductKey_accepts_only_its_own_keys() {
+        verify(OK.isAddProductKey(OK.addProductKey("n1")))
+        var bad = ["addProduct:", "addProduct:a/b", "restock:n1", "completeOrder:o1:1", "addproduct:x", " addProduct:x", "", null, undefined, 7]
+        for (var i = 0; i < bad.length; ++i)
+            verify(!OK.isAddProductKey(bad[i]), String(bad[i]))
+        verify(!OK.isRestockKey(OK.addProductKey("n1")))
+        verify(!OK.isAddProductKey(OK.restockKey("n1")))
+    }
+
+    function test_addProductNonce_is_the_restock_nonce() {
+        var zero = function() { return 0 }
+        compare(OK.addProductNonce(1700000000123, zero), "1700000000123-000000000000")
+        compare(OK.addProductNonce(1700000000123, zero), OK.restockNonce(1700000000123, zero))
+    }
+
+    function test_restockKey_is_unchanged_by_the_shared_nonce_rule() {
+        compare(OK.restockKey("a-b_c.1"), "restock:a-b_c.1")
+        compare(OK.restockKey("a/b"), "")
+        compare(OK.restockKey(""), "")
+    }
+
+    function test_history_ids_carry_product_and_nonce() {
+        compare(OK.createdTxId("PRD-007", "n1"), "tx-c-PRD-007-n1")
+        compare(OK.createdTxId("{{prd}}", "n1"), "tx-c-{{prd}}-n1")
+        compare(OK.productAddedActId("PRD-007", "n1"), "act-PRD-007-n1")
+        verify(OK.createdTxId("PRD-007", "n1") !== OK.createdTxId("PRD-007", "n2"))
+    }
 }

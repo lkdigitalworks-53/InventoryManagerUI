@@ -27,6 +27,8 @@ var _BUG_CODES = {
     "too-many-mints": true, "unknown-counter": true, "invalid-bind-name": true, "duplicate-bind-name": true,
     "unused-mint": true, "unbound-placeholder": true, "placeholder-not-allowed": true,
     "placeholder-entity-mismatch": true, "movement-qty-mismatch": true,
+    // R5b: the activity row of a restock (operationLogic.js checkActivityOp)
+    "invalid-activity": true, "activity-stock-missing": true,
     // delta / movement / mutation validators (functions/lib/gatewayLogic.js, movementLogic.js): a request
     // the client built wrongly. functions/test/failureCauseCodes.test.js fails when the server gains a
     // code that is neither a person-facing cause below nor listed here.
@@ -77,6 +79,27 @@ function forRestock(rejection, name) {
         return { kind: "limit", text: "The server could not reserve a new batch number. Nothing was added. Try again in a moment; if it keeps failing, please report it (mint-exhausted)" }
     case "request-id-in-use":
         return { kind: "duplicate", text: "This request was already used for a different change. Try again" }
+    case "insufficient-quantity":
+    case "operation-too-large":
+        return _bug(code)
+    }
+    return forRejection(rejection, name)
+}
+
+// Same as forRejection, for a rejected ADD PRODUCT operation (atomic-ops AP2). A rejection writes nothing, so every
+// text here may say "nothing was added". `name` = the typed product name ("" when unknown). An add reads no existing
+// record and consumes no stock, so not-found, insufficient-quantity and operation-too-large mean an app bug.
+function forAddProduct(rejection, name) {
+    var code = (rejection && typeof rejection === "object") ? _str(rejection.error) : ""
+    var who = _str(name)
+    switch (code) {
+    case "conflict":
+        return { kind: "conflict", text: (who ? who + ": " : "") + "another device added something with the same number at the same time. Nothing was added. Try again" }
+    case "mint-exhausted":
+        return { kind: "limit", text: "The server could not reserve a new product number. Nothing was added. Try again in a moment; if it keeps failing, please report it (mint-exhausted)" }
+    case "request-id-in-use":
+        return { kind: "duplicate", text: "This request was already used for a different change. Try again" }
+    case "not-found":
     case "insufficient-quantity":
     case "operation-too-large":
         return _bug(code)

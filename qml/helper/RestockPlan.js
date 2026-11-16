@@ -20,6 +20,9 @@ var SUP = "sup"
 var BAT = "batch"
 var TOK_SUP = "{{sup}}"
 var TOK_BAT = "{{batch}}"
+// R5b: the server fills this in the activity subtitle with the stock its own delta op produced (`$` can never be a
+// mint bind name, so it is never a minted id). Text a person typed that equals it is refused like the two above.
+var TOK_STOCK = "{{$stock}}"
 
 var _DATE = /^\d{4}-\d{2}-\d{2}$/
 
@@ -29,7 +32,27 @@ function _text(v) { return typeof v === "string" ? v : "" }
 // Money to 2 places, like the order totals (3 x 0.1 was stored as 0.30000000000000004). A huge value is kept as it is:
 // x * 100 can overflow to Infinity, which JSON turns into null, while a finite total was always accepted here.
 function _money(x) { var r = Math.round(x * 100) / 100; return isFinite(r) ? r : x }
-function _hasToken(s) { return typeof s === "string" && (s.indexOf(TOK_SUP) >= 0 || s.indexOf(TOK_BAT) >= 0) }
+function _hasToken(s) { return typeof s === "string" && (s.indexOf(TOK_SUP) >= 0 || s.indexOf(TOK_BAT) >= 0 || s.indexOf(TOK_STOCK) >= 0) }
+// Cosmetic text is cut, never refused (a restock must not fail for a long name). Never splits a surrogate pair.
+function _clip(s, n) {
+    if (s.length <= n) return s
+    var cut = s.substring(0, n)
+    var last = cut.charCodeAt(n - 1)
+    return (last >= 0xD800 && last <= 0xDBFF) ? cut.substring(0, n - 1) : cut
+}
+// The feed row of a restock (limits: functions/lib/operationLogic.js checkActivityOp, title 200, subtitle 1000).
+// Same wording RestockFlow.activityText gives a legacy answer; `{{$stock}}` stands where that text puts the new stock.
+function _activityDoc(productId, productName, qty, supplierName, reason) {
+    return {
+        id: "act-" + TOK_BAT, kind: "product_restocked",
+        title: "Restocked: " + _clip(productName, 150),
+        subtitle: "+" + qty + " · now " + TOK_STOCK + " in stock"
+                  + (supplierName ? " · from " + _clip(supplierName, 100) : "")
+                  + (reason ? " · " + _clip(reason, 500) : ""),
+        entityId: productId, read: false, dismissed: false
+    }
+}
+
 
 function _create(entity, entityId, after) {
     return { kind: "mutation", entity: entity, entityId: entityId, action: "create", before: null, after: after }
@@ -43,6 +66,7 @@ function _create(entity, entityId, after) {
 //   reason         free text, trimmed here
 //   now            ISO timestamp, date "yyyy-MM-dd" (the caller formats the local date)
 //   supplier       null (no supplier) | { id } (a known supplier) | { newName } (create one)
+//   supplierName   display name of a known supplier, for the feed row only (R5b); "" or absent = none shown
 // }
 // Returns { ok: true, key, opType: "restock", ops, at }  (`at` = index of each op, -1 when absent)
 //      or { ok: false, reason } with reason one of: bad-key, bad-product, bad-quantity, bad-cost,
@@ -85,14 +109,15 @@ function build(input) {
     // The server replaces a bound token anywhere in an `after` string (design M6). Text the person
     // typed that equals a token would be silently rewritten into an id inside a stored record, so
     // it is refused instead (design T7). Practically unreachable; the cost of the check is six lines.
-    var typed = [inp.productName, inp.category, reason, newName, sup ? sup.id : ""]
+    var typed = [inp.productName, inp.category, reason, newName, sup ? sup.id : "", inp.supplierName]
     for (var t = 0; t < typed.length; ++t)
         if (_hasToken(typed[t])) return _refuse("reserved-text")
 
     var productName = _text(inp.productName)
     var category = _text(inp.category)
+    var shownSupplier = newName.length > 0 ? newName : _text(inp.supplierName).trim()
     var ops = []
-    var at = { supplierMint: -1, batchMint: -1, supplierCreate: -1, batchCreate: -1, delta: -1, purchase: -1 }
+    var at = { supplierMint: -1, batchMint: -1, supplierCreate: -1, batchCreate: -1, delta: -1, purchase: -1, activity: -1 }
 
     if (newName.length > 0) { at.supplierMint = ops.length; ops.push({ kind: "mint", counter: "supplier", bind: SUP }) }
     at.batchMint = ops.length
@@ -125,6 +150,12 @@ function build(input) {
         orderId: "", reason: reason
     }))
 
+    // R5b (design D-R5b-1..7): the feed row is written INSIDE the operation, after the delta whose stock it names.
+    // The server adds actorUid and the timestamp; the client sends neither (anything else is refused there).
+    at.activity = ops.length
+    ops.push(_create("activity", "act-" + TOK_BAT,
+                     _activityDoc(inp.productId, productName, inp.qty, shownSupplier, reason)))
+
     // Firestore refuses a doc over 1 MiB, and a rejected operation queued in the outbox would retry or
     // park for nothing. The free-text reason sits in three docs, so a pasted wall of text is the real
     // risk. Refuse before anything is queued (design T11); the server stays the authority.
@@ -138,7 +169,8 @@ function build(input) {
 // uses only what the results themselves say, never the plan, so it works after a relaunch when the
 // plan is gone. Anything that is not exactly one restock answer is refused (a half-understood result
 // must never be applied to the local stores).
-// -> { ok: true, productId, stock, batchId, supplierId, batch, supplier (doc or null), purchase }
+// -> { ok: true, productId, stock, batchId, supplierId, batch, supplier (doc or null), purchase, activity (doc or null) }
+// `activity` is null for an answer to a restock queued by a build that did not send an activity op (R5b D-R5b-7).
 //  | { ok: false, reason: "malformed-results", detail }
 function reflect(results) {
     function bad(detail) { return { ok: false, reason: "malformed-results", detail: detail } }
@@ -152,7 +184,8 @@ function reflect(results) {
     var batch = null
     var supplier = null
     var purchase = null
-    var creates = { stock_batch: 0, supplier: 0, transaction: 0 }
+    var activity = null
+    var creates = { stock_batch: 0, supplier: 0, transaction: 0, activity: 0 }
 
     for (var i = 0; i < results.length; ++i) {
         var r = results[i]
@@ -172,6 +205,7 @@ function reflect(results) {
             creates[r.entity]++
             if (r.entity === "stock_batch") batch = r.after
             else if (r.entity === "supplier") supplier = r.after
+            else if (r.entity === "activity") activity = r.after
             else purchase = r.after
         } else {
             return bad("kind-" + i)
@@ -182,6 +216,10 @@ function reflect(results) {
     if (deltas !== 1 || creates.stock_batch !== 1 || creates.transaction !== 1) return bad("shape")
     if (batch.batchId !== batchId || batch.productId !== productId) return bad("batch-doc")
     if (purchase.txId !== Keys.purchaseTxId(batchId)) return bad("purchase-doc")
+    if (creates.activity > 1) return bad("shape")
+    if (activity !== null && (activity.id !== "act-" + batchId || activity.kind !== "product_restocked"
+                              || activity.entityId !== productId || typeof activity.timestamp !== "string"))
+        return bad("activity-doc")
     if (mintedSupplier !== "") {
         if (creates.supplier !== 1 || supplier.supplierId !== mintedSupplier || batch.supplierId !== mintedSupplier)
             return bad("supplier-doc")
@@ -191,5 +229,5 @@ function reflect(results) {
 
     return { ok: true, productId: productId, stock: stock, batchId: batchId,
              supplierId: mintedSupplier !== "" ? mintedSupplier : _text(batch.supplierId),
-             batch: batch, supplier: supplier, purchase: purchase }
+             batch: batch, supplier: supplier, purchase: purchase, activity: activity }
 }

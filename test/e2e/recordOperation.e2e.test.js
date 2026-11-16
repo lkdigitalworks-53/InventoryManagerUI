@@ -360,6 +360,35 @@ test("BC replay: the same delete request sent twice -> 200 both times, no second
     assert.equal((await cascadeAudits("bcE2E-p7")).length, 2);
 });
 
+// KNOWN-ISSUES 42: owner/admin-only writes are one rule on EVERY endpoint. A staff token used to be accepted on recordOperation and
+// recordMutationsBatch for a staff delete (only recordMutation refused it). CI-only: written against the emulator, not run in the sandbox.
+test("owner-only writes: a staff token cannot delete a staff record through recordOperation or recordMutationsBatch (403, record intact, no marker); the owner still can", async () => {
+    const rec = { staffId: "opE2E-stf1", name: "E2E Staff" };
+    await seed("staff/opE2E-stf1", rec);
+    const staffDelete = (requestId) => op(requestId, [{ kind: "mutation", entity: "staff", entityId: "opE2E-stf1", action: "delete", before: rec, after: null }]);
+    try {
+        const viaOp = await post(staffDelete("completeOrder:opE2E-own1:1"), fixture.secondIdToken);
+        assert.equal(viaOp.status, 403, JSON.stringify(viaOp.body));
+        assert.equal(viaOp.body.error, "role-not-allowed");
+        assert.deepEqual(await read("staff/opE2E-stf1"), rec, "the staff record is intact");
+        assert.equal(await read("audit_log/completeOrder:opE2E-own1:1"), null, "no marker");
+
+        const viaBatch = await post({ entity: "staff", requestId: "opE2E-own-b1", items: [{ entityId: "opE2E-stf1", action: "delete", before: rec, after: null }] },
+                                    fixture.secondIdToken, "/recordMutationsBatch");
+        assert.equal(viaBatch.status, 403, JSON.stringify(viaBatch.body));
+        assert.equal(viaBatch.body.error, "role-not-allowed");
+        assert.deepEqual(await read("staff/opE2E-stf1"), rec, "still intact after the batch attempt");
+
+        const owner = await post(staffDelete("completeOrder:opE2E-own2:1"));
+        assert.equal(owner.status, 200, JSON.stringify(owner.body));
+        assert.equal(await read("staff/opE2E-stf1"), null, "the owner may delete it");
+    } finally {
+        await db.doc(T + "staff/opE2E-stf1").delete();
+        await db.doc(T + "audit_log/completeOrder:opE2E-own2:1").delete();
+        await db.doc(T + "audit_log/completeOrder:opE2E-own2:1~0").delete();
+    }
+});
+
 test("BC role gate: a staff token cannot delete a product (403), batches and product intact; staff may still delete a stock_batch", async () => {
     const { product, batches } = await seedProductWithBatches("bcE2E-p8", 2);
 
@@ -525,6 +554,7 @@ async function restoreCounter(before) {
     for (const n of mintedNow.splice(0)) {
         await db.doc(T + "stock_batches/" + idFor(n)).delete();
         await db.doc(T + "transactions/tx-p-" + idFor(n)).delete();
+        await db.doc(T + "activity_log/act-" + idFor(n)).delete();      // R5b: the feed row of a restock with an activity op
     }
     if (before === null) await db.doc(T + BATCH_COUNTER).delete();
     else await db.doc(T + BATCH_COUNTER).set(before);
@@ -553,8 +583,8 @@ function trackResult(r) {
 }
 
 test.after(async () => {
-    for (const ref of await db.collection(T + "stock_movements").listDocuments()) if (ref.id.startsWith("restock:opE2E")) await ref.delete();
-    for (const ref of await db.collection(T + "audit_log").listDocuments()) if (ref.id.startsWith("restock:opE2E")) await ref.delete();
+    for (const ref of await db.collection(T + "stock_movements").listDocuments()) if (ref.id.startsWith("restock:opE2E") || ref.id.startsWith("addProduct:opE2E")) await ref.delete();
+    for (const ref of await db.collection(T + "audit_log").listDocuments()) if (ref.id.startsWith("restock:opE2E") || ref.id.startsWith("addProduct:opE2E")) await ref.delete();
 });
 
 test("mint: a restock operation takes its batch id from the server counter, lands every doc, and a replay burns nothing", async () => {
@@ -773,3 +803,216 @@ test("mint: a bind named after an Object.prototype member and never used is a cl
         }
     });
 }
+
+test("R5b: a restock with an activity op stores the feed row with the SERVER's actor and time, the stock filled in; a replay adds no second row", async () => {
+    const before = await counterSnapshot();
+    const v0 = before ? before.value : 0;
+    try {
+        await seed("inventory/opE2E-pm", { productId: "opE2E-pm", stock: 10, name: "Mint E2E" });
+        const body = restockOp("restock:opE2E-a1", 3);
+        body.ops.push({ kind: "mutation", entity: "activity", entityId: "act-{{b}}", action: "create", before: null,
+            after: { id: "act-{{b}}", kind: "product_restocked", title: "Restocked: Mint E2E", subtitle: "+3 \u00b7 now {{$stock}} in stock",
+                     entityId: "opE2E-pm", read: false, dismissed: false } });
+        const t0 = Date.now();
+        const r = await post(body);
+        trackResult(r);
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        const id = "act-" + idFor(v0 + 1);
+        const doc = await read("activity_log/" + id);
+        assert.equal(doc.id, id);
+        assert.equal(doc.subtitle, "+3 \u00b7 now 13 in stock");
+        assert.equal(typeof doc.actorUid, "string");
+        assert.ok(doc.actorUid.length > 0);
+        assert.equal(typeof doc.timestamp, "string", "an ISO string, so the feed's orderBy(timestamp) never mixes types");
+        assert.ok(Date.parse(doc.timestamp) >= t0 - 5000 && Date.parse(doc.timestamp) <= Date.now() + 5000);
+        assert.deepEqual(r.body.results[r.body.results.length - 1].after, doc);
+        assert.equal((await read("audit_log/restock:opE2E-a1~4")).entity, "activity");
+
+        const again = await post(body);
+        assert.equal(again.status, 200);
+        assert.equal(again.body.idempotentReplay, true);
+        assert.deepEqual(await read("activity_log/" + id), doc, "the replay left the first row untouched");
+    } finally {
+        await restoreCounter(before);
+    }
+});
+
+test("R5b: a client that sends its own actorUid or timestamp in the feed row is refused (400 invalid-activity), nothing written", async () => {
+    const before = await counterSnapshot();
+    try {
+        await seed("inventory/opE2E-pm", { productId: "opE2E-pm", stock: 10, name: "Mint E2E" });
+        const body = restockOp("restock:opE2E-a2", 3);
+        body.ops.push({ kind: "mutation", entity: "activity", entityId: "act-{{b}}", action: "create", before: null,
+            after: { id: "act-{{b}}", kind: "product_restocked", title: "t", subtitle: "s", entityId: "opE2E-pm", read: false, dismissed: false,
+                     actorUid: "someone-else", timestamp: "1999-01-01T00:00:00.000Z" } });
+        const r = await post(body);
+        trackResult(r);
+        assert.equal(r.status, 400);
+        assert.equal(r.body.error, "invalid-activity");
+        assert.equal(r.body.opIndex, 4);
+        assert.equal((await read("inventory/opE2E-pm")).stock, 10);
+        assert.equal(await read("audit_log/restock:opE2E-a2"), null);
+        assert.deepEqual(await counterSnapshot(), before);
+    } finally {
+        await restoreCounter(before);
+    }
+});
+
+test("R5b review F1-F3: two feed rows, a row about another product and the stock token in the title are each refused (400 invalid-activity), nothing written", async () => {
+    const before = await counterSnapshot();
+    try {
+        await seed("inventory/opE2E-pm", { productId: "opE2E-pm", stock: 10, name: "Mint E2E" });
+        const row = (id, over) => ({ kind: "mutation", entity: "activity", entityId: id, action: "create", before: null,
+            after: Object.assign({ id: id, kind: "product_restocked", title: "Restocked: Mint E2E", subtitle: "plain",
+                                   entityId: "opE2E-pm", read: false, dismissed: false }, over || {}) });
+        const cases = [
+            ["two", [row("act-{{b}}"), row("act-e2e-second")], 5],
+            ["other product", [row("act-{{b}}", { entityId: "opE2E-other" })], 4],
+            ["token in the title", [row("act-{{b}}", { title: "{{$stock}}" })], 4]
+        ];
+        let n = 0;
+        for (const [label, extra, index] of cases) {
+            const body = restockOp("restock:opE2E-f" + (++n), 3);
+            for (const op of extra) body.ops.push(op);
+            const r = await post(body);
+            trackResult(r);
+            assert.equal(r.status, 400, label + " " + JSON.stringify(r.body));
+            assert.equal(r.body.error, "invalid-activity", label);
+            assert.equal(r.body.opIndex, index, label);
+            assert.equal((await read("inventory/opE2E-pm")).stock, 10, label + ": stock unchanged");
+            assert.equal(await read("audit_log/restock:opE2E-f" + n), null, label + ": no marker");
+            assert.equal(await read("activity_log/act-e2e-second"), null, label + ": no stray row");
+        }
+        assert.deepEqual(await counterSnapshot(), before, "no number burned");
+    } finally {
+        await restoreCounter(before);
+    }
+});
+
+// ---- AP1: add product with opening stock as ONE operation, against real Firestore (design 2026-11-13-add-product-atomic-operation-design.md) ----
+// The server half only: nothing in the app sends this yet. Like the mint tests above, each case records the two counter docs it can
+// move and restores them, and deletes every doc it minted, in its own `finally`.
+
+const PRODUCT_COUNTER = "counters/products";
+function addProductOp(requestId) {
+    return { requestId: requestId, opType: "addProduct", clientTimestamp: "2026-11-13T10:00:00.000Z", ops: [
+        { kind: "mint", counter: "product", bind: "p" },
+        { kind: "mint", counter: "stock_batch", bind: "b" },
+        { kind: "mutation", entity: "inventory", entityId: "{{p}}", action: "create", before: null,
+          after: { productId: "{{p}}", name: "opE2E Added", sku: "OE-1", category: "e2e", stock: 4, minStock: 1, price: 2, sellingPrice: 3,
+                   taxable: false, taxPercent: 0, size: "", unit: "pcs", description: "", photoIds: [], supplierId: "" } },
+        { kind: "mutation", entity: "stock_batch", entityId: "{{b}}", action: "create", before: null,
+          after: { batchId: "{{b}}", productId: "{{p}}", supplierId: "", qtyReceived: 4, qtyRemaining: 4, unitCost: 2, note: "Initial stock" } },
+        { kind: "mutation", entity: "transaction", entityId: "tx-c-{{p}}", action: "create", before: null,
+          after: { txId: "tx-c-{{p}}", kind: "created", productId: "{{p}}", quantity: 4 } },
+        { kind: "mutation", entity: "activity", entityId: "act-{{p}}", action: "create", before: null,
+          after: { id: "act-{{p}}", kind: "product_added", title: "Product added: opE2E Added", subtitle: "OE-1 \u00b7 stock 4",
+                   entityId: "{{p}}", read: false, dismissed: false } }
+    ] };
+}
+// Deletes what a (successful) response minted and restores both counter docs, so the QML suites that mint later see what they saw.
+async function wipeAddProduct(res, productBefore, batchBefore) {
+    if (res && res.body && Array.isArray(res.body.results)) {
+        for (const e of res.body.results) {
+            if (!e || e.kind !== "mint") continue;
+            if (e.counter === "product") {
+                await db.doc(T + "inventory/" + e.id).delete();
+                await db.doc(T + "transactions/tx-c-" + e.id).delete();
+                await db.doc(T + "activity_log/act-" + e.id).delete();
+            } else if (e.counter === "stock_batch") {
+                await db.doc(T + "stock_batches/" + e.id).delete();
+            }
+        }
+    }
+    if (productBefore === null) await db.doc(T + PRODUCT_COUNTER).delete(); else await db.doc(T + PRODUCT_COUNTER).set(productBefore);
+    if (batchBefore === null) await db.doc(T + BATCH_COUNTER).delete(); else await db.doc(T + BATCH_COUNTER).set(batchBefore);
+}
+
+test("AP1: an addProduct operation takes its product and batch ids from the server, lands every doc, derives ONE receipt row, stamps the feed row; a replay adds nothing", async () => {
+    const productBefore = await read(PRODUCT_COUNTER);
+    const batchBefore = await counterSnapshot();
+    let r = null;
+    try {
+        const t0 = Date.now();
+        r = await post(addProductOp("addProduct:opE2E-ap1"));
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        const mint = r.body.results[0];
+        assert.deepEqual([mint.kind, mint.counter, mint.bind], ["mint", "product", "p"]);
+        assert.match(mint.id, /^PRD-\d{3,}$/);
+        const id = mint.id;
+        const inv = await read("inventory/" + id);
+        assert.deepEqual([inv.productId, inv.stock, inv.name], [id, 4, "opE2E Added"]);
+        assert.equal((await read("stock_batches/" + r.body.results[1].id)).productId, id);
+        assert.equal((await read("transactions/tx-c-" + id)).productId, id);
+        const feed = await read("activity_log/act-" + id);
+        assert.equal(feed.entityId, id);
+        assert.equal(typeof feed.actorUid, "string");
+        assert.ok(feed.actorUid.length > 0);
+        assert.ok(Date.parse(feed.timestamp) >= t0 - 5000 && Date.parse(feed.timestamp) <= Date.now() + 5000);
+        // the ledger row is derived by the server from the inventory create (op index 2)
+        const row = await read("stock_movements/addProduct:opE2E-ap1~2~m0");
+        assert.deepEqual([row.kind, row.qty, row.productId, row.opType, row.operationId], ["receipt", 4, id, "addProduct", "addProduct:opE2E-ap1"]);
+        const productAfter = await read(PRODUCT_COUNTER);
+        assert.equal(productAfter.value, Number(id.substring(4)));
+
+        const again = await post(addProductOp("addProduct:opE2E-ap1"));
+        assert.equal(again.status, 200);
+        assert.equal(again.body.idempotentReplay, true);
+        assert.equal(again.body.results[0].id, id, "a replay answers the first id");
+        assert.deepEqual(await read(PRODUCT_COUNTER), productAfter, "a replay burns no number");
+        assert.deepEqual(await read("activity_log/act-" + id), feed, "and leaves the first feed row untouched");
+    } finally {
+        await wipeAddProduct(r, productBefore, batchBefore);
+    }
+});
+
+test("AP1: a rejected addProduct (a literal create over an existing doc: 409 conflict) burns no number and writes nothing; the retry after the fix succeeds", async () => {
+    const productBefore = await read(PRODUCT_COUNTER);
+    const batchBefore = await counterSnapshot();
+    let ok = null;
+    try {
+        await seed("transactions/opE2E-ap-blocker", { txId: "opE2E-ap-blocker", kind: "created" });
+        const body = addProductOp("addProduct:opE2E-ap2");
+        body.ops.splice(5, 0, { kind: "mutation", entity: "transaction", entityId: "opE2E-ap-blocker", action: "create", before: null,
+                                after: { txId: "opE2E-ap-blocker", kind: "created" } });
+        const r = await post(body);
+        assert.equal(r.status, 409, JSON.stringify(r.body));
+        assert.equal(r.body.error, "conflict");
+        assert.deepEqual(await read(PRODUCT_COUNTER), productBefore, "no product number was burned");
+        assert.deepEqual(await counterSnapshot(), batchBefore, "no batch number was burned");
+        assert.equal(await read("audit_log/addProduct:opE2E-ap2"), null, "no marker");
+        assert.equal(await read("transactions/opE2E-ap-blocker").then((d) => d.kind), "created", "the existing doc was not overwritten");
+
+        await db.doc(T + "transactions/opE2E-ap-blocker").delete();
+        ok = await post(body);
+        assert.equal(ok.status, 200, JSON.stringify(ok.body));
+        assert.equal((await read(PRODUCT_COUNTER)).value, Number(ok.body.results[0].id.substring(4)));
+    } finally {
+        await wipeAddProduct(ok, productBefore, batchBefore);
+        await db.doc(T + "transactions/opE2E-ap-blocker").delete();
+    }
+});
+
+test("AP1: the feed row is tied to the op type and to a product the operation creates: wrong kind, another product and the stock token are each 400 invalid-activity, nothing written", async () => {
+    const productBefore = await read(PRODUCT_COUNTER);
+    const batchBefore = await counterSnapshot();
+    try {
+        const cases = [
+            ["a restock kind in an addProduct", (a) => { a.kind = "product_restocked"; }],
+            ["a row about another product", (a) => { a.entityId = "PRD-opE2E-other"; }],
+            ["the stock token", (a) => { a.subtitle = "now {{$stock}}"; }]
+        ];
+        for (const [label, mutate] of cases) {
+            const body = addProductOp("addProduct:opE2E-ap3");
+            mutate(body.ops[5].after);
+            const r = await post(body);
+            assert.equal(r.status, 400, label + ": " + JSON.stringify(r.body));
+            assert.equal(r.body.error, "invalid-activity", label);
+            assert.equal(r.body.opIndex, 5, label);
+            assert.equal(await read("audit_log/addProduct:opE2E-ap3"), null, label + ": no marker");
+            assert.deepEqual(await read(PRODUCT_COUNTER), productBefore, label + ": no number burned");
+        }
+    } finally {
+        await wipeAddProduct(null, productBefore, batchBefore);
+    }
+});

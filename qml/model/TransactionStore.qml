@@ -274,27 +274,6 @@ QtObject {
         return doc
     }
 
-    function recordPurchase(productId, quantity, unitCost, productName, party, reason, category) {
-        if (!productId || !quantity || quantity <= 0) return
-        var doc = {
-            txId: _nextId("p"),
-            kind: "purchase",
-            timestamp: new Date().toISOString(),
-            date: Qt.formatDate(new Date(), "yyyy-MM-dd"),
-            productId: productId,
-            productName: productName || (InventoryStore.getById(productId) || {}).name || "",
-            category: category || (InventoryStore.getById(productId) || {}).category || "",
-            party: party || "",
-            quantity: quantity,
-            unitCost: typeof unitCost === "number" ? unitCost : 0,
-            unitPrice: 0,
-            total: quantity * (typeof unitCost === "number" ? unitCost : 0),
-            orderId: "",
-            reason: reason || ""
-        }
-        _push(doc)
-    }
-
     // Product-creation event. Always recorded for new products, even when
     // initial stock is 0 (qty: 0 row stays informational). Counts toward the
     // Purchased analytics bucket via bucketsFor(["purchase","created"], ...).

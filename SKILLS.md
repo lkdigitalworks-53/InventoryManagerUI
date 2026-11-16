@@ -3201,7 +3201,7 @@ registers each caller's callback in an array keyed by the *surviving* `requestId
 (`_deltaCallbacks[item.requestId].push(callback)`), so when a coalesced write resolves, **every**
 caller whose delta got merged into it has its own callback invoked with the same result. A
 `DataModel`/Store handler that fires per-callback side effects with real consequences beyond
-updating local state (`ActivityLog.record`, `TransactionStore.recordPurchase`, anything that writes
+updating local state (`ActivityLog.record`, a store's own ledger writer (the old `TransactionStore.recordPurchase`, removed in R5b), anything that writes
 a ledger entry rather than just setting a property) needs to know this: two *independent, legitimate*
 deltas on the same field close together — not a double-tap on one dialog, but e.g. a restock and a
 sale landing around the same moment — will each get their own side-effect firing even though the
@@ -4723,7 +4723,7 @@ Rules:
 Atomic-ops R3 (2026-11-01). The restock planner is client code the server must accept, and the sandbox has no Qt. The planner is a `.pragma library` file, so `functions/test/testSupport/qmlHelpers.js` loads its real text into Node (`vm`), and the tests send the built plan through the real `validateOperationRequest` + `applyOperation` on the strict fake DB.
 Rules:
 1. A client planner for a server operation is tested by sending its output through the server's own validator and apply code, then reading the answer back with the client's own `reflect` and comparing it with the stored docs. Hand-written expected shapes drift; the server cannot.
-2. Doc shapes that a QML builder writes today (`addSupplier`, `_buildBatchDoc`, `recordPurchase`) are tied to the planner with a drift test that extracts the builder's literal keys from the `.qml` source (`extractFunction`). A new field in one place fails the other.
+2. Doc shapes that a QML builder writes today (`addSupplier`, `_buildBatchDoc`; `recordPurchase` until R5b removed it, now a pinned key list) are tied to the planner with a drift test that extracts the builder's literal keys from the `.qml` source (`extractFunction`). A new field in one place fails the other.
 3. Read the server's answer from the answer alone, never from the plan: after a relaunch the plan is gone and the stored answer is all there is (T6). Cross-check ids inside the answer (batch id vs mint, purchase id vs batch id, supplier vs mint) and refuse anything that is not exactly one operation's answer.
 4. Apply a restock answer whole or not at all (`applyRestockResults`): validate first, then touch the stores. Add each doc by id so a second application is a no-op. A stored (replayed) answer can carry a stock older than the device knows, so the caller skips it and re-reads.
 5. Pin each refusal with its own `detail`, not only `ok:false`. A mutation run found a refusal that was masked by a second check and a dead clause; both were invisible to a bare `ok:false` assertion. Hand-mutate the new code and strengthen the tests for every survivor (here: exact conflict text, zero-quantity label).
@@ -4988,7 +4988,115 @@ Rules:
 
 **The check:** for any "resolve the caller" step, name what the client does with each possible answer (refused, failed, terminal, retry) and which of them each handler can now return when the lookup itself throws. For any rules read change, list every `match` that can cover the path and say which ones you carved out.
 
-## Skill 167: Put a client's every decision about a statutory report in one pure file: fixed-zone periods, an echoed-window check, and a service that answers exactly once
+## Skill 166: Put a derived feed row inside the transaction that causes it, stamp who and when on the server, and open an entity to ONE operation type instead of to every endpoint
+
+**Why:** the feed row of a restock was a client PUT after the answer: lost if the app died in between, written twice by a replay, and its actor and time were whatever the phone said (a wrong clock pins a row on top of the feed for ever).
+
+**Rules:**
+1. A row that exists because an operation happened belongs INSIDE that operation's transaction. Then "applied" implies "feed row exists", a replay returns the same stored row, and a rejection leaves no trace.
+2. Give the new entity its OWN map (`OPERATION_ONLY_ENTITIES`), restricted by operation type and by action. Never add it to the shared `ENTITY_COLLECTIONS`: five other endpoints read that map, and one line there silently opens the collection to all of them. Pin it with a guard that every other validator answers `unsupported-entity`, and that only one file names the collection.
+3. The client sends the SHAPE, the server owns the FACTS: refuse any extra key (do not ignore it), then stamp the caller and the server clock. Test the stamping on `applyOperation` alone too, with a doc that skipped validation (B-11): a mutant that let the doc's own `actorUid` win survived the validator tests until that case existed.
+4. A value only the transaction knows (the stock after this delta) is a named token the server fills (`{{$stock}}`), with a character no bind name can contain, a validation that an earlier op provides it, and the same token reserved in the planner so typed text can never equal it.
+5. Cosmetic text is CUT by the planner (never split a surrogate pair), never refused: a valid restock must not fail for a long product name. The server still enforces the cap.
+6. When an answer can come from an older client's queue, keep a clearly marked legacy fallback for ONE release (`shortcut:` comment, KNOWN-ISSUES entry), written so the new path and the old path can never both fire (`!out.activity`).
+7. Deploy order is part of the design: a new client against an old server is a terminal 400. Say "functions first" in the PR, the test plan and AGENTS.
+8. Run the hand mutants on the stamping and the shape rules, and read the survivors: one survivor is one missing test.
+9. (CI, 2026-11-12) Adding an op to a plan changes every test that counts ops, and the QML twins are invisible to the Node run: CI showed 4 red QML cases (`tst_InventoryStore_restock` x2 and `tst_RestockPlan` monkey still expected 4 or 6 ops; `tst_ActivityLog` assumed a newer row at an EQUAL timestamp goes first, it goes after). Before pushing, `grep -rn "ops.length\|mint,mint" tests test/e2e` for the plan you changed, not only the Node tests, and give a test row a strictly different timestamp when order matters.
+10. (PR #197 review, 2026-11-13) A rule the design states in PROSE must be a validator line with a test: "one row", "names the product this operation changed", "the token is for the subtitle" were all in the design and in comments, and none was enforced. Method before approving a new operation entity: write the hostile bodies (two rows, a row about another product, the token in another field, a literal id, a wrong op type) and run them through the REAL `validateOperationRequest` + `applyOperation` on the strict fake DB. Whatever is accepted that the design says is not allowed is a finding. A probe script takes minutes; reading the code did not find these three.
+11. A rule that flips an older assertion on purpose (A-7's "no delta needed") says so in the test, the commit and the test plan: a flipped assertion is a decision, not an accident. Check every hand mutant for EQUIVALENCE before counting a survivor (`earlier.concat([])` survives because it is the same code).
+12. Pin the SHAPE, the COUNT and the SUBJECT of a server-written row. Leave the ID alone only while another writer (the rules allow-list) can write the same collection anyway: pinning it earlier couples the server to the client's bind name for no added protection (KNOWN-ISSUES 30).
+13. (PR #197 sweep 2, 2026-11-13) A cap proved on a TEMPLATE is not a cap on the STORED text: any token the server expands (`{{$stock}}`, minted `{{batch}}` ids) can grow the string after validation. Prove the cap again where the text is finalised, and test both sides of the boundary (exactly the cap kept, cap + 1 refused). Probe with the largest legal template and the longest legal value. A helper that is callable without validation (`applyOperation` alone) must refuse a bad doc, not throw inside the transaction.
+
+**The check:** for a derived row, answer (a) what happens if the app dies right after the answer, (b) what a replay writes, (c) who decides actor and time, (d) which other endpoint can now reach the collection.
+
+## Skill 167: Wire a second dialog to a shared helper with an optional hook, apply the plan in place by row index, and read the live rows
+
+**Built in picker slice S4, 2026-11-12 (Edit Order wired).** New Order's rules were already in `NewOrderPicker.js`. Edit Order differs in three ways that are about money: its stock formula depends on the saved status, a completed order's re-added line keeps its booked tax, and its lines live in a `ListModel` whose rows carry tax, discount and price the picker must not touch.
+
+Rules:
+1. Reuse the money invariants, do not copy them. Add ONE optional hook to the shared function (`lookup.availableOf`) and keep the old path when it is absent; prove the old callers unchanged with the old tests plus tests for the hook (NOP-28..30: used, junk answer refused, absent or non-function ignored) and a parity run of seeded plans through both entry points (EOP-26). A throwing or non-number hook answer is 0: fail closed.
+2. Decide the stock formula by the order's SAVED status, never by an editable control. The status combo changes while the person edits; `_orderStatus` is what the order held. Any status that is not exactly `completed` takes the stricter formula (EOP-05).
+3. A completed order's units are already out of stock: available is on-hand plus the units held at completion minus the units held now. That makes the unchanged line show true on-hand, a returned unit available again, and a removed line free all its units for a re-add (EOP-03).
+4. A rule that lives only in a QML handler is untested even when a test file seems to cover it: `tst_CompletedOrderTaxTimeOfSupply.qml` re-implements the booked-tax rule instead of calling it. Move the rule into a pure function (`seedOf`) and test that.
+5. Apply a plan to a model IN PLACE and by row index: `setProperty(index, "quantity", n)` for a bump, `append` for a new row, one recompute at the end. Rebuilding the model from helper output drops every field the helper did not copy and rebuilds every delegate. Keep indexes honest: one picker line per row, a junk row becomes a blank line (`linesOf`, EOP-01, EOP-19). Pin that the apply function never sets price, discount or tax on an existing row (EOW-05).
+6. Read the LIVE rows in every hook and at the commit. A delete button that recomputes later (`Qt.callLater`) leaves any cached copy stale for a tick. Keep a cached property only as the notifier for the sheet's binding (EOW-16).
+7. A dry run is true only for the path that will use it. Pending and processing orders complete through `CompletionPlan` (capped); a completed order's edit goes through the legacy per-line chain, which has no cap, so the size check is always ok there and the cost is named, not hidden (S4-D2, KNOWN-ISSUES 29).
+8. A refusal that needs the product again (to seed tax) must fail closed if the product left in between: refuse and report `gone`, never add the line untaxed (EOP-16, the second real mutant).
+9. `extractFunction` finds the FIRST `function name(` in the file, comments included. A header comment that lists the public contract (`// function openFor(id)`) made it start there and run to the end of the file; it looked like an unbalanced brace and was misdiagnosed as one (KNOWN-ISSUES 33). Word such a comment without the keyword (`// openFor(id)`) and assert the extracted body is neither empty nor the whole file (EOW-19).
+10. When a dead helper loses its last reader, delete it and pin both ends: the deleted names are gone (EOW-01) and the one remaining reader still reads the thing that was kept (the legacy seed reads `catalog`).
+11. Changing an allow-list pin is part of the slice: NOW-09, WIRE-15, W-20 and DORM-01 named Edit Order as not using the sheet; S4 changes them on purpose, in the same PR, and EOW-10 pins the new exact list.
+12. (PR #196 sweep) Two matchers for the same thing drift. The dialog matched the original line with `===` and the helper with `String()`, so a numeric id was booked by one and ignored by the other. Make the helper the ONLY matcher (`originalOf`) and have the dialog's old function call it; pin it with a test that RUNS the dialog's real function (EOW-17).
+13. (PR #196 sweep) A rule stated on one path must hold on the other. The hook path floored the limit to whole units, the default path did not, and a fractional line in the cart leaked a fractional limit into `take` (NOP-31). When a function has a default and an override, run every invariant test through both.
+14. (PR #196 sweep) A "nothing can throw" test must put junk INSIDE the container too: EOP-20 fed non-lists only, and a `null` row inside `lines` threw. Feed junk elements, not just junk arguments (EOP-29), and run a seeded monkey with fractional quantities and junk rows (EOP-30).
+15. (PR #196 second sweep) A change detector written as `a !== b` calls a NaN row changed, because `NaN !== NaN`. `applyPlan` emitted a `set` for an untouched row whose quantity was NaN. Only a touched row can have a quantity above 0, so the test is `l.qty > 0 && l.qty !== before.qty` (EOP-31, EOW-19). Fuzz found it: 40,000 seeded random orders against five invariants (no input mutation, no duplicate append, finite price and tax, a set only adds, never above the limit) failed on this one only.
+16. (PR #196 second sweep) A helper that only passes a call through to another helper is a facade nobody asked for: `EditOrderPicker.cartQty` and `.skippedNote` were deleted, the dialog imports `NewOrderPicker.js` and calls it. Do the delete and pin both ends (the dialog's two calls, and no such export left in the helper, EOW-19).
+
+**The check:** for the dialog, list every way a row changes (stepper, remove, price, discount, picker) and which one recomputes when; for every number the picker decides, name the status it depends on and the field it reads; for every tax or price field of an existing row, show the test that fails if the picker touches it.
+
+## Skill 168: Split a client-and-server feature so the SERVER half merges and deploys first, dormant, then every client slice is device-testable while its own PR is open
+
+**Why:** PR #197 (R5b) carried a server half and a client half in one PR. Functions deploy only from `main` after merge, so Taher's device test of the open PR ran the new client against the OLD server and got a terminal 400 `unsupported-entity`, shown as "The server cannot accept this request" (KNOWN-ISSUES 33). Nothing was wrong with the code; the sequence was impossible.
+
+**Rules:**
+1. A feature that needs a new server capability is cut in slices whose FIRST slice is the server alone, additive and dormant: nothing in the app sends the new request, so the deploy cannot change behaviour, a revert is safe, and the approval can be given at once.
+2. Prove "dormant" with a test, not a sentence: a guard reads every QML and helper file and fails if the new op type's name appears (AP1 G-1). The slice that wires the client DELETES that guard in its own diff, which makes the switch-on visible in review.
+3. The ops the server accepts and the ops the client plans are checked against each other in Node: the client planner runs against the REAL server validator, so "the client plans what the server accepts" is a test. The server slice therefore needs no per-op-type shape check (D-AP-6): a second source of truth deployed in lock-step is a second place to drift.
+4. Tie every per-opType allowance to ONE table and derive the lists from it (`ACTIVITY_KIND_BY_OPTYPE`, `opTypes: Object.keys(...)`). Two lists that must agree will one day not.
+5. A rule that WIDENS an older rule (the feed row may now be written by two op types) leaves the older rule byte-identical and pins it with a regression case (V-12), and the old assertions that said "restock only" are flipped in the same commit with a name that says why.
+6. Reuse the engine, do not extend it: the `product` counter is ONE registry entry; the id substitution, the collision probe, the heal, the replay marker, the rollback-without-a-trace and the ledger derivation were all proven by earlier slices and are re-proved here only through the new shape (B-1..B-15).
+7. When two writers share a counter doc (the server mint and the client's single and bulk mints), extend the drift guard to pin BOTH client minters and mutation-test the guard (5 new mutants).
+8. A known hole that is not this slice's job is written as a test that pins today's behaviour and says so (K-1: a non-numeric stock leaves no ledger row; `recordMutation` has the same hole), so the day it is fixed the test flips on purpose.
+9. Deploy order is part of the design: server first, client later, and the PR says which slice a device test belongs to.
+10. An id derived from a COUNTER number is only as unique as the counter. When a counter can be damaged and re-seeded (here any member can write it) and the rows derived from it outlive the thing they describe (history of a deleted product), a deterministic id turns "never overwrite" into a permanent 409 on every retry. Derive such ids from the operation as well (its nonce), and pin the dead end as a test before the planner is built (K-2). Same for typed text that goes through a substitution grammar: neutralise the delimiters where the text is built (K-3).
+
+**The check:** can the server half be merged and deployed with the app untouched, and would a revert change nothing a user can see? If not, the slice is too big.
+
+## Skill 169: Mirror an apply-time refusal as a disabled row reason with an optional hook, and dry-run a Node E2E offline before CI
+
+Learned in picker S5a (2026-11-15). Plan `docs/superpowers/plans/2026-11-15-product-picker-v2-s5a-no-price-and-e2e.md`.
+
+1. **A rule that refuses at apply time is a bug in the UI until the row says so.** `applyPlan` refused a new line with no price, but the sheet showed the row addable: the person tapped Add and got a toast. Fix by giving `classify` the same question, not a copy of the answer: an optional `hasPrice(p)` hook the dialogs fill with `NP.priceOf(p) !== null`. The helper stays store-free and cannot drift from `applyPlan`.
+2. **An optional hook defaults to "not checked", a present hook fails closed.** Absent: skip. Present and not truthy, or throwing: disable. Pin both (PICK-36, 37, 40) and pin that each dialog still supplies it by counting hooks (NOW-03, EOW-03 say seven).
+3. **Mirror the refusal at the same scope.** `applyPlan` refuses only a NEW line, so the reason applies only when `inOrder === 0`; disabling a bump would stop a person finishing an order whose product lost its price afterwards. Precedence: hidden, out of stock, no price, order full.
+4. **A new allow-list pin will fail on your own new test file.** `DORM-01` lists every file allowed to mention the picker helpers; add a new test or E2E file to it in the same commit.
+5. **No emulator, no excuse to skip the E2E dry run.** Put a throwaway `--require` hook in /tmp: stub `firebase-admin/app` and `firebase-admin/firestore` with the repo's strict in-memory double (`get/set/update/delete`, `listDocuments`) and replace `global.fetch` with the REAL `validateOperationRequest` + `applyOperation`. It proves the client logic and the operation shapes; it does not prove Firestore semantics, say so.
+6. **Clean up everything the real server writes, not just what you seeded.** A completion also writes `audit_log` rows and one `stock_movements` row per stock change, keyed by the request id. Delete them by the request-id prefix, and make the hook print leftovers on exit to prove it.
+7. **Commit and push after code and tests, before docs.** A chat turn can end at any tool call; the docs are the part that can be redone from the branch.
+
+
+## Skill 170: Two readers of one value must share one rule, and a sweep tests the SHAPES the rule is for, not the happy product
+
+Learned in the PR #200 sweep (picker S5a, 2026-11-15). Plan section "PR #200 sweep" in `docs/superpowers/plans/2026-11-15-product-picker-v2-s5a-no-price-and-e2e.md`.
+
+1. **When a feature makes a value decide something (here: can this row be added), find every other reader of that value.** `NewOrderPicker.priceOf` decided addability and the line price; `PickerSheetModel.priceOf` painted the row price and the total. They differed on `sellingPrice: null` with a legacy `price`: the row said 0, the order line was priced 3. The PR had a test that pinned the product as addable (NOW-17, product NUL) and never looked at the number next to it. Grep the value's name (`sellingPrice`), not the function, and list every reader.
+2. **Test the value shapes, not one example per branch.** `undefined`, `null`, `0`, `NaN`, negative, text, legacy-only, both missing. A table of shapes found the bug in one assertion (SHEET-44); a "legacy price" case that used `undefined` had passed for weeks.
+3. **Pin an invariant by brute force when two layers must agree.** "The row is never looser than the commit" is a property: enumerate price shapes x cart shapes, ask both layers, assert the implication (NOP-32). It also found the one place the layers differ (a cart line with no usable quantity) and pinned it as the safe direction.
+4. **A mutant that loosens the row must fail a test.** Disable the price check in `classify`: NOP-32 failed. Revert the display fix: SHEET-44 failed. Run both before trusting the new tests.
+5. **A test must not assert its own fixture.** `eq(noPrice.hasPrice(), false)` tested a lambda the test had just written. Read your assertions for the call that touches the code under test.
+6. **Recount, never carry a count.** The test plan said 1786, the PR said 1791, the run said 1791. Re-run, write the measured number (Skill rule from the learnings file).
+7. **A wrong committer email is a process finding, not a rewrite.** Say it in the PR notes; do not force-push a PR under review.
+
+**The check:** for the value, `grep` every reader; for each, feed the same eight shapes; for each decision made from it, name the test that fails when a reader changes.
+
+## Skill 171: Plan against the real server in Node, make every id the plan invents carry the operation, and neutralise or validate EVERY string that reaches a substitution grammar
+
+**Why:** AP2 builds the client half of a server operation. The server's `{{bind}}` substitution rewrites any string in a stored doc, so text the plan did not write itself (a typed name, a timestamp, a supplier id) can become an id, a stock token or a 400. A deterministic id derived from a counter number can collide with rows that outlive their product.
+
+**Rules:**
+1. The planner is tested through the REAL `validateOperationRequest` and `applyOperation` on the strict fake DB (the helpers load with their real text through `qmlHelpers.js`), for every combination of the optional parts (supplier none, known, new; stock 0, fractional, whole). "The client plans what the server accepts" is a test, not a belief.
+2. `reflect` reads ONLY the results (it must work after a relaunch when the plan is gone), checks every cross-doc fact (a batch exists exactly when stock > 0 and its quantities equal the stock; a supplier doc exists exactly when its id was minted and the product and batch carry it; both history ids carry the same nonce) and refuses on any doubt. Prove it by damaging a good answer in 38 named ways and by a seeded monkey.
+3. An id derived from a counter number alone is only as unique as the counter. Put the operation nonce in the ids of history rows that outlive the thing they describe; a replay has the same key and so the same ids.
+4. Neutralise with a LOOKAHEAD, not split/join: `"{{{".split("{{").join("{ {")` leaves a `{{`. Pin the triple and the quadruple.
+5. Typed text is not the only string that reaches the grammar. The seeded monkey found `now: "{{{"` going into four docs. Validate the format of every caller-supplied string (an ISO timestamp, a known id without a brace pair), and write the monkey as an INVARIANT over every string of every created doc (no brace pair outside the planner's own tokens), never as an output comparison. Walk the strings of the docs: `JSON.stringify` of a nested doc contains `}}` by structure. A format regex proves a SHAPE, not a date: `2026-13-45T25:61:61Z` has the shape of a timestamp. Also require the value to parse and to round-trip through `Date` to the same second (31 February and 24:00 roll over in some engines), and let the monkey assert the invariant on what it accepted (PR #201 sweep F1).
+6. Keep the key-list drift guards: the planned product doc, batch doc, `created` row and its snapshot are compared with the keys the legacy code builds (the legacy function bodies are executed from the QML source), so the new path cannot silently drop a field the History or the register reads.
+7. Hand mutants: a mutant whose search string does not match the source proves nothing. Treat "no match" as a survivor and fix the mutant (the first run here had one).
+8. When the pure helper starts to name an op type, NARROW the dormancy pin (skip `qml/helper/`) instead of deleting it, and add a guard that nothing outside the helpers calls the planner. The slice that wires the client deletes both.
+9. Reuse a generator under a per-op name (`addProductNonce` = `restockNonce`) instead of renaming it; share the validator (`_validNonce`) so the two key kinds cannot drift.
+10. Findings that are not this slice's job go to KNOWN-ISSUES the same turn (here: the restock planner's lenient `now`, the dialog values the planner now refuses), and the next slice's checklist goes into the design (section 6).
+
+**The check:** does `reflect(apply(build(x)))` round-trip for every combination, and does a fuzzer that types brace pairs into every field find any string that is not the planner's own token?
+
+## Skill 172: Put a client's every decision about a statutory report in one pure file: fixed-zone periods, an echoed-window check, and a service that answers exactly once
 
 **Built in P1 S4b-1, 2026-11-12 (`qml/helper/StockRegisterModel.js`, `qml/model/StockRegisterService.qml`).** The stock register page (S4b-2) is Felgo-only and cannot be tested in the sandbox, so everything it would decide was moved into a pure file and a small service first.
 

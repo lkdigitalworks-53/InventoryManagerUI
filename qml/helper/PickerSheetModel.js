@@ -24,6 +24,7 @@
 
 var REASON_TEXT = {
     "out-of-stock": "Out of stock",
+    "no-price": "No selling price",
     "order-full": "Order is full",
     "unavailable": "Not available right now"
 }
@@ -40,9 +41,13 @@ function reasonTextFor(reason) {
     return _has(REASON_TEXT, reason) ? REASON_TEXT[reason] : REASON_TEXT.unavailable
 }
 
+// The DISPLAY price of a row and of the draft total. Same source as the price a NEW order line gets
+// (NewOrderPicker.priceOf): sellingPrice, else the legacy price when sellingPrice is missing OR null. A product with no
+// usable price shows 0 here (its row is disabled "no-price" and cannot be added). PR #200 sweep: null used to skip the
+// legacy price, so the sheet showed 0 and totalled 0 for a line that the order then priced at the legacy price.
 function priceOf(product) {
     if (!product || typeof product !== "object") return 0
-    var p = (product.sellingPrice !== undefined) ? product.sellingPrice : product.price
+    var p = (product.sellingPrice !== undefined && product.sellingPrice !== null) ? product.sellingPrice : product.price
     return (typeof p === "number" && isFinite(p) && p > 0) ? p : 0
 }
 
@@ -82,6 +87,7 @@ function _ctx(hooks, orderLines, draft) {
         hasQueuedRestock: h.hasQueuedRestock,
         unsyncedState: h.unsyncedState,
         isDeleting: h.isDeleting,
+        hasPrice: h.hasPrice,
         inOrderQty: h.inOrderQty,
         availableFor: h.availableFor,
         inDraft: function(id) { return _has(draft, id) ? draft[id] : 0 },
@@ -99,6 +105,7 @@ function _unitOf(p) {
 function _pill(row, p, unit) {
     if (row.visibility !== "enabled") {
         if (row.reason === Pick.REASON.outOfStock) return { status: "out of stock", label: "Out of stock" }
+        if (row.reason === Pick.REASON.noPrice) return { status: "inactive", label: "No price" }
         if (row.reason === Pick.REASON.orderFull) return { status: "pending", label: "Order full" }
         return { status: "inactive", label: "Unavailable" }
     }

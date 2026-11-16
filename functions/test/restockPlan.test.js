@@ -66,13 +66,13 @@ test("K-5 purchaseTxId keeps the tx-p- prefix and is derived from the batch id",
 
 // ---------------------------------------------------------------------------- build: shape
 
-test("B-1 new supplier: six ops, both mints first, tokens in the right places, receipt movement explicit", () => {
+test("B-1 new supplier: seven ops, both mints first, tokens in the right places, receipt movement explicit", () => {
     const p = build();
     assert.equal(p.ok, true);
     assert.equal(p.key, KEY);
     assert.equal(p.opType, "restock");
-    assert.deepEqual(p.at, { supplierMint: 0, batchMint: 1, supplierCreate: 2, batchCreate: 3, delta: 4, purchase: 5 });
-    assert.deepEqual(p.ops.map((o) => o.kind), ["mint", "mint", "mutation", "mutation", "delta", "mutation"]);
+    assert.deepEqual(p.at, { supplierMint: 0, batchMint: 1, supplierCreate: 2, batchCreate: 3, delta: 4, purchase: 5, activity: 6 });
+    assert.deepEqual(p.ops.map((o) => o.kind), ["mint", "mint", "mutation", "mutation", "delta", "mutation", "mutation"]);
     assert.deepEqual(p.ops[0], { kind: "mint", counter: "supplier", bind: "sup" });
     assert.deepEqual(p.ops[1], { kind: "mint", counter: "stock_batch", bind: "batch" });
     assert.equal(p.ops[2].entityId, "{{sup}}");
@@ -83,22 +83,30 @@ test("B-1 new supplier: six ops, both mints first, tokens in the right places, r
         movements: [{ kind: "receipt", qty: 5, reason: "weekly" }] });
     assert.equal(p.ops[5].entityId, "tx-p-{{batch}}");
     assert.equal(p.ops[5].after.party, "{{sup}}");
-    for (const i of [2, 3, 5]) { assert.equal(p.ops[i].action, "create"); assert.equal(p.ops[i].before, null); }
+    for (const i of [2, 3, 5, 6]) { assert.equal(p.ops[i].action, "create"); assert.equal(p.ops[i].before, null); }
+    // R5b: the feed row is last (after the delta whose stock it names), id from the batch, the new supplier's name shown
+    assert.equal(p.ops[6].entity, "activity");
+    assert.equal(p.ops[6].entityId, "act-{{batch}}");
+    assert.deepEqual(p.ops[6].after, {
+        id: "act-{{batch}}", kind: "product_restocked", title: "Restocked: Tomato",
+        subtitle: "+5 · now {{$stock}} in stock · from Acme Farms · weekly", entityId: "p1", read: false, dismissed: false });
 });
 
-test("B-2 known supplier: four ops, no supplier mint or create, the id is used as typed", () => {
+test("B-2 known supplier: five ops, no supplier mint or create, the id is used as typed", () => {
     const p = build({ supplier: { id: "SUP-009" } });
-    assert.deepEqual(p.ops.map((o) => o.kind), ["mint", "mutation", "delta", "mutation"]);
-    assert.deepEqual(p.at, { supplierMint: -1, batchMint: 0, supplierCreate: -1, batchCreate: 1, delta: 2, purchase: 3 });
+    assert.deepEqual(p.ops.map((o) => o.kind), ["mint", "mutation", "delta", "mutation", "mutation"]);
+    assert.deepEqual(p.at, { supplierMint: -1, batchMint: 0, supplierCreate: -1, batchCreate: 1, delta: 2, purchase: 3, activity: 4 });
     assert.equal(p.ops[1].after.supplierId, "SUP-009");
     assert.equal(p.ops[3].after.party, "SUP-009");
+    assert.equal(p.ops[4].after.subtitle, "+5 · now {{$stock}} in stock · weekly", "an id with no supplierName shows no supplier");
+    assert.equal(build({ supplier: { id: "SUP-009" }, supplierName: "Acme Farms" }).ops[4].after.subtitle, "+5 · now {{$stock}} in stock · from Acme Farms · weekly");
 });
 
 test("B-3 no supplier (null or undefined): empty supplierId and party", () => {
     for (const s of [null, undefined]) {
         const p = build({ supplier: s });
         assert.equal(p.ok, true);
-        assert.equal(p.ops.length, 4);
+        assert.equal(p.ops.length, 5);
         assert.equal(p.ops[1].after.supplierId, "");
         assert.equal(p.ops[3].after.party, "");
     }
@@ -194,7 +202,23 @@ test("D-1 drift guard: the plan's docs have exactly the keys the QML builders wr
     const keys = (o) => Object.keys(o).sort();
     assert.deepEqual(keys(p.ops[2].after), literalKeys("SupplierStore.qml", "addSupplier", "var doc = {"));
     assert.deepEqual(keys(p.ops[3].after), literalKeys("StockBatchStore.qml", "_buildBatchDoc", "return {"));
-    assert.deepEqual(keys(p.ops[5].after), literalKeys("TransactionStore.qml", "recordPurchase", "var doc = {"));
+    // R5b (P2): TransactionStore.recordPurchase is gone, the planner is the only builder of a purchase doc. The keys are
+    // pinned here instead, in the order the old builder wrote them; readers of kind "purchase" rely on exactly these.
+    assert.deepEqual(keys(p.ops[5].after), ["category", "date", "kind", "orderId", "party", "productId", "productName", "quantity",
+        "reason", "timestamp", "total", "txId", "unitCost", "unitPrice"]);
+});
+
+test("D-2 R5b (P2): TransactionStore no longer has recordPurchase and nothing in qml/ or tests/ calls it", () => {
+    const root = path.join(__dirname, "..", "..");
+    assert.doesNotMatch(fs.readFileSync(path.join(root, "qml", "model", "TransactionStore.qml"), "utf8"), /function recordPurchase\(/);
+    const hits = [];
+    const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).forEach((e) => {
+        const f = path.join(dir, e.name);
+        if (e.isDirectory()) walk(f);
+        else if (/\.(qml|js)$/.test(e.name) && /\.recordPurchase\(/.test(fs.readFileSync(f, "utf8"))) hits.push(path.relative(root, f));
+    });
+    walk(path.join(root, "qml")); walk(path.join(root, "tests"));
+    assert.deepEqual(hits, []);
 });
 
 // ---------------------------------------------------------------------------- client plan -> real server
@@ -468,4 +492,79 @@ test("M-1 seeded monkey (400 inputs): a plan is either refused with a known reas
         stats.applied++;
     }
     assert.ok(stats.applied > 150 && stats.refused > 15, JSON.stringify(stats));
+});
+
+// ---------------------------------------------------------------------------- R5b: the feed row inside the operation
+
+const RFLOW = load("RestockFlow.js");
+const SUBTITLE_TOKEN = "{{$stock}}";
+
+test("AC-1 the activity text is cut, never refused: product 150, supplier 100, reason 500, no split emoji", () => {
+    const big = build({ productName: "N".repeat(5000), reason: "R".repeat(500), supplier: { id: "SUP-1" }, supplierName: "S".repeat(5000) });
+    assert.equal(big.ok, true);
+    const a = big.ops[big.at.activity].after;
+    assert.equal(a.title, "Restocked: " + "N".repeat(150));
+    assert.equal(a.subtitle, "+5 · now " + SUBTITLE_TOKEN + " in stock · from " + "S".repeat(100) + " · " + "R".repeat(500));
+    assert.ok(a.title.length <= 200 && a.subtitle.length <= 1000);
+    // the cut lands inside a surrogate pair: the whole emoji is dropped, never half of it
+    const emoji = build({ productName: "a".repeat(149) + "😀 tail" }).ops[6].after.title;
+    assert.equal(emoji, "Restocked: " + "a".repeat(149));
+    assert.doesNotMatch(emoji, /[\uD800-\uDBFF]$/);
+    // exactly at the limit is kept whole
+    assert.equal(build({ productName: "n".repeat(150) }).ops[6].after.title, "Restocked: " + "n".repeat(150));
+});
+
+test("AC-2 the stock token is reserved text in every typed position, including the supplier's display name", () => {
+    for (const over of [{ productName: "a " + SUBTITLE_TOKEN }, { category: SUBTITLE_TOKEN }, { reason: SUBTITLE_TOKEN }, { supplier: { newName: SUBTITLE_TOKEN } },
+                        { supplier: { id: SUBTITLE_TOKEN } }, { supplier: { id: "SUP-1" }, supplierName: "x" + SUBTITLE_TOKEN }])
+        assert.deepEqual(plain(RP.build(input(over))), { ok: false, reason: "reserved-text" }, JSON.stringify(over));
+    assert.equal(RP.build(input({ reason: "{{$other}} {{stock}} $stock" })).ok, true, "look-alikes are plain text");
+});
+
+test("AC-3 plan -> real server -> reflect: the feed row is stamped by the server and the same text the old client built", async () => {
+    const plan = plain(RP.build(input()));
+    const db = baseDb();
+    const { result } = await send(db, plan);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const out = plain(RP.reflect(plain(result.results)));
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.equal(out.activity.id, "act-BAT-2026-001");
+    assert.equal(out.activity.actorUid, "u1");
+    assert.equal(out.activity.timestamp, ISO);
+    assert.equal(db.store[T + "activity_log/act-BAT-2026-001"].subtitle, out.activity.subtitle);
+    // parity with the legacy builder (still used for an answer that carries no feed row)
+    const legacy = plain(RFLOW.activityText(out, "Acme Farms"));
+    assert.equal(out.activity.title, legacy.title);
+    assert.equal(out.activity.subtitle, legacy.subtitle);
+});
+
+test("AC-4 reflect: a legacy answer (no feed row) is still one restock, activity null; a damaged feed row is refused", async () => {
+    const { result } = await send(baseDb(), plain(RP.build(input())));
+    const full = plain(result.results);
+    const legacy = full.filter((r) => r.entity !== "activity");
+    const ok = plain(RP.reflect(legacy));
+    assert.equal(ok.ok, true);
+    assert.equal(ok.activity, null);
+    const withAct = (patch) => full.map((r) => (r.entity === "activity" ? Object.assign({}, r, { after: Object.assign({}, r.after, patch) }) : r));
+    for (const patch of [{ id: "act-other" }, { kind: "order" }, { entityId: "p2" }, { timestamp: undefined }, { timestamp: 5 }])
+        assert.deepEqual(plain(RP.reflect(withAct(patch))), { ok: false, reason: "malformed-results", detail: "activity-doc" }, JSON.stringify(patch));
+    const twice = full.concat([full.find((r) => r.entity === "activity")]);
+    assert.deepEqual(plain(RP.reflect(twice)), { ok: false, reason: "malformed-results", detail: "shape" });
+});
+
+test("AC-5 monkey: whatever text is typed, a plan the planner builds is ALWAYS accepted by the server's validator", () => {
+    let seed = 1112;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+    const pieces = ["", " ", "a", "Tomato", "{{x}}", "{{", "}}", SUBTITLE_TOKEN, "{{sup}}", "{{batch}}", "😀", "é", "x".repeat(300), "y".repeat(2000), "\n", "📦".repeat(90)];
+    const word = () => { let s = ""; for (let n = Math.floor(rnd() * 4); n >= 0; n--) s += pieces[Math.floor(rnd() * pieces.length)]; return s; };
+    let built = 0;
+    for (let i = 0; i < 2000; i++) {
+        const sup = [null, { id: "SUP-1" }, { newName: word() }][Math.floor(rnd() * 3)];
+        const p = RP.build(input({ productName: word(), category: word(), reason: word().substring(0, 500), supplier: sup, supplierName: word() }));
+        if (!p.ok) continue;
+        built++;
+        const v = OL.validateOperationRequest({ requestId: KEY, opType: "restock", clientTimestamp: "c", ops: plain(p.ops) });
+        assert.equal(v.ok, true, JSON.stringify(v) + " for " + JSON.stringify(p.ops[p.at.activity]));
+    }
+    assert.ok(built > 100, "the monkey builds plans: " + built);
 });

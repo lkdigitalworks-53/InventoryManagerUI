@@ -169,11 +169,12 @@ test("WIRE-14 the row and the geometry agree with the draft on how many digits a
     assert.equal(PG.MAX_DIGITS, PD.MAX_DIGITS);
 });
 
-test("WIRE-15 only the S2 files and, since S3, NewOrderDialog mention the new component and helper names (Edit Order stays out until S4)", () => {
+test("WIRE-15 only the S2 files and, since S3 and S4, the two order dialogs mention the new component and helper names", () => {
     const allowed = new Set([
         "qml/components/ProductPickerSheet.qml", "qml/components/ProductPickerRow.qml",
         "qml/helper/PickerSheetModel.js", "qml/helper/PickerRowGeometry.js",
         "qml/pages/NewOrderDialog.qml",   // S3, on purpose
+        "qml/pages/OrderDetailDialog.qml",   // S4, on purpose
     ]);
     const names = /ProductPickerSheet|ProductPickerRow|PickerSheetModel|PickerRowGeometry/;
     const offenders = ALL_QML.concat(["main.cpp", "CMakeLists.txt"]).concat(
