@@ -432,8 +432,9 @@ test("EOP-30 monkey, seeded, fractional quantities and junk rows: a set only add
             let held = 0, after = 0;
             for (let i = 0; i < lines.length; ++i) if (lines[i] && lines[i].productId === p.productId && lines[i].qty > 0) held += lines[i].qty;
             for (const l of next) if (l && l.productId === p.productId && l.qty > 0) after += l.qty;
-            const o = completed ? original.filter(function(x) { return x.productId === p.productId; })[0] : null;
-            const limit = Math.max(held, p.stock + (o ? Math.floor(o.quantity) : 0));
+            let heldAtDone = 0;   // what a completed order already holds out of stock, exactly as booked (sweep F1: it was floored)
+            if (completed) for (const x of original) if (x.productId === p.productId) heldAtDone += x.quantity;
+            const limit = Math.max(held, p.stock + heldAtDone);
             ok(after <= limit, "limit of " + p.productId + ", seed " + seed + ": " + after + " > " + limit);
         }
     }
@@ -462,7 +463,7 @@ test("EOP-32 ceilingFor: whole units on hand; a completed order adds the units i
     eq(EP.ceilingFor("A", prod("A", 5), ctx("completed")), 5);
     eq(EP.ceilingFor("A", prod("A", 5), ctx("completed", [orig("B", 3, false, 0)])), 5);
     eq(EP.ceilingFor("A", prod("A", 2.5), ctx("pending")), 2);
-    eq(EP.ceilingFor("A", prod("A", 2.5), ctx("completed", [orig("A", 2.5, false, 0)])), 4);
+    eq(EP.ceilingFor("A", prod("A", 2.5), ctx("completed", [orig("A", 2.5, false, 0)])), 4.5);   // the booked 2.5 counts 2.5, not 2 (sweep F1; was pinned at 4)
     eq(EP.ceilingFor("A", prod("A", -2), ctx("completed", [orig("A", 3, false, 0)])), 3);
     // gone: no stock, a completed order can still go back to what it held
     eq(EP.ceilingFor("A", null, ctx("pending")), 0);
@@ -487,7 +488,7 @@ test("EOP-33 availableFor is the ceiling minus the cart in both statuses, for ev
                 for (const cart of carts) {
                     const p = prod("A", st);
                     const c = ctx(status, o);
-                    eq(EP.availableFor(p, cart, c), Math.max(0, EP.ceilingFor("A", p, c) - heldOf(cart)));
+                    eq(EP.availableFor(p, cart, c), Math.max(0, Math.floor(EP.ceilingFor("A", p, c) - heldOf(cart))));   // whole units, also when the ceiling is fractional (sweep F1)
                 }
             }
         }
@@ -622,5 +623,72 @@ test("EOP-39 monkey, seeded: over random orders the save check lists a product e
             ok(after >= lines[r].qty && after - lines[r].qty <= 1, "step out of range");
             if (after > lines[r].qty) ok(NP.cartQty(lines, lines[r].productId) + 1 <= EP.ceilingFor(lines[r].productId, byId(lines[r].productId), c), "stepped past the ceiling");
         }
+    }
+});
+
+test("EOP-40 ceilingFor on a completed order adds ALL the lines the order held for the product, exactly as booked (two lines add up, a line of 2.5 is 2.5) on top of the whole units on hand", () => {
+    eq(EP.ceilingFor("A", prod("A", 0), ctx("completed", [orig("A", 3, false, 0), orig("A", 2, false, 0)])), 5);
+    eq(EP.ceilingFor("A", prod("A", 4), ctx("completed", [orig("A", 3, false, 0), orig("B", 9, false, 0), orig("A", 2, false, 0)])), 9);
+    eq(EP.ceilingFor("A", prod("A", 0), ctx("completed", [orig("A", 2.5, false, 0)])), 2.5);
+    eq(EP.ceilingFor("A", prod("A", 2.5), ctx("completed", [orig("A", 2.5, false, 0)])), 4.5);
+    eq(EP.ceilingFor("A", null, ctx("completed", [orig("A", 3, false, 0), orig("A", 2, false, 0)])), 5);
+    eq(EP.ceilingFor(7, prod(7, 1), ctx("completed", [orig("7", 2, false, 0), orig(7, 1, false, 0)])), 4);
+    // a held quantity that is not a positive number holds nothing
+    eq(EP.ceilingFor("A", prod("A", 1), ctx("completed", [orig("A", -2, false, 0), orig("A", NaN, false, 0), orig("A", "3", false, 0), orig("A", Infinity, false, 0), orig("A", 2, false, 0)])), 3);
+    eq(EP.ceilingFor("A", prod("A", 1), ctx("completed", [null, 5, orig("", 4, false, 0), orig(undefined, 4, false, 0)])), 1);
+    // pending and processing hold nothing from stock: the originals are not read
+    eq(EP.ceilingFor("A", prod("A", 1), ctx("pending", [orig("A", 3, false, 0), orig("A", 2, false, 0)])), 1);
+    eq(EP.ceilingFor("A", prod("A", 1), ctx("processing", [orig("A", 3, false, 0), orig("A", 2, false, 0)])), 1);
+});
+
+test("EOP-41 stockShortfalls: saving a COMPLETED order with its lines unchanged or smaller never asks for stock, whatever is on hand (two lines of one product, a line of 2.5, stock 0, 0.5, negative, product gone); a real raise still does, with the right count", () => {
+    const find = (lines, c, ps) => EP.stockShortfalls(lines, c, (id) => { for (const p of ps) if (String(p.productId) === String(id)) return p; return null; });
+    const dup = ctx("completed", [orig("A", 3, false, 0), orig("A", 2, false, 0)]);
+    for (const stock of [0, 0.5, -3, 1, 7.5]) eq(find([line("A", 3), line("A", 2)], dup, [prod("A", stock)]), []);
+    eq(find([line("A", 3), line("A", 2)], dup, []), []);
+    const half = ctx("completed", [orig("A", 2.5, false, 0)]);
+    for (const stock of [0, 0.5, -3, 1, 2.5]) eq(find([line("A", 2.5)], half, [prod("A", stock)]), []);
+    // smaller is fine as well
+    eq(find([line("A", 1), line("A", 2)], dup, [prod("A", 0)]), []);
+    eq(find([line("A", 2)], half, [prod("A", 0)]), []);
+    // a real raise: the units beyond what it held must be on hand
+    eq(find([line("A", 3), line("A", 2), line("A", 2)], dup, [prod("A", 1)]), [{ productId: "A", name: "Name A", stock: 1, need: 1 }]);
+    eq(find([line("A", 3), line("A", 2), line("A", 1)], dup, [prod("A", 1)]), []);
+    eq(find([line("A", 3)], half, [prod("A", 0)]), [{ productId: "A", name: "Name A", stock: 0, need: 0.5 }]);
+});
+
+test("EOP-42 stepUp on a COMPLETED order that held two lines of one product or a line of 2.5: never lowers a row, never makes a fraction, can go back up to what the order held", () => {
+    const dup = ctx("completed", [orig("A", 3, false, 0), orig("A", 2, false, 0)]);
+    const two = [line("A", 3), line("A", 2)];
+    eq(EP.stepUp(3, "A", prod("A", 0), dup, two), 3);
+    eq(EP.stepUp(2, "A", prod("A", 0), dup, two), 2);
+    eq(EP.stepUp(1, "A", prod("A", 0), dup, [line("A", 3), line("A", 1)]), 2);
+    eq(EP.stepUp(3, "A", prod("A", 1), dup, two), 4);
+    const half = ctx("completed", [orig("A", 2.5, false, 0)]);
+    eq(EP.stepUp(2.5, "A", prod("A", 0), half, [line("A", 2.5)]), 2.5);
+    eq(EP.stepUp(2, "A", prod("A", 0), half, [line("A", 2)]), 2);
+    eq(EP.stepUp(1, "A", prod("A", 0), half, [line("A", 1)]), 2);
+});
+
+test("EOP-43 monkey, seeded: a COMPLETED order saved with its lines unchanged or smaller never asks for stock; with one more unit of a product it asks exactly when no whole unit is on hand (Node only)", () => {
+    let seed = 43;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+    const ids = ["A", "B", "C"];
+    for (let i = 0; i < 600; i++) {
+        const stock = [0, 0.5, -3, 1, 2.5, 7][Math.floor(rnd() * 6)];
+        const products = rnd() < 0.15 ? [] : ids.map((id) => prod(id, stock));
+        const byId = (id) => products.filter((p) => p.productId === id)[0] || null;
+        const original = [];
+        for (let k = Math.floor(rnd() * 6); k > 0; k--) original.push(orig(ids[Math.floor(rnd() * 3)], (1 + Math.floor(rnd() * 8)) / 2, false, 0));
+        const c = ctx("completed", original);
+        const same = original.map((o) => line(o.productId, o.quantity));
+        eq(EP.stockShortfalls(same, c, byId), []);
+        const smaller = original.filter(() => rnd() < 0.8).map((o) => line(o.productId, Math.floor(rnd() * (o.quantity * 2 + 1)) / 2));
+        eq(EP.stockShortfalls(smaller, c, byId), []);
+        if (original.length === 0) continue;
+        const id = original[0].productId;
+        const got = EP.stockShortfalls(same.concat([line(id, 1)]), c, byId).filter((s) => s.productId === id).map((s) => s.need);
+        const whole = byId(id) ? Math.max(0, Math.floor(byId(id).stock)) : 1;
+        eq(got, whole === 0 ? [1] : []);
     }
 });

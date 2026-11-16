@@ -414,8 +414,9 @@ TestCase {
                 let held = 0, after = 0;
                 for (let i = 0; i < lines.length; ++i) if (lines[i] && lines[i].productId === p.productId && lines[i].qty > 0) held += lines[i].qty;
                 for (const l of next) if (l && l.productId === p.productId && l.qty > 0) after += l.qty;
-                const o = completed ? original.filter(function(x) { return x.productId === p.productId; })[0] : null;
-                const limit = Math.max(held, p.stock + (o ? Math.floor(o.quantity) : 0));
+                let heldAtDone = 0;   // what a completed order already holds out of stock, exactly as booked (sweep F1: it was floored)
+                if (completed) for (const x of original) if (x.productId === p.productId) heldAtDone += x.quantity;
+                const limit = Math.max(held, p.stock + heldAtDone);
                 ok(after <= limit, "limit of " + p.productId + ", seed " + seed + ": " + after + " > " + limit);
             }
         }
@@ -443,7 +444,7 @@ TestCase {
         eq(EP.ceilingFor("A", prod("A", 5), ctx("completed")), 5);
         eq(EP.ceilingFor("A", prod("A", 5), ctx("completed", [orig("B", 3, false, 0)])), 5);
         eq(EP.ceilingFor("A", prod("A", 2.5), ctx("pending")), 2);
-        eq(EP.ceilingFor("A", prod("A", 2.5), ctx("completed", [orig("A", 2.5, false, 0)])), 4);
+        eq(EP.ceilingFor("A", prod("A", 2.5), ctx("completed", [orig("A", 2.5, false, 0)])), 4.5);   // the booked 2.5 counts 2.5, not 2 (sweep F1; was pinned at 4)
         eq(EP.ceilingFor("A", prod("A", -2), ctx("completed", [orig("A", 3, false, 0)])), 3);
         // gone: no stock, a completed order can still go back to what it held
         eq(EP.ceilingFor("A", null, ctx("pending")), 0);
@@ -468,7 +469,7 @@ TestCase {
                     for (const cart of carts) {
                         const p = prod("A", st);
                         const c = ctx(status, o);
-                        eq(EP.availableFor(p, cart, c), Math.max(0, EP.ceilingFor("A", p, c) - heldOf(cart)));
+                        eq(EP.availableFor(p, cart, c), Math.max(0, Math.floor(EP.ceilingFor("A", p, c) - heldOf(cart))));   // whole units, also when the ceiling is fractional (sweep F1)
                     }
                 }
             }
@@ -575,5 +576,49 @@ TestCase {
         eq(EP.shortfallText({ productId: "A", name: "Widget", stock: 2, need: 1 }), "Widget: only 2 in stock, need 1 more");
         eq(EP.shortfallText({ productId: "A", name: "Widget", stock: 0, need: 12 }), "Widget: only 0 in stock, need 12 more");
         eq(EP.shortfallText({ productId: "A", name: "Widget", stock: 2, need: 1.5 }), "Widget: only 2 in stock, need 1.5 more");
+    }
+
+    function test_EOP_40_ceilingfor_on_a_completed_order_adds_all_the_lines_the_order() {
+        eq(EP.ceilingFor("A", prod("A", 0), ctx("completed", [orig("A", 3, false, 0), orig("A", 2, false, 0)])), 5);
+        eq(EP.ceilingFor("A", prod("A", 4), ctx("completed", [orig("A", 3, false, 0), orig("B", 9, false, 0), orig("A", 2, false, 0)])), 9);
+        eq(EP.ceilingFor("A", prod("A", 0), ctx("completed", [orig("A", 2.5, false, 0)])), 2.5);
+        eq(EP.ceilingFor("A", prod("A", 2.5), ctx("completed", [orig("A", 2.5, false, 0)])), 4.5);
+        eq(EP.ceilingFor("A", null, ctx("completed", [orig("A", 3, false, 0), orig("A", 2, false, 0)])), 5);
+        eq(EP.ceilingFor(7, prod(7, 1), ctx("completed", [orig("7", 2, false, 0), orig(7, 1, false, 0)])), 4);
+        // a held quantity that is not a positive number holds nothing
+        eq(EP.ceilingFor("A", prod("A", 1), ctx("completed", [orig("A", -2, false, 0), orig("A", NaN, false, 0), orig("A", "3", false, 0), orig("A", Infinity, false, 0), orig("A", 2, false, 0)])), 3);
+        eq(EP.ceilingFor("A", prod("A", 1), ctx("completed", [null, 5, orig("", 4, false, 0), orig(undefined, 4, false, 0)])), 1);
+        // pending and processing hold nothing from stock: the originals are not read
+        eq(EP.ceilingFor("A", prod("A", 1), ctx("pending", [orig("A", 3, false, 0), orig("A", 2, false, 0)])), 1);
+        eq(EP.ceilingFor("A", prod("A", 1), ctx("processing", [orig("A", 3, false, 0), orig("A", 2, false, 0)])), 1);
+    }
+
+    function test_EOP_41_stockshortfalls_saving_a_completed_order_with_its_lines_unch() {
+        const find = (lines, c, ps) => EP.stockShortfalls(lines, c, (id) => { for (const p of ps) if (String(p.productId) === String(id)) return p; return null; });
+        const dup = ctx("completed", [orig("A", 3, false, 0), orig("A", 2, false, 0)]);
+        for (const stock of [0, 0.5, -3, 1, 7.5]) eq(find([line("A", 3), line("A", 2)], dup, [prod("A", stock)]), []);
+        eq(find([line("A", 3), line("A", 2)], dup, []), []);
+        const half = ctx("completed", [orig("A", 2.5, false, 0)]);
+        for (const stock of [0, 0.5, -3, 1, 2.5]) eq(find([line("A", 2.5)], half, [prod("A", stock)]), []);
+        // smaller is fine as well
+        eq(find([line("A", 1), line("A", 2)], dup, [prod("A", 0)]), []);
+        eq(find([line("A", 2)], half, [prod("A", 0)]), []);
+        // a real raise: the units beyond what it held must be on hand
+        eq(find([line("A", 3), line("A", 2), line("A", 2)], dup, [prod("A", 1)]), [{ productId: "A", name: "Name A", stock: 1, need: 1 }]);
+        eq(find([line("A", 3), line("A", 2), line("A", 1)], dup, [prod("A", 1)]), []);
+        eq(find([line("A", 3)], half, [prod("A", 0)]), [{ productId: "A", name: "Name A", stock: 0, need: 0.5 }]);
+    }
+
+    function test_EOP_42_stepup_on_a_completed_order_that_held_two_lines_of_one_produ() {
+        const dup = ctx("completed", [orig("A", 3, false, 0), orig("A", 2, false, 0)]);
+        const two = [line("A", 3), line("A", 2)];
+        eq(EP.stepUp(3, "A", prod("A", 0), dup, two), 3);
+        eq(EP.stepUp(2, "A", prod("A", 0), dup, two), 2);
+        eq(EP.stepUp(1, "A", prod("A", 0), dup, [line("A", 3), line("A", 1)]), 2);
+        eq(EP.stepUp(3, "A", prod("A", 1), dup, two), 4);
+        const half = ctx("completed", [orig("A", 2.5, false, 0)]);
+        eq(EP.stepUp(2.5, "A", prod("A", 0), half, [line("A", 2.5)]), 2.5);
+        eq(EP.stepUp(2, "A", prod("A", 0), half, [line("A", 2)]), 2);
+        eq(EP.stepUp(1, "A", prod("A", 0), half, [line("A", 1)]), 2);
     }
 }

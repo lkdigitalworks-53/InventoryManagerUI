@@ -140,7 +140,7 @@ test("EOW-11 the guards that belong to the order stay in the dialog: lock, busy,
         assert.ok(save.includes(needle), "_save lost: " + needle);
     assert.ok(!/needFromStock|inv\.stock|InventoryStore\.getById/.test(save), "_save has its own stock formula again");
     // the completed order's ceiling is on-hand plus the units it held at completion, written once, in the helper
-    assert.ok(/NP\.ceilingOf\(product\)[\s\S]*?stock \+ \(orig \? _whole\(orig\.quantity\) : 0\)/.test(read("qml/helper/EditOrderPicker.js")));
+    assert.ok(/NP\.ceilingOf\(product\)[\s\S]*?stock \+ heldAtCompletion\(ctx\.original, productId\)/.test(read("qml/helper/EditOrderPicker.js")));
 });
 
 test("EOW-12 the changed QML and JS files are balanced: braces, parentheses and brackets", () => {
@@ -439,4 +439,37 @@ test("EOW-25 the changed files stay balanced after the S5b edit: braces, parenth
             assert.equal(o, c, f + ": " + open + close + " unbalanced (" + o + " vs " + c + ")");
         }
     }
+});
+
+test("EOW-26 PR #202 sweep F1: the real _stockErrors never refuses a COMPLETED order saved with its lines unchanged or smaller, also with two lines of one product or a line of 2.5, stock 0, 0.5 or negative; the pre-S5b per-line check agreed except for negative stock", () => {
+    const held = (id, quantity) => ({ productId: id, quantity, taxable: false, taxPercent: 0 });
+    const oldCheck = (world, rows, original) => {
+        const out = [];
+        for (const p of rows) {
+            const inv = world.InventoryStore.getById(p.productId);
+            const o = original.filter((x) => x.productId === p.productId)[0];
+            const need = Math.max(0, p.quantity - (o ? (o.quantity || 0) : 0));
+            if (inv && need > inv.stock) out.push(p.name + ": only " + inv.stock + " in stock, need " + (need - inv.stock) + " more");
+        }
+        return out;
+    };
+    const shapes = [
+        { rows: [row("A", 3), row("A", 2)], original: [held("A", 3), held("A", 2)] },
+        { rows: [row("A", 2.5)], original: [held("A", 2.5)] },
+        { rows: [row("A", 3), row("A", 2.5), row("C", 1)], original: [held("A", 3), held("A", 2.5), held("C", 1)] },
+        { rows: [row("A", 1), row("A", 2)], original: [held("A", 3), held("A", 2)] },
+        { rows: [row("A", 2)], original: [held("A", 2.5)] }
+    ];
+    for (const stock of [0, 0.5, 1, 2.5, -3]) {
+        for (const shape of shapes) {
+            const world = fakeWorld();
+            world.w.products[0].stock = stock;
+            assert.deepEqual(dialogGlue(world, shape.rows, "completed", shape.original).stockErrors(), [], JSON.stringify({ stock, shape }));
+            if (stock >= 0) assert.deepEqual(oldCheck(world, shape.rows, shape.original), [], "the old check agreed: " + JSON.stringify({ stock, shape }));
+        }
+    }
+    // a real raise is still refused, with the right count
+    const world = fakeWorld();
+    world.w.products[0].stock = 1;
+    assert.deepEqual(dialogGlue(world, [row("A", 3), row("A", 2), row("A", 2)], "completed", [held("A", 3), held("A", 2)]).stockErrors(), ["Name A: only 1 in stock, need 1 more"]);
 });

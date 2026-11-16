@@ -51,18 +51,36 @@ function originalOf(original, productId) {
 }
 function _originalOf(ctx, productId) { return originalOf(ctx && ctx.original, productId) }
 
+// The units of this product the order held when it was completed, exactly as booked: ALL its original lines added up
+// (a legacy order may hold two lines of one product), a line of 2.5 counts 2.5. A quantity that is not a positive finite
+// number holds nothing. (originalOf, the first match, stays for the booked TAX; units must not be read from it: PR #202
+// sweep, F1.)
+function heldAtCompletion(original, productId) {
+    if (_blankId(productId) || !Array.isArray(original)) return 0
+    var id = String(productId)
+    var total = 0
+    for (var i = 0; i < original.length; ++i) {
+        var l = original[i]
+        if (!l || typeof l !== "object" || _blankId(l.productId) || String(l.productId) !== id) continue
+        if (typeof l.quantity === "number" && isFinite(l.quantity) && l.quantity > 0) total += l.quantity
+    }
+    return total
+}
+
 // The most units this product may hold on the order IN TOTAL (all its lines together). Pending or processing: the whole
-// units on hand (NP.ceilingOf, the one stock rule). Completed: its units are already out of stock, so on-hand plus the
-// units the order held at completion. A product that left the catalog (`product` null) has no stock: a pending order can
-// not hold any of it more, a completed order can still go back to what it held. Any other status uses the stricter first
-// formula (fail closed). Whole units, never negative. The picker (availableFor), the + stepper (stepUp) and the save check
-// (stockShortfalls) all read THIS, so they cannot disagree (picker v2, S5b; KNOWN-ISSUES 28a, 37a, 39a).
+// units on hand (NP.ceilingOf, the one stock rule). Completed: its units are already out of stock, so the whole units on
+// hand plus EVERYTHING the order held at completion, exactly as booked (heldAtCompletion), so an order saved with its
+// lines unchanged or smaller never asks for stock, also with two lines of one product or a line of 2.5 (the ceiling is
+// then fractional; availableFor and stepUp hand out whole units only). A product that left the catalog (`product` null)
+// has no stock: a pending order can not hold any of it more, a completed order can still go back to what it held. Any
+// other status uses the stricter first formula (fail closed). Never negative. The picker (availableFor), the + stepper
+// (stepUp) and the save check (stockShortfalls) all read THIS, so they cannot disagree (picker v2, S5b; KNOWN-ISSUES
+// 28a, 37a, 39a).
 function ceilingFor(productId, product, ctx) {
     if (_blankId(productId)) return 0
     var stock = NP.ceilingOf(product)
     if (!_completed(ctx)) return stock
-    var orig = _originalOf(ctx, productId)
-    return stock + (orig ? _whole(orig.quantity) : 0)
+    return stock + heldAtCompletion(ctx.original, productId)
 }
 
 // Units NEW quantity may still use: the ceiling minus what the order holds now (a removed line frees its units for a
@@ -76,12 +94,13 @@ function availableFor(product, lines, ctx) {
 
 // One tap of + on a cart row -> the row's new quantity: one more, never above what the stock leaves THIS row (the
 // ceiling minus the other lines of the same product), never below what the row already holds (a ceiling that fell since
-// the row was made must not pull it down on +). `product` is null when it left the catalog and `lines` are the picker
-// lines (linesOf), the row included. A quantity that is not a finite number is returned as it is.
+// the row was made must not pull it down on +). The cap is a whole number (a fractional ceiling never makes a fractional
+// row). `product` is null when it left the catalog and `lines` are the picker lines (linesOf), the row included. A
+// quantity that is not a finite number is returned as it is.
 function stepUp(qty, productId, product, ctx, lines) {
     if (typeof qty !== "number" || !isFinite(qty)) return qty
     var others = NP.cartQty(lines, productId) - (qty > 0 ? qty : 0)
-    var cap = ceilingFor(productId, product, ctx) - (others > 0 ? others : 0)
+    var cap = Math.floor(ceilingFor(productId, product, ctx) - (others > 0 ? others : 0))
     var q = Math.min(cap, qty + 1)
     return q < qty ? qty : q
 }
