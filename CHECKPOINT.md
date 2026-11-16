@@ -28,9 +28,14 @@ Everything is pushed except nothing pending; resume at step 5. Counts to re-meas
 
 ## Sweep steps
 - [x] S0. Clone, scrub PAT from `.git/config`, checkout PR branch, read skills, PR body, CI, plan, production diff.
-- [ ] S1. Phase 1 lint (qt_qml_lint.py) on touched QML + helper reads (`EditOrderPicker.js`, `NewOrderPicker.js` in full).
-- [ ] S2. Deep read: `OrderDetailDialog.qml` `_save`, `_pickerLookup`, `_findOriginalLine` leftovers, `catalog` references anywhere, legacy no-`products` order Save path.
-- [ ] S3. Re-run Node tests here (functions 1900, scripts 1049) before touching code.
+- [x] S1. Phase 1 lint on 4 touched QML files: 4 hits on ADDED lines = 3 JS-1 `var` (house style) + 1 DEL-1 `model.x` in the old delegate (pre-existing pattern). No change. Domains layout/loaders/delegates/states: N/A (no visual QML added).
+- [x] S2. Deep read done. `catalog`/`_rebuildCatalog` have no stray readers (only a negative test). `_findOriginalLine` still used by the tax forecast. FINDINGS below.
+- [x] S3. Baseline here: functions 1900/1900, scripts 1049/1049 (Node 22).
 - [ ] S4. Fixes (test first, red then green), one commit each.
 - [ ] S5. Docs: KNOWN-ISSUES, test plan, skills, README as needed. Read CI on the new head.
 - [ ] S6. Final report to Taher: done / next.
+
+## Findings of sweep 1 (each proven with the real helper in Node before any fix)
+- **F1 MUST FIX (regression of S5b-D4 + `originalOf` first-match + `_whole(orig.quantity)`):** Save of an UNCHANGED COMPLETED order is refused when (R1) the order has two lines of one product (orig 3+2, stock 0: "need 2 more"), or (R2/R3) a line holds a fractional qty such as 2.5 (made by the pre-S5b stepper) and stock is 0 or 0.5 ("need 0.5 more"). The old per-line check passed all three. EOW-22 only replays one line per product with whole numbers, so it could not see this. Fix: `ceilingFor` adds ALL original lines of the product, exactly as booked; `stepUp` floors its cap.
+- **F2 MUST FIX (data loss, S5b-D6 / plan Q2):** an order with no `products` array that is saved (any edit, even customer name) sends `products: []`; `OrdersStore.buildOrderUpdate` recomputes subtotal, total and items whenever `fields.products !== undefined`, so the order's money becomes 0. Fix: remember the order stored no lines; if it still has none, send neither `items` nor `products`.
+- **F4 OPEN QUESTION (not changed):** completion (`CompletionPlan`) compares demand to RAW stock; Save now compares to whole units. A pending line of 2.5 with stock 2.5 completes but cannot be saved untouched. See plan Q4.
