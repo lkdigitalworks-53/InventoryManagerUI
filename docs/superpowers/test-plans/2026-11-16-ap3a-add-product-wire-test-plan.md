@@ -9,14 +9,15 @@ Honesty note: Node tests were RUN in the sandbox against the real server code. Q
 | `functions/test/addProductFlow.test.js` (new) | 17 | RUN 17/17 | F-1 key; F-2..F-4 defaults and pass-through; F-5 one Date, local day; F-6 bad time; F-7, F-8 supplier none/id/known name/new name/blank/too long; F-9 every supplier x stock builds, plans and is accepted by the real server; F-10 old call shapes; F-11 every refusal reason has a text; F-12 classify; F-13 fixed texts; F-14, F-15 supplier clash covers an add; M-1 3000-input monkey; G-1 purity guard |
 | `functions/test/addProductWire.test.js` (new) | 19 | RUN 19/19 | the REAL store bodies in a vm + the real server: W-1 live apply once; W-2 stock 0 / known supplier; W-3 queued then signal; W-4 replay (live and late) adds no product and re-reads; W-5 sync landed first; W-6 offline refusal; W-7 pure refusals even offline; W-8 no callback; W-9 supplier clash; W-10..W-12 rejections (live, late, after relaunch); W-13..W-15 unconfirmed and 10 damaged answer shapes; W-16 own key per tap; W-17 source order and the old path gone; W-18 removed helper; M-1 seeded 300-tap monkey |
 | `tests/tst_AddProductFlow.qml` (new, CI) | 16 functions | CI only | the flow cases for the QML engine |
-| `tests/tst_InventoryStore_addProduct.qml` (new, CI) | 12 functions | CI only | the wire with the real Gateway (await timeout shortened), DataModel Connections and the real stores |
+| `tests/tst_InventoryStore_addProduct.qml` (new, CI) | 15 functions | CI only | the wire with the real Gateway (await timeout shortened), DataModel Connections and the real stores; sweep added stock 0 (no batch), a product a sync landed first (not added twice), no bookkeeping left behind, and a strict replay check (the old one was always true) |
+| `functions/test/addProductE2eHelpers.guard.test.js` (new, sweep) | 25 | RUN 25/25, mutation-checked | E2E-G1..G4 for each of the six e2e helpers: fixture saved before going online, restored right after and before the add, online restored in `finally`, wait and id checks kept, operation URL points at the emulator; G5 the six files are exactly the ones calling `InventoryStore.addProduct` |
 | edited guards | | RUN | `operationLogic.addProduct.test.js` and `addProductPlan.test.js` G-1 (dormancy -> wiring pin), `sheetBusyOverlay.test.js` SB-4, `restockHold.test.js` P-2, `counterRegistry.guard.test.js` (11 mutants), `restockR5a.test.js` K-7 scoped to restock |
 
 ## 2. Regression tests
-Full functions suite: RUN 1918/1918 green (1899 after the code, +19 wire test). Restock, order completion, import and delete suites unchanged.
+Full functions suite: RUN 1943/1943 green (1918 + the 25 e2e helper guard tests). Restock, order completion, import and delete suites unchanged.
 
 ## 3. E2E (emulator, CI only)
-Six e2e files call `addProduct`; each helper goes online inside try/finally and three suites set `Gateway.operationFunctionUrl` to the emulator. InventoryE2E `initTestCase` warms the `recordOperation` endpoint. Unproven locally: if the E2E job is red, read the first failing add helper first.
+Six e2e files call `addProduct`; each helper goes online inside try/finally and three suites set `Gateway.operationFunctionUrl` to the emulator. InventoryE2E `initTestCase` warms the `recordOperation` endpoint. The first run was RED (29 of 71) because going online wiped the auth fixture (see KNOWN-ISSUES 49); fixed in the sweep, E2E green on 83ed1e0.
 
 ## 4. Rules
 Unchanged.
@@ -44,4 +45,4 @@ Restock a product; complete an order; edit a product; import a CSV with 3 produc
 Two minutes of rapid add / cancel / restock / order, toggling airplane mode: no crash, no duplicate product, no stray toast.
 
 ## 5. CI result
-Filled in after the push (see CHECKPOINT.md).
+f01a59c: Functions, QML, Rules green, E2E red (29). 83ed1e0: all four green. Later commits: see CHECKPOINT.md.

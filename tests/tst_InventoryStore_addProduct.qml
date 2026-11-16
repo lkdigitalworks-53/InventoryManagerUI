@@ -49,17 +49,17 @@ TestCase {
         return out
     }
     // The answer the server gives for the add above (new supplier SUP-001 when `fresh`); nonce taken from the queued item's key.
-    function _answer(item, fresh) {
+    function _answer(item, fresh, noStock) {
         var nonce = item.requestId.substring("addProduct:".length)
         var sid = fresh ? "SUP-001" : ""
         var r = [{ kind: "mint", bind: "prd", counter: "product", id: "PRD-001" }]
         if (fresh) r.push({ kind: "mint", bind: "sup", counter: "supplier", id: "SUP-001" })
-        r.push({ kind: "mint", bind: "batch", counter: "stock_batch", id: "BAT-2026-001" })
+        if (!noStock) r.push({ kind: "mint", bind: "batch", counter: "stock_batch", id: "BAT-2026-001" })
         if (fresh) r.push({ kind: "mutation", entity: "supplier", entityId: "SUP-001", action: "create", after: { supplierId: "SUP-001", name: "Newco" } })
         r.push({ kind: "mutation", entity: "inventory", entityId: "PRD-001", action: "create",
-                 after: { productId: "PRD-001", name: "Tomato", sku: "TO-1", category: "Veg", description: "Red", price: 20, unit: "kg", stock: 12,
+                 after: { productId: "PRD-001", name: "Tomato", sku: "TO-1", category: "Veg", description: "Red", price: 20, unit: "kg", stock: noStock ? 0 : 12,
                           minStock: 2, sellingPrice: 30, taxable: true, taxPercent: 5, size: "", supplierId: sid, photoIds: [] } })
-        r.push({ kind: "mutation", entity: "stock_batch", entityId: "BAT-2026-001", action: "create",
+        if (!noStock) r.push({ kind: "mutation", entity: "stock_batch", entityId: "BAT-2026-001", action: "create",
                  after: { batchId: "BAT-2026-001", productId: "PRD-001", supplierId: sid, qtyReceived: 12, qtyRemaining: 12 } })
         r.push({ kind: "mutation", entity: "transaction", entityId: "tx-c-PRD-001-" + nonce, action: "create",
                  after: { txId: "tx-c-PRD-001-" + nonce, kind: "created", productId: "PRD-001", productName: "Tomato" } })
@@ -173,8 +173,12 @@ TestCase {
         var t = _tap()
         var item = _items()[0]
         Gateway._finishOperation(item, { ok: true, results: _answer(item, false), idempotentReplay: true })
-        var p = InventoryStore.getById("PRD-001")
-        verify(!p || p.name === "Tomato", "a replayed product is never written from the answer; the inventory is re-read instead")
+        compare(t.calls.length, 1)
+        compare(t.calls[0].ok, true)
+        compare(t.calls[0].status, "applied")
+        compare(t.calls[0].id, "PRD-001")
+        compare(InventoryStore.getById("PRD-001"), null, "a replayed product is never written from the answer; the inventory is re-read instead")
+        compare(InventoryStore.products.length, 0)
     }
     function test_an_unreadable_answer_is_unconfirmed_once_and_applies_nothing() {
         var t = _tap()
@@ -187,6 +191,42 @@ TestCase {
         compare(t.calls[0].id, "")
         compare(ActivityLog.entries.length, 0)
         compare(StockBatchStore.batches.length, 0)
+    }
+    function test_stock_zero_adds_the_product_and_history_but_no_batch() {
+        var t = _tap({ stock: 0, unitCost: undefined })
+        var item = _items()[0]
+        Gateway._finishOperation(item, { ok: true, results: _answer(item, false, true), idempotentReplay: false })
+        compare(t.calls.length, 1)
+        compare(t.calls[0].status, "applied")
+        compare(InventoryStore.products.length, 1)
+        compare(InventoryStore.products[0].stock, 0)
+        compare(StockBatchStore.batches.length, 0, "no batch for a zero-stock product")
+        compare(TransactionStore.entries.length, 1)
+        compare(ActivityLog.entries.length, 1)
+        compare(SupplierStore.suppliers.length, 1, "no supplier was asked for")
+    }
+    function test_a_product_a_sync_landed_first_is_not_added_twice() {
+        var t = _tap()
+        var item = _items()[0]
+        InventoryStore.products = [{ productId: "PRD-001", name: "Tomato", sku: "TO-1", category: "Veg", stock: 12, minStock: 2, price: 20,
+                                     sellingPrice: 30, taxable: true, taxPercent: 5, size: "", unit: "kg", description: "Red", photoIds: [], supplierId: "" }]
+        Gateway._finishOperation(item, { ok: true, results: _answer(item, false), idempotentReplay: false })
+        compare(t.calls[0].status, "applied")
+        compare(InventoryStore.products.length, 1, "one product, not two")
+        compare(StockBatchStore.batches.length, 1, "the rest of the answer is still reflected")
+        compare(ActivityLog.entries.length, 1)
+    }
+    function test_a_settled_add_leaves_no_bookkeeping_behind() {
+        _tap({ party: "Newco" })
+        var item = _items()[0]
+        Gateway._finishOperation(item, { ok: true, results: _answer(item, true), idempotentReplay: false })
+        compare(Object.keys(InventoryStore._addSettled).length, 0, "the signal consumed the settled flag")
+        compare(Object.keys(InventoryStore._addNames).length, 0, "the typed name is forgotten once settled")
+        _tap()
+        var item2 = _items()[1]
+        Gateway._finishOperation(item2, { ok: false, error: "conflict", opIndex: 2, conflict: true })
+        compare(Object.keys(InventoryStore._addSettled).length, 0)
+        compare(Object.keys(InventoryStore._addNames).length, 0)
     }
     function test_every_tap_is_its_own_operation() {
         _tap()

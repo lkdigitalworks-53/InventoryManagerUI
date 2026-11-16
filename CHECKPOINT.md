@@ -28,8 +28,10 @@ AP1 server (#199), AP2 client pure layer (#201) merged. **AP3 is split (D-AP3-1)
 - [x] R0. Clone, read memory, fetch `refs/pull/203/head`, check out the PR branch (no rebase needed: `main` still `503adda`).
 - [x] R1. CI read via API: Functions, QML, Rules green on f01a59c; **E2E RED: 29 of 71 failed**, all inside the `_createProduct*` helpers (`addProduct callback never fired` / `did not return a productId`). Raw logs are on a blocked host; the PR bot comment named the tests.
 - [x] R2. Root cause: the helpers flip `AuthService.isOnline = true`; `AuthService.onIsOnlineChanged` runs `init()` because the e2e files set `AuthStore.idToken/uid/tenantId` directly (`isAuthenticated` stays false); `init()` -> `loadSession()` -> `clear()` wipes the fixture; `Gateway._sendOperation` returns silently on an empty token; the awaiting callback never fires. Fix: save the three fields, flip, restore at once (six files). Guard: `functions/test/addProductE2eHelpers.guard.test.js` (25 tests, mutation-checked).
-- [ ] R3. Review the rest (store/DataModel/dialog logic, QML twins, tests, docs, ponytail audit), fix in this PR, push.
-- NOTE for the next session: the E2E result of the R2 fix is UNPROVEN until CI runs it. Read the PR bot comment first. If still red, the next suspects are `DataModel` reconnect refresh and `StockBatchStore.retryPendingMints` reacting to the online flip.
+- [x] R2b. CI on 83ed1e0: Functions, QML, Rules AND E2E green. The fix is proven.
+- [x] R3. Store twin `tests/tst_InventoryStore_addProduct.qml` strengthened (+3 functions: stock 0, sync-first, no bookkeeping; vacuous replay assertion made strict). qt-qml-review lint on changed lines: nothing to fix (KNOWN-ISSUES 55). ponytail-audit: `nextProductId` kept on purpose (issue 50). KNOWN-ISSUES 49 rewritten, 53..55 added; test plan and Skill 172 updated. Functions suite 1943/1943.
+- [ ] R4. Still open: read CI of this commit (twin additions are CI-only); the `PR Test Summary Comment` job shows failure on both runs (cause not read, probably the bot comment step, not a test); then AP3b, AP4.
+- NOTE for the next session: read the PR bot comment and the E2E/QML jobs of the latest commit first; the 3 new QML twin functions are unproven until CI runs them.
 
 ## CI
 PR #203 opened. Functions Tests + Rules success on b7ccbfd; QML Tests and E2E were still running when last read. Unproven locally: both QML twins, the six e2e files.

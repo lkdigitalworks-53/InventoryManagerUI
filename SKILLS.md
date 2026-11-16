@@ -5163,6 +5163,8 @@ Rules:
 
 **The check:** run the wire test with the waiter AND the signal for every answer shape; does any shape change the product list twice, or leave a settled flag behind?
 
+**Lesson from the PR #203 sweep (E2E red, 29 tests).** A test helper that flips a connectivity flag can run real app code. `AuthService.isOnline = true` runs `init()` when `AuthStore.isAuthenticated` is false, and `init()` -> `loadSession()` -> `clear()` wipes any fixture set by direct assignment, so the next send returns silently and the awaiting callback never fires ("callback never fired" with no error anywhere). Rule: before a helper flips such a flag, read what the flag's change handler does; save the fixture, flip, restore at once, and pin the helper's source order in a Node guard (`addProductE2eHelpers.guard.test.js`) so the QML suites cannot lose it silently. A weak assertion (`verify(!p || p.name === ...)`) passes whatever happens: write the strict form (`compare(getById(id), null)`).
+
 ## Skill 173: Raise the PR and read CI from a Claude chat session: attach the repo with `add_repo` (push), then use REST only
 
 **Why:** AP3a pushed fine with the PAT in a per-command `http.extraHeader`, but `gh pr list`, `gh run list` and `curl https://api.github.com/...` all answered 403 "GitHub access to this repository is not enabled for this session". The git push path and the GitHub API path are gated separately: the API is open only for repos attached to the session.
