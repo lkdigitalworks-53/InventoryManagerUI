@@ -25,7 +25,7 @@ AP1 server (#199), AP2 client pure layer (#201) merged. **AP3 is split (D-AP3-1)
 - [ ] 12. Push, read CI if reachable, final report (done / next).
 
 ## CI
-Filled after the push: read the PR checks (QML Tests, Functions Tests, Rules, E2E). Unproven locally: both QML twins, the six e2e files.
+PR #203 opened. Functions Tests + Rules success on b7ccbfd; QML Tests and E2E were still running when last read. Unproven locally: both QML twins, the six e2e files.
 
 ## NEXT (if this session stops)
 If CI is red, fix on this branch first. Then AP3b (dialog inline supplier "Use" row, strict parsing/limits, submit body in Node), AP4 (device test).
