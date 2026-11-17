@@ -17,6 +17,11 @@ var QUEUED_TEXT = "Product saved. It appears in your list when it syncs"
 // offer a plain retry (a new tap is a new key, so a SECOND product); say so and re-read the lists instead.
 var UNCONFIRMED_TEXT = "The server may have saved this product, but its answer could not be read. Check the product list before adding it again"
 var DISCARDED_TEXT = "This product was discarded, so nothing was added"
+// Review sweep 2 of PR 203: a picked photo is attached from the LIVE answer only (D-AP-8), so a queued or unconfirmed add (or a photo that could not be queued) must say the photo
+// was not attached instead of dropping it silently.
+var PHOTO_QUEUED_SUFFIX = ". Add its photo from the product page"
+var PHOTO_UNCONFIRMED_SUFFIX = ". Its photo was not attached"
+var PHOTO_APPLIED_SUFFIX = ". Its photo could not be added. Add it from the product page"
 
 // The key made at the tap. "" only if the nonce is not a plain token (cannot happen with addProductNonce).
 function newKey(nowMs, random) {
@@ -80,4 +85,13 @@ function classify(res) {
 // make a second supplier, because the local supplier list learns the first only when the server answers.
 function supplierPendingText(newName) {
     return "A change that adds the supplier \"" + String(newName) + "\" is still waiting to sync. Add this product after it syncs, or leave the supplier out"
+}
+
+// The toast the add sheet shows once the callback answered ok. status: "applied" | "queued" | "unconfirmed" (anything else reads as
+// applied, the pre-AP3a wording). photoSkipped: a photo was picked but could not be attached from this answer.
+function doneText(status, photoSkipped) {
+    var skipped = photoSkipped === true
+    if (status === "queued") return QUEUED_TEXT + (skipped ? PHOTO_QUEUED_SUFFIX : "")
+    if (status === "unconfirmed") return UNCONFIRMED_TEXT + (skipped ? PHOTO_UNCONFIRMED_SUFFIX : "")
+    return "Product added" + (skipped ? PHOTO_APPLIED_SUFFIX : "")
 }

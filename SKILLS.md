@@ -5177,5 +5177,7 @@ Rules:
 5. PR body: what changed, what is NOT in it, evidence split into RUN and NOT RUN, the commit-message email line, then the session attribution lines.
 6. A privacy hook may refuse a single shell command that holds the account email AND the PAT together. Run the commit (email line, no PAT) and the push (PAT, no email) as two separate commands.
 
-**The check:** does `gh api .../pulls` return a number and URL, and does the check-runs call return rows for the head SHA?
+7. Before every push that edits `SKILLS.md`, `AGENTS.md`, `README.md` or anything under `.github/`, run `node .github/scripts/skills-index.js --write` (never hand-edit `SKILLS-INDEX.md`: an index line must equal its heading byte for byte, backticks included) and then `node --test .github/scripts/__tests__/*.test.js` (about 45 s, no Qt, no network). The `PR Test Summary Comment` job runs that suite first and posts nothing when it fails. On PR 203 one hand-typed index line (Skill 173, backticks dropped) made that job red while all four test jobs were green, and the CI summary comment was lost.
+
+**The check:** does `gh api .../pulls` return a number and URL, does the check-runs call return rows for the head SHA, and is the `PR Test Summary Comment` row green too (not only the four test jobs)?
 

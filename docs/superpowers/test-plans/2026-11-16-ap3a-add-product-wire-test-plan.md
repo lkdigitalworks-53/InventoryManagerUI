@@ -11,6 +11,8 @@ Honesty note: Node tests were RUN in the sandbox against the real server code. Q
 | `tests/tst_AddProductFlow.qml` (new, CI) | 16 functions | CI only | the flow cases for the QML engine |
 | `tests/tst_InventoryStore_addProduct.qml` (new, CI) | 15 functions | CI only | the wire with the real Gateway (await timeout shortened), DataModel Connections and the real stores; sweep added stock 0 (no batch), a product a sync landed first (not added twice), no bookkeeping left behind, and a strict replay check (the old one was always true) |
 | `functions/test/addProductE2eHelpers.guard.test.js` (new, sweep) | 25 | RUN 25/25, mutation-checked | E2E-G1..G4 for each of the six e2e helpers: fixture saved before going online, restored right after and before the add, online restored in `finally`, wait and id checks kept, operation URL points at the emulator; G5 the six files are exactly the ones calling `InventoryStore.addProduct` |
+| `functions/test/addProductFlow.test.js` (sweep 2 additions) | +3 (now 20) | RUN 20/20, mutation-checked | DT-1 `doneText` every status x photoSkipped, hostile status/flag values; DT-2 monkey (196 pairs, never throws); G-2 wiring pin (dialog uses `InventoryStore.addDoneMessage`, failed photo queue marks skipped) |
+| `tests/tst_AddProductFlow.qml` (sweep 2) | +2 functions | CI only | `doneText` in the QML engine |
 | edited guards | | RUN | `operationLogic.addProduct.test.js` and `addProductPlan.test.js` G-1 (dormancy -> wiring pin), `sheetBusyOverlay.test.js` SB-4, `restockHold.test.js` P-2, `counterRegistry.guard.test.js` (11 mutants), `restockR5a.test.js` K-7 scoped to restock |
 
 ## 2. Regression tests
@@ -37,6 +39,8 @@ Unchanged.
 9. Name `{{prd}}` or a name with `}}`: stored with one space inside the pair, never an id.
 10. Fractional stock 2.5: History row shows 2.5 (the old row showed 2).
 11. Kill the app right after tapping Save on a slow link, reopen online: the product appears once.
+12. Pick a photo, throttle so the add comes back late: toast says "Product saved. It appears in your list when it syncs. Add its photo from the product page". (Sweep 2: before, the photo vanished with no word.)
+13. Pick a photo and go through the happy path: product added, photo uploads. Then repeat with storage nearly full or an unreadable image: toast says "Product added. Its photo could not be added. Add it from the product page".
 ### Affected areas
 Stuck-writes sheet label for an add ("Add product <name>"); order creation with the new product; restock of the new product; delete of the new product (cascade).
 ### Regression
@@ -46,3 +50,4 @@ Two minutes of rapid add / cancel / restock / order, toggling airplane mode: no 
 
 ## 5. CI result
 f01a59c: Functions, QML, Rules green, E2E red (29). 83ed1e0: all four green. Later commits: see CHECKPOINT.md.
+Sweep 2: head 1094efb fixed the red `PR Test Summary Comment` job (stale index); later commits: see CHECKPOINT.md.

@@ -536,16 +536,16 @@ BottomSheet {
                         // no callback needed. PhotoQueue.photoUploaded (wired in EditProductDialog's
                         // gallery, Main.qml) reports the outcome once the upload itself completes.
                         var addResult = StorageService.addProductPhoto(newId, pendingPhotoSource)
-                        if (!addResult.ok)
+                        if (!addResult.ok) {
                             console.warn("[AddProductDialog] addProductPhoto failed for", newId, addResult.error)
+                            photoSkipped = true
+                        }
                     } else {
                         photoSkipped = true
                     }
                 }
 
-                if (status === "queued") Toast.show(InventoryStore.addQueuedMessage + (photoSkipped ? ". Add its photo from the product page" : ""))
-                else if (status === "unconfirmed") Toast.show(InventoryStore.addUnconfirmedMessage)
-                else Toast.show("Product added")
+                Toast.show(InventoryStore.addDoneMessage(status, photoSkipped))
                 productCreated()
                 dlg.close()
             })

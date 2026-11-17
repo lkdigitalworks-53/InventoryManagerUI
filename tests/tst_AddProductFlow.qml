@@ -208,4 +208,23 @@ TestCase {
         }
         verify(accepted > 50 && refused > 50, "both sides reached: " + accepted + "/" + refused)
     }
+
+    // ── doneText ──────────────────────────────────────────────────────────
+    function test_doneText_every_status_with_and_without_a_skipped_photo() {
+        compare(AF.doneText("applied", false), "Product added")
+        compare(AF.doneText("applied", true), "Product added. Its photo could not be added. Add it from the product page")
+        compare(AF.doneText("queued", false), AF.QUEUED_TEXT)
+        compare(AF.doneText("queued", true), AF.QUEUED_TEXT + ". Add its photo from the product page")
+        compare(AF.doneText("unconfirmed", false), AF.UNCONFIRMED_TEXT)
+        compare(AF.doneText("unconfirmed", true), AF.UNCONFIRMED_TEXT + ". Its photo was not attached")
+    }
+    function test_doneText_unknown_status_reads_as_applied_and_only_strict_true_skips() {
+        var statuses = [undefined, null, "", "x", 7]
+        for (var i = 0; i < statuses.length; ++i) compare(AF.doneText(statuses[i], false), "Product added")
+        var flags = [undefined, null, 1, "true", 0]
+        for (var j = 0; j < flags.length; ++j) {
+            compare(AF.doneText("applied", flags[j]), "Product added")
+            compare(AF.doneText("queued", flags[j]), AF.QUEUED_TEXT)
+        }
+    }
 }

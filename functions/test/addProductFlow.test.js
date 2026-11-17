@@ -242,10 +242,43 @@ test("M-1 monkey: 3000 random tap values never throw; an accepted plan always pa
     assert.ok(accepted > 100 && refused > 100, "both sides reached: " + accepted + "/" + refused);
 });
 
+test("DT-1 doneText: every status, with and without a skipped photo (happy, negative, hostile input)", () => {
+    assert.equal(AF.doneText("applied", false), "Product added");
+    assert.equal(AF.doneText("applied", true), "Product added. Its photo could not be added. Add it from the product page");
+    assert.equal(AF.doneText("queued", false), AF.QUEUED_TEXT);
+    assert.equal(AF.doneText("queued", true), AF.QUEUED_TEXT + ". Add its photo from the product page");
+    assert.equal(AF.doneText("unconfirmed", false), AF.UNCONFIRMED_TEXT);
+    assert.equal(AF.doneText("unconfirmed", true), AF.UNCONFIRMED_TEXT + ". Its photo was not attached");
+    // anything else reads as the pre-AP3a "applied" wording, and only a strict true counts as a skipped photo
+    for (const st of [undefined, null, "", "x", 7, {}]) assert.equal(AF.doneText(st, false), "Product added");
+    for (const sk of [undefined, null, 1, "true", 0, {}]) {
+        assert.equal(AF.doneText("applied", sk), "Product added");
+        assert.equal(AF.doneText("queued", sk), AF.QUEUED_TEXT);
+    }
+});
+
+test("DT-2 MONKEY: doneText never throws and always returns a non-empty string", () => {
+    const vals = [undefined, null, "", "applied", "queued", "unconfirmed", 0, 1, NaN, {}, [], true, false, "\u0000"];
+    for (const a of vals) for (const b of vals) {
+        let t;
+        assert.doesNotThrow(() => { t = AF.doneText(a, b); });
+        assert.ok(typeof t === "string" && t.length > 0);
+    }
+});
+
 test("G-1 the flow is pure: no store, singleton, clock or random source is read (a source guard)", () => {
     const src = fs.readFileSync(path.join(HELPER_DIR, "AddProductFlow.js"), "utf8");
     const code = src.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
     for (const bad of [/\bInventoryStore\b/, /\bSupplierStore\b/, /\bGateway\b/, /\bAuthService\b/, /Date\.now\(/, /new Date\(/, /Math\.random/, /console\./]) {
         assert.doesNotMatch(code, bad, String(bad));
     }
+});
+
+test("G-2 wiring pin: the add sheet shows its toast through InventoryStore.addDoneMessage and marks a failed photo queue as skipped", () => {
+    const dlg = fs.readFileSync(path.join(__dirname, "..", "..", "qml", "pages", "AddProductDialog.qml"), "utf8");
+    const store = fs.readFileSync(path.join(__dirname, "..", "..", "qml", "model", "InventoryStore.qml"), "utf8");
+    assert.match(dlg, /Toast\.show\(InventoryStore\.addDoneMessage\(status, photoSkipped\)\)/);
+    assert.doesNotMatch(dlg, /Toast\.show\("Product added"\)/);
+    assert.match(dlg, /if \(!addResult\.ok\) \{[^}]*photoSkipped = true/);
+    assert.match(store, /function addDoneMessage\(status, photoSkipped\) \{ return AddProductFlow\.doneText\(status, photoSkipped\) \}/);
 });

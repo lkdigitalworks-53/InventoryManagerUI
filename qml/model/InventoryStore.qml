@@ -618,6 +618,7 @@ QtObject {
     readonly property string addQueuedMessage: AddProductFlow.QUEUED_TEXT
     readonly property string addUnconfirmedMessage: AddProductFlow.UNCONFIRMED_TEXT
     readonly property string addDiscardedMessage: AddProductFlow.DISCARDED_TEXT
+    function addDoneMessage(status, photoSkipped) { return AddProductFlow.doneText(status, photoSkipped) }
     // key -> true while a live callback has already settled the operation, so the Gateway signal that always follows
     // (onAddProductApplied/Rejected) does not repeat the effects. key -> typed name is this launch only.
     property var _addSettled: ({})
