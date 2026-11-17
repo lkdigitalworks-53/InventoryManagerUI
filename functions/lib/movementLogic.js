@@ -25,13 +25,25 @@ const KIND_DIRECTION = {
 const MOVEMENT_KINDS = Object.keys(KIND_DIRECTION);
 
 // P1 S2e-1 reason policy (design docs/superpowers/specs/2026-11-13-p1-s2e1-reason-policy-and-cost-design.md).
-// A kind in REASON_REQUIRED cannot be recorded without a reason of at least MIN_REASON_LENGTH characters
-// (after trim): these are the events an auditor, an insurer or a tax officer asks "what happened" about, and
+// A kind in REASON_REQUIRED cannot be recorded without a reason of at least MIN_REASON_LENGTH VISIBLE characters
+// (after trim, invisible characters not counted): these are the events an auditor, an insurer or a tax officer asks "what happened" about, and
 // all of them are ITC-blocked under CGST 17(5)(h). free_sample is optional on purpose (high volume, and the ITC
 // block on it is under review), adjustment and the supply kinds are optional. Mirrored client side in
 // qml/helper/StockMovements.js; functions/test/stockMovementsParity.test.js fails when they drift.
 const REASON_REQUIRED = ["loss", "theft", "destroyed", "write_off", "gift"];
 const MIN_REASON_LENGTH = 3;
+
+// Characters that show NOTHING on screen or in a report: whitespace plus zero-width, soft-hyphen, joiner,
+// direction-mark, invisible-operator, variation-selector, Hangul-filler, Mongolian, Khmer-vowel and braille-blank
+// characters. `trim()` strips only whitespace, so three U+200B would pass as a "reason" and be stored invisible
+// (PR #204 review, D-1). Written with BMP \u escapes only, so the V4 engine of the phone reads the same pattern
+// as Node (mirror: qml/helper/StockMovements.js). Letters of every script, digits and punctuation are NOT here.
+const INVISIBLE_RE = /[\s\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF9-\uFFFB]/g;
+
+// How many characters of `text` a person can actually see (UTF-16 units, like every other length here).
+function visibleLength(text) {
+    return typeof text === "string" ? text.replace(INVISIBLE_RE, "").length : 0;
+}
 
 // Kinds whose cost value the SERVER stamps (the six non-supply outward events of CGST 56(2)): qty x the
 // product's cost (`price`, as stored when the row is written), never a client-sent number.
@@ -78,7 +90,7 @@ function validateMovements(raw) {
         if (typeof reason !== "string" || reason.length > MAX_REASON) return _fail("invalid-movement-reason");
 
         const trimmed = reason.trim();
-        if (REASON_REQUIRED.indexOf(m.kind) >= 0 && trimmed.length < MIN_REASON_LENGTH) return _fail("movement-reason-required");
+        if (REASON_REQUIRED.indexOf(m.kind) >= 0 && visibleLength(trimmed) < MIN_REASON_LENGTH) return _fail("movement-reason-required");
 
         movements.push({ kind: m.kind, qty: m.qty, reason: trimmed, valueAtCost: value, derived: false });
     }
@@ -194,6 +206,6 @@ function buildRows(movements, ctx) {
 }
 
 module.exports = {
-    KIND_DIRECTION, MOVEMENT_KINDS, REASON_REQUIRED, MIN_REASON_LENGTH, VALUE_KINDS, unitCostOf, valueFor, DEFAULT_KIND_BY_OPTYPE, MAX_MOVEMENTS, MAX_REASON, MAX_TXN_WRITES, MAX_PRODUCT_NAME,
+    KIND_DIRECTION, MOVEMENT_KINDS, REASON_REQUIRED, MIN_REASON_LENGTH, visibleLength, VALUE_KINDS, unitCostOf, valueFor, DEFAULT_KIND_BY_OPTYPE, MAX_MOVEMENTS, MAX_REASON, MAX_TXN_WRITES, MAX_PRODUCT_NAME,
     cleanProductName, nameFor, validateMovements, totalsMatch, deriveMovement, stockOf, deriveForMutation, buildRows
 };

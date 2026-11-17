@@ -29,6 +29,9 @@ var MAX_REASON = 500
 // P1 S2e-1: kinds that cannot be recorded without a reason (mirror of movementLogic.js REASON_REQUIRED).
 var REASON_REQUIRED = ["loss", "theft", "destroyed", "write_off", "gift"]
 var MIN_REASON_LENGTH = 3
+// Mirror of movementLogic.js INVISIBLE_RE: characters that show nothing (whitespace, zero-width, soft hyphen,
+// joiners, direction marks, variation selectors, fillers). They do not count toward MIN_REASON_LENGTH.
+var _INVISIBLE_RE = /[\s\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF9-\uFFFB]/g
 var EPSILON = 1e-9
 
 function _hasKeys(obj) {
@@ -58,7 +61,7 @@ function reasonRequired(kind) {
 // "" when `reason` is enough for `kind`, else the words for the person. Counted after trim, like the server.
 function reasonProblem(kind, reason) {
     if (!reasonRequired(kind)) return ""
-    var text = (typeof reason === "string") ? reason.trim() : ""
+    var text = (typeof reason === "string") ? reason.replace(_INVISIBLE_RE, "") : ""
     return text.length >= MIN_REASON_LENGTH ? "" : "Add a short reason (at least " + MIN_REASON_LENGTH + " characters)."
 }
 

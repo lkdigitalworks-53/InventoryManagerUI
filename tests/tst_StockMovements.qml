@@ -106,6 +106,24 @@ TestCase {
         compare(SM.reasonProblem("free_sample", ""), "")
         compare(SM.reasonProblem("adjustment", undefined), "")
     }
+    // PR #204 review D-1: text a person cannot see does not count as a reason. Runs on Qt's own JS engine,
+    // which is the proof that the phone reads the INVISIBLE pattern exactly like Node does.
+    function test_reason_problem_ignores_invisible_characters() {
+        var words = "Add a short reason (at least 3 characters)."
+        var hidden = ["\u200b\u200b\u200b", "\u00ad\u00ad\u00ad", "\u2060\u2060\u2060", "\u200d\u200d\u200d", "\u200e\u200f\u202e",
+                      "\ufeff\ufeff\ufeff", "\u3164\u3164\u3164", "\u2800\u2800\u2800", "\u115f\u1160\uffa0", "\ufe0f\ufe0f\ufe0f",
+                      "\u180e\u180e\u180e", "\u17b4\u17b5\u17b4", "\u034f\u034f\u034f", "\u061c\u061c\u061c", "\u2066\u2067\u2069",
+                      " \u200b ab \u200b ", "a\u200bb", "\u00a0\u3000\u2003 a b"]
+        for (var i = 0; i < hidden.length; i++) compare(SM.reasonProblem("theft", hidden[i]), words, "hidden #" + i)
+        var shown = ["\u200babc", "a\u200bb\u200bc", "a...", "...", "---", "\u0a97\u0ac1\u0a9c\u0ab0\u0abe\u0aa4\u0ac0", "\u2764\ufe0f\u2764\ufe0f\u2764\ufe0f"]
+        for (var j = 0; j < shown.length; j++) compare(SM.reasonProblem("theft", shown[j]), "", "shown #" + j)
+        compare(SM.reasonProblem("adjustment", "\u200b\u200b\u200b"), "")
+    }
+    function test_validate_refuses_an_invisible_reason_on_a_required_kind() {
+        compare(SM.validate("inventory", { stock: -1 }, {}, [{ kind: "theft", qty: -1, reason: "\u200b\u200b\u200b" }]), "movement-reason-required")
+        compare(SM.validate("inventory", { stock: -1 }, {}, [{ kind: "theft", qty: -1, reason: "a\u200bb\u200bc" }]), "")
+        compare(SM.validate("inventory", { stock: -1 }, {}, [{ kind: "adjustment", qty: -1, reason: "\u200b\u200b\u200b" }]), "")
+    }
     function test_validate_refuses_a_required_kind_without_a_reason() {
         compare(SM.validate("inventory", { stock: -3 }, {}, [{ kind: "theft", qty: -3 }]), "movement-reason-required")
         compare(SM.validate("inventory", { stock: -3 }, {}, [{ kind: "gift", qty: -3, reason: " " }]), "movement-reason-required")

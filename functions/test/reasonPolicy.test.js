@@ -32,8 +32,14 @@ function loadHelper(src) {
 const REQUIRED = ['loss', 'theft', 'destroyed', 'write_off', 'gift'];
 const VALUE = ['loss', 'theft', 'destroyed', 'write_off', 'free_sample', 'gift'];
 const OPTIONAL = ['receipt', 'sales_return', 'sale', 'free_sample', 'adjustment'];
-const BAD_REASONS = [undefined, null, '', ' ', '  \t\n ', 'a', 'ab', ' ab ', 'a b'.slice(0, 2), '\n\n\n'.slice(0, 2)];
-const GOOD_REASONS = ['abc', ' abc ', 'ab c', 'water damage', 'x'.repeat(500), '\u0939\u093f\u0902\u0926\u0940', '\ud83d\ude00\ud83d\ude00'];
+const BAD_REASONS = [undefined, null, '', ' ', '  \t\n ', 'a', 'ab', ' ab ', 'a b'.slice(0, 2), '\n\n\n'.slice(0, 2),
+  // invisible-only text: looks empty to a person, must count as empty (review D-1)
+  '\u200b\u200b\u200b', '\u00ad\u00ad\u00ad', '\u2060\u2060\u2060', '\u200d\u200d\u200d', '\u200e\u200f\u202e', '\ufeff\ufeff\ufeff', '\u3164\u3164\u3164', '\u2800\u2800\u2800',
+  '\u115f\u1160\uffa0', '\ufe0f\ufe0f\ufe0f', '\u180e\u180e\u180e', '\u17b4\u17b5\u17b4', '\u034f\u034f\u034f', '\u061c\u061c\u061c', '\u2066\u2067\u2069',
+  ' \u200b ab \u200b ', 'a\u200bb', '\u00a0\u3000\u2003 a b'];
+const GOOD_REASONS = ['abc', ' abc ', 'ab c', 'water damage', 'x'.repeat(500), '\u0939\u093f\u0902\u0926\u0940', '\ud83d\ude00\ud83d\ude00',
+  // real text that contains invisible characters stays valid when 3+ visible characters remain
+  '\u200babc', 'a\u200bb\u200bc', 'a...', '...', '---', '\u0a97\u0ac1\u0a9c\u0ab0\u0abe\u0aa4\u0ac0', '\u2764\ufe0f\u2764\ufe0f\u2764\ufe0f'];
 const dirOf = (m, k) => m.KIND_DIRECTION[k] || -1;
 
 function battery(m) {
@@ -61,6 +67,14 @@ function battery(m) {
   eq('2 chars refused', mv('loss', 'ab').error, 'movement-reason-required');
   eq('3 chars padded with spaces ok', mv('loss', '   abc   ').ok, true);
   eq('2 chars padded refused', mv('loss', '   ab   ').error, 'movement-reason-required');
+  // invisible characters never count (the stored reason is still just trimmed)
+  eq('visibleLength of nothing', [m.visibleLength(''), m.visibleLength('\u200b\u200b'), m.visibleLength(5), m.visibleLength(undefined), m.visibleLength(null)], [0, 0, 0, 0, 0]);
+  eq('visibleLength counts text', [m.visibleLength('abc'), m.visibleLength(' a\u200bb c '), m.visibleLength('\u0939\u093f\u0902\u0926\u0940')], [3, 3, 5]);
+  eq('3 zero-width refused', mv('theft', '\u200b\u200b\u200b').error, 'movement-reason-required');
+  eq('2 letters + zero-width refused', mv('theft', 'a\u200bb\u200b').error, 'movement-reason-required');
+  eq('3 letters among zero-width ok', mv('theft', 'a\u200bb\u200bc').ok, true);
+  eq('invisible chars only matter for required kinds', mv('adjustment', '\u200b\u200b\u200b').ok, true);
+  eq('punctuation-only is a decision, not a bug: accepted (KNOWN-ISSUES 3)', mv('theft', '...').ok, true);
   // order of checks: kind, then direction, then value, then length/type, then required
   eq('unknown kind first', plain(m.validateMovements([{ kind: 'stolen', qty: -1 }])).error, 'invalid-movement-kind');
   eq('wrong direction before reason', plain(m.validateMovements([{ kind: 'theft', qty: 1 }])).error, 'invalid-movement-qty');
@@ -137,7 +151,7 @@ test('RP-02 the client helper agrees with the server for every kind and reason (
   for (const k of ML.MOVEMENT_KINDS) {
     for (const r of reasons) {
       const p = H.reasonProblem(k, r);
-      const needs = ML.REASON_REQUIRED.indexOf(k) >= 0 && !(typeof r === 'string' && r.trim().length >= 3);
+      const needs = ML.REASON_REQUIRED.indexOf(k) >= 0 && !(typeof r === 'string' && ML.visibleLength(r.trim()) >= 3);
       assert.equal(p !== '', needs, `${k} ${show(r).slice(0, 14)}`);
     }
     assert.equal(H.reasonRequired(k), ML.REASON_REQUIRED.indexOf(k) >= 0);
@@ -174,6 +188,17 @@ test('RP-03 the failure-cause table treats the new code as an app problem, and n
   assert.match(HELPER, /function reasonProblem\(/);
 });
 
+test('RP-05 the REAL module (not the battery copy) takes every branch: non-string text, non-object doc, overflow', () => {
+  assert.equal(ML.visibleLength(5), 0);
+  assert.equal(ML.visibleLength(undefined), 0);
+  assert.equal(ML.visibleLength('\u200b a\u200bb c'), 3);
+  assert.equal(ML.unitCostOf(7), 0);
+  assert.equal(ML.unitCostOf(null), 0);
+  assert.equal(ML.unitCostOf({ price: 4.5 }), 4.5);
+  assert.equal(ML.valueFor({ kind: 'loss', qty: -1e308, valueAtCost: 0 }, 1e10), 0);
+  assert.equal(ML.valueFor({ kind: 'loss', qty: -2, valueAtCost: 0 }, 5), 10);
+});
+
 // ---- hand mutants ------------------------------------------------------------------------------------------------
 const MUTANTS = [
   ['loss not required', 'const REASON_REQUIRED = ["loss", "theft", "destroyed", "write_off", "gift"]', 'const REASON_REQUIRED = ["theft", "destroyed", "write_off", "gift"]'],
@@ -182,9 +207,19 @@ const MUTANTS = [
   ['adjustment required', 'const REASON_REQUIRED = ["loss", "theft", "destroyed", "write_off", "gift"]', 'const REASON_REQUIRED = ["loss", "theft", "destroyed", "write_off", "gift", "adjustment"]'],
   ['min length 1', 'const MIN_REASON_LENGTH = 3', 'const MIN_REASON_LENGTH = 1'],
   ['min length 4', 'const MIN_REASON_LENGTH = 3', 'const MIN_REASON_LENGTH = 4'],
-  ['length not trimmed', 'if (REASON_REQUIRED.indexOf(m.kind) >= 0 && trimmed.length < MIN_REASON_LENGTH)', 'if (REASON_REQUIRED.indexOf(m.kind) >= 0 && reason.length < MIN_REASON_LENGTH)'],
-  ['boundary off by one', 'trimmed.length < MIN_REASON_LENGTH', 'trimmed.length <= MIN_REASON_LENGTH'],
-  ['policy dropped', 'if (REASON_REQUIRED.indexOf(m.kind) >= 0 && trimmed.length < MIN_REASON_LENGTH) return _fail("movement-reason-required")', ''],
+  ['length not trimmed', 'if (REASON_REQUIRED.indexOf(m.kind) >= 0 && visibleLength(trimmed) < MIN_REASON_LENGTH)', 'if (REASON_REQUIRED.indexOf(m.kind) >= 0 && reason.length < MIN_REASON_LENGTH)'],
+  ['boundary off by one', 'visibleLength(trimmed) < MIN_REASON_LENGTH', 'visibleLength(trimmed) <= MIN_REASON_LENGTH'],
+  ['policy dropped', 'if (REASON_REQUIRED.indexOf(m.kind) >= 0 && visibleLength(trimmed) < MIN_REASON_LENGTH) return _fail("movement-reason-required")', ''],
+  ['invisible counted', 'text.replace(INVISIBLE_RE, "").length : 0', 'text.length : 0'],
+  ['zero-width space counted', '\\u200B-\\u200F', '\\u200C-\\u200F'],
+  ['soft hyphen counted', '[\\s\\u00AD', '[\\s'],
+  ['word joiner counted', '\\u2060-\\u206F', '\\u2061-\\u206F'],
+  ['hangul filler counted', '\\u2800\\u3164', '\\u2800'],
+  ['braille blank counted', '\\u2800\\u3164', '\\u3164'],
+  ['variation selector counted', '\\uFE00-\\uFE0F', '\\uFE00-\\uFE0E'],
+  ['whitespace not removed', '[\\s\\u00AD', '[\\u00AD'],
+  ['letters removed', '\\uFFF9-\\uFFFB]/g', '\\uFFF9-\\uFFFB\\u0061-\\u007A]/g'],
+  ['non-string counted', 'typeof text === "string" ? text.replace', 'typeof text !== "xx" ? String(text).replace'],
   ['wrong error code', '_fail("movement-reason-required")', '_fail("invalid-movement-reason")'],
   ['stored reason untrimmed', 'movements.push({ kind: m.kind, qty: m.qty, reason: trimmed,', 'movements.push({ kind: m.kind, qty: m.qty, reason: reason,'],
   ['stamp dropped from rows', 'valueAtCost: valueFor(m, ctx.unitCost),', 'valueAtCost: m.valueAtCost,'],

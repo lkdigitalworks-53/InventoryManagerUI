@@ -5138,6 +5138,7 @@ Rules:
 10. Stamp only the kinds that need it and keep the others byte-for-byte (a sale keeps the value it carried): a mutant that stamps `sale` or `receipt` must die.
 11. The replay of an already-applied request must not re-value the row after the product's cost changed; test with a cost change between the two calls.
 12. Say what the change does NOT do for other kinds of business (composition dealers, manufacturers, service-only vendors, vendors outside India) in the design and KNOWN-ISSUES, after checking the code for hard-coded business strings.
-13. Count real checks (about 245 per battery run, 27 mutants), do not estimate.
+13. Count real checks (512 per battery run, 37 mutants after the review sweep), do not estimate.
+14. "Length after trim" is not "something to read". `trim()` strips whitespace only: three zero-width spaces, soft hyphens, joiners or a braille blank pass a length check and store an invisible reason. Count VISIBLE characters with ONE explicit pattern shared by server and client, written with BMP `\u` escapes (the phone's JS engine may lack Unicode property escapes), prove it on the phone's own engine in a QML twin, and give every character class its own mutant. Do not go further without a decision: punctuation-only and "xxx" are a content question, not a length one (KNOWN-ISSUES 4).
 
 **The check:** for a "must record X" rule, name the one function that enforces it, the client mirror and the matrix that pins them, the code the failing request returns and how the client classifies it, which number the server stamps and what a forged one does, what a missing input records, and what the fixtures cost to fix.
