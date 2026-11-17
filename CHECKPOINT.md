@@ -14,7 +14,7 @@
 - [x] 5. Evidence (Node, measured after `npm ci`): `functions` 1899/1899; `movementLogic.js` 100% line/branch/function. QML not run (CI).
 - [x] 6. Latent finding: `InventoryStore._movementsFor` silently degrades a required kind without a real reason to an unreasoned derived adjustment. Pinned by a test + CAUTION comment; decision recorded (KNOWN-ISSUES 17).
 - [x] 7. Docs: README, design (stale "stacked" wording and D-1b amendment), test plan (counts re-measured, curl cases, CI-red meaning), KNOWN-ISSUES 4/17/18/19 and item 39/12 text restored, Skill 173 rules 15 + 16, this checkpoint.
-- [ ] 8. Commit + push; wait for CI (QML job decides the tag-character twin).
+- [x] 8. Committed + pushed `427d71c`; CI green on it (QML incl. the tag-character twin, Functions, Rules, E2E, PR comment): Qt's engine reads the surrogate-pair branch like Node.
 
 ## OPEN for Taher
 - 17 (decision for S2e-2): should `_movementsFor` REFUSE a required kind with no real reason, instead of degrading? Recommendation: refuse.
@@ -23,4 +23,4 @@
 - Earlier, still open: D-2 (delete of a product with stock, KNOWN-ISSUES 16), D-3 (punctuation-only reasons: recommendation NO).
 
 ## NEXT
-Read CI on the new commit. Then S2e-2 (pickers with the reason field, `reasonProblem`; send no `valueAtCost`) or S4b-2 (register page). Taher picks.
+S2e-2 (pickers with the reason field, `reasonProblem`; send no `valueAtCost`) or S4b-2 (register page). Taher picks.
