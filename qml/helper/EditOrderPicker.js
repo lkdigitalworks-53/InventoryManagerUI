@@ -17,7 +17,6 @@
 // in the same order (linesOf). `ctx` is { status, original }: the order's SAVED status and its original lines
 // ({ productId, quantity, taxable, taxPercent }, the dialog's _originalLines). `lookup` is { productOf(id), batchesOf(id) }.
 
-function _whole(n) { return (typeof n === "number" && isFinite(n) && n > 0) ? Math.floor(n) : 0 }
 function _blankId(id) { return id === undefined || id === null || id === "" }
 function _completed(ctx) { return !!ctx && ctx.status === "completed" }
 // The picker line of a row that is not an object: it keeps the index of its row and holds nothing.

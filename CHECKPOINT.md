@@ -26,16 +26,26 @@ Everything is pushed except nothing pending; resume at step 5. Counts to re-meas
 **Skills used:** requesting-code-review, qt-qml-review (3 phases, run single-threaded), ponytail-audit.
 **Baseline:** PR head `9495756`, base `main@503adda`, CI green (QML 3163, Functions 1900, Rules 129, E2E 121), `mergeable_state: clean`, 2 commits, 18 files +765 -139.
 
-## Sweep steps
-- [x] S0. Clone, scrub PAT from `.git/config`, checkout PR branch, read skills, PR body, CI, plan, production diff.
-- [x] S1. Phase 1 lint on 4 touched QML files: 4 hits on ADDED lines = 3 JS-1 `var` (house style) + 1 DEL-1 `model.x` in the old delegate (pre-existing pattern). No change. Domains layout/loaders/delegates/states: N/A (no visual QML added).
-- [x] S2. Deep read done. `catalog`/`_rebuildCatalog` have no stray readers (only a negative test). `_findOriginalLine` still used by the tax forecast. FINDINGS below.
-- [x] S3. Baseline here: functions 1900/1900, scripts 1049/1049 (Node 22).
-- [ ] S4. Fixes (test first, red then green), one commit each.
-- [ ] S5. Docs: KNOWN-ISSUES, test plan, skills, README as needed. Read CI on the new head.
-- [ ] S6. Final report to Taher: done / next.
+## Sweep steps (state at the last push)
+- [x] S0 clone, scrub PAT from `.git/config`, checkout PR branch, read skills/PR/CI/plan/diff.
+- [x] S1 Phase 1 lint on the 4 touched QML files: 4 hits on added lines = 3 JS-1 `var` (house style) + 1 DEL-1 `model.x` (pre-existing delegate pattern). No change.
+- [x] S2 deep read; `catalog`/`_rebuildCatalog` have no stray readers; `_findOriginalLine` still serves the tax forecast.
+- [x] S3 baseline functions 1900/1900, scripts 1049/1049.
+- [x] S4 fixes, each red-first with hand mutants killed, twin regenerated:
+  - F1 `72ac23a` completed order saved unchanged was refused (two lines of one product, fractional qty): `heldAtCompletion`, `stepUp` floors cap. EOP-40..43, EOW-26; EOP-32/30/33 + EOW-11 corrected on purpose.
+  - F2 `f985f0b` Save of a lineless order zeroed total and items: `Edit.lineFields`, `_noLinesStored`. EOP-44, EOW-27, 2 QML cases in `tst_OrdersStore_mutations`.
+  - F3 `4dff61b` New Order `+` deleted/lowered rows: `NP.stepQty`. NOP-36/37, NOW-18, EOW-24.
+  - ponytail: dead `_whole` removed from EditOrderPicker.js.
+- [x] S5 docs: KNOWN-ISSUES 47 fixed up + 48/49/50, Skill 172 rules 3/5/9-11, README, AGENTS (S5b entry added), plan (decisions Q1-Q4 + sweep), test plan steps 115-119 (values checked against the helper).
+- [ ] S6 CI on the final head (read it; fix anything red). Not read at the time of this line.
+- [ ] S7 final report to Taher.
 
-## Findings of sweep 1 (each proven with the real helper in Node before any fix)
-- **F1 MUST FIX (regression of S5b-D4 + `originalOf` first-match + `_whole(orig.quantity)`):** Save of an UNCHANGED COMPLETED order is refused when (R1) the order has two lines of one product (orig 3+2, stock 0: "need 2 more"), or (R2/R3) a line holds a fractional qty such as 2.5 (made by the pre-S5b stepper) and stock is 0 or 0.5 ("need 0.5 more"). The old per-line check passed all three. EOW-22 only replays one line per product with whole numbers, so it could not see this. Fix: `ceilingFor` adds ALL original lines of the product, exactly as booked; `stepUp` floors its cap.
-- **F2 MUST FIX (data loss, S5b-D6 / plan Q2):** an order with no `products` array that is saved (any edit, even customer name) sends `products: []`; `OrdersStore.buildOrderUpdate` recomputes subtotal, total and items whenever `fields.products !== undefined`, so the order's money becomes 0. Fix: remember the order stored no lines; if it still has none, send neither `items` nor `products`.
-- **F4 OPEN QUESTION (not changed):** completion (`CompletionPlan`) compares demand to RAW stock; Save now compares to whole units. A pending line of 2.5 with stock 2.5 completes but cannot be saved untouched. See plan Q4.
+## Decisions (Taher, 2026-11-16, "as recommended")
+Q1 skip gone product at Save. Q2 accept + track (KNOWN-ISSUES 49: `_normalizeOrder` zeroes subtotal/tax/discount of lineless orders). Q3 `trySubmit` stays on raw stock. Q4 Save keeps whole units although completion compares raw stock. F3 was decided by the reviewer (robustness first); say if you want it reverted.
+
+## Findings (all proven with the real helper in Node before the fix)
+- F1, F2, F3 fixed (above). F4 = Q4, decided, documented (KNOWN-ISSUES 48).
+- Judged, not changed (KNOWN-ISSUES 50): fractional `NP.availableFor` with a fractional cart (no bad outcome); Save fails open for a product the reader cannot return (Q1); blank-id lines cannot be raised.
+
+## Not reviewed in depth (be honest)
+Older S5a/S5b wiring tests other than EOW-11/20/22/24/26/27 and NOW-18; QML twins beyond regeneration; `ProductPickerSheet` visuals; real-device behavior (no device, no Qt here). QML-side tests (twins, `tst_OrdersStore_mutations`) are unproven until CI runs.
