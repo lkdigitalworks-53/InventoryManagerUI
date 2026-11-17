@@ -36,10 +36,16 @@ const BAD_REASONS = [undefined, null, '', ' ', '  \t\n ', 'a', 'ab', ' ab ', 'a 
   // invisible-only text: looks empty to a person, must count as empty (review D-1)
   '\u200b\u200b\u200b', '\u00ad\u00ad\u00ad', '\u2060\u2060\u2060', '\u200d\u200d\u200d', '\u200e\u200f\u202e', '\ufeff\ufeff\ufeff', '\u3164\u3164\u3164', '\u2800\u2800\u2800',
   '\u115f\u1160\uffa0', '\ufe0f\ufe0f\ufe0f', '\u180e\u180e\u180e', '\u17b4\u17b5\u17b4', '\u034f\u034f\u034f', '\u061c\u061c\u061c', '\u2066\u2067\u2069',
-  ' \u200b ab \u200b ', 'a\u200bb', '\u00a0\u3000\u2003 a b'];
+  ' \u200b ab \u200b ', 'a\u200bb', '\u00a0\u3000\u2003 a b',
+  // control characters and tag characters (review D-1b): the first fix missed these, so each class is its own entry
+  '\u0000\u0000\u0000', '\u0001\u0002\u0003', '\u001f\u001f\u001f', '\u007f\u007f\u007f', '\u0085\u0085\u0085', '\u0080\u0081\u009f', '\u009f\u009f\u009f', '\u0008\u000e\u0019',
+  // edges of the tag block, three of each so that counting ONE wrong edge as visible still crosses the minimum
+  '\udb40\udc20\udb40\udc21\udb40\udc22', '\udb40\udd00\udb40\udd01\udb40\udd02', '\udb40\udc00\udb40\udc00', '\udb40\udfff\udb40\udfff\udb40\udfff', '\udb40\udc00\udb40\udfff\udb40\udc01', ' \u0000 ab \udb40\udc20 ', 'a\u0000b\udb40\udc7f'];
 const GOOD_REASONS = ['abc', ' abc ', 'ab c', 'water damage', 'x'.repeat(500), '\u0939\u093f\u0902\u0926\u0940', '\ud83d\ude00\ud83d\ude00',
   // real text that contains invisible characters stays valid when 3+ visible characters remain
-  '\u200babc', 'a\u200bb\u200bc', 'a...', '...', '---', '\u0a97\u0ac1\u0a9c\u0ab0\u0abe\u0aa4\u0ac0', '\u2764\ufe0f\u2764\ufe0f\u2764\ufe0f'];
+  '\u200babc', 'a\u200bb\u200bc', 'a...', '...', '---', '\u0a97\u0ac1\u0a9c\u0ab0\u0abe\u0aa4\u0ac0', '\u2764\ufe0f\u2764\ufe0f\u2764\ufe0f',
+  // the surrogate-pair branch must not eat visible astral text: math bold letters, the code point just past the tag block, lone high surrogates
+  '\ud835\udc00\ud835\udc01', '\udb41\udc00\udb41\udc00', '\udb40a\udb40b\udb40c', 'a\u0000b\u0001c', '\u0000abc\udb40\udc20'];
 const dirOf = (m, k) => m.KIND_DIRECTION[k] || -1;
 
 function battery(m) {
@@ -70,6 +76,9 @@ function battery(m) {
   // invisible characters never count (the stored reason is still just trimmed)
   eq('visibleLength of nothing', [m.visibleLength(''), m.visibleLength('\u200b\u200b'), m.visibleLength(5), m.visibleLength(undefined), m.visibleLength(null)], [0, 0, 0, 0, 0]);
   eq('visibleLength counts text', [m.visibleLength('abc'), m.visibleLength(' a\u200bb c '), m.visibleLength('\u0939\u093f\u0902\u0926\u0940')], [3, 3, 5]);
+  eq('visibleLength of control and tag characters', [m.visibleLength('\u0000\u0001\u007f\u0085'), m.visibleLength('\udb40\udc20\udb40\udd00'), m.visibleLength('\u0000abc\udb40\udc20'), m.visibleLength('\udb40a')], [0, 0, 3, 2]);
+  eq('3 NULs refused', mv('theft', '\u0000\u0000\u0000').error, 'movement-reason-required');
+  eq('3 tag characters refused', mv('theft', '\udb40\udc20\udb40\udc21\udb40\udc22').error, 'movement-reason-required');
   eq('3 zero-width refused', mv('theft', '\u200b\u200b\u200b').error, 'movement-reason-required');
   eq('2 letters + zero-width refused', mv('theft', 'a\u200bb\u200b').error, 'movement-reason-required');
   eq('3 letters among zero-width ok', mv('theft', 'a\u200bb\u200bc').ok, true);
@@ -199,6 +208,44 @@ test('RP-05 the REAL module (not the battery copy) takes every branch: non-strin
   assert.equal(ML.valueFor({ kind: 'loss', qty: -2, valueAtCost: 0 }, 5), 10);
 });
 
+test('RP-06 server and client classify EVERY code unit alike, and exactly the listed ones are invisible (independent oracle)', () => {
+  const H = loadHelper(HELPER);
+  // Written on purpose as plain [first, last] hex ranges, apart from the pattern in movementLogic.js, so a typo in
+  // the pattern cannot also be a typo here. Meaning: C0 controls + space, DEL + C1 + NBSP, soft hyphen, combining
+  // grapheme joiner, Arabic letter mark, Hangul fillers, Ogham space, Khmer vowels, Mongolian selectors/vowel
+  // separator, the 2000-200F spaces and zero-width marks, line/paragraph separators + bidi controls + narrow NBSP,
+  // medium math space + word joiner and invisible operators + deprecated format controls, braille blank, ideographic
+  // space, Hangul filler, variation selectors, BOM, halfwidth Hangul filler, interlinear annotation marks.
+  const HIDDEN = [[0x00, 0x20], [0x7f, 0xa0], [0xad, 0xad], [0x34f, 0x34f], [0x61c, 0x61c], [0x115f, 0x1160], [0x1680, 0x1680], [0x17b4, 0x17b5],
+    [0x180b, 0x180f], [0x2000, 0x200f], [0x2028, 0x202f], [0x205f, 0x206f], [0x2800, 0x2800], [0x3000, 0x3000], [0x3164, 0x3164],
+    [0xfe00, 0xfe0f], [0xfeff, 0xfeff], [0xffa0, 0xffa0], [0xfff9, 0xfffb]];
+  const isHidden = (cp) => HIDDEN.some((r) => cp >= r[0] && cp <= r[1]);
+  const wrong = [];
+  for (let cp = 0; cp <= 0xffff; cp++) {
+    const ch = String.fromCharCode(cp);
+    const hidden = isHidden(cp);
+    if (ML.visibleLength(ch) !== (hidden ? 0 : 1)) wrong.push('server U+' + cp.toString(16));
+    // next to "ab" the reason is long enough only when this character is visible (2 + 1 = 3)
+    if ((H.reasonProblem('theft', ch + 'ab') === '') !== !hidden) wrong.push('client U+' + cp.toString(16));
+  }
+  assert.deepEqual(wrong.slice(0, 8), [], 'code units classified differently from the oracle: ' + wrong.length);
+
+  // The tag block (U+E0000-U+E03FF, two UTF-16 units each) is invisible on both sides, one by one.
+  const astralWrong = [];
+  for (let cp = 0xe0000; cp <= 0xe03ff; cp++) {
+    const s = String.fromCodePoint(cp);
+    if (ML.visibleLength(s) !== 0) astralWrong.push('server U+' + cp.toString(16));
+    if (H.reasonProblem('theft', s + 'ab') === '') astralWrong.push('client U+' + cp.toString(16));
+  }
+  // Visible astral text must survive: the code points around the block, emoji, math letters, CJK extension B, the last code point.
+  for (const cp of [0xdffff, 0xe0400, 0xe0fff, 0x1f600, 0x1d400, 0x20000, 0x10ffff]) {
+    const s = String.fromCodePoint(cp);
+    if (ML.visibleLength(s) !== 2) astralWrong.push('server counted U+' + cp.toString(16) + ' as ' + ML.visibleLength(s));
+    if (H.reasonProblem('theft', s + 'a') !== '') astralWrong.push('client refused U+' + cp.toString(16));
+  }
+  assert.deepEqual(astralWrong.slice(0, 8), [], 'astral code points classified differently from the oracle: ' + astralWrong.length);
+});
+
 // ---- hand mutants ------------------------------------------------------------------------------------------------
 const MUTANTS = [
   ['loss not required', 'const REASON_REQUIRED = ["loss", "theft", "destroyed", "write_off", "gift"]', 'const REASON_REQUIRED = ["theft", "destroyed", "write_off", "gift"]'],
@@ -212,13 +259,26 @@ const MUTANTS = [
   ['policy dropped', 'if (REASON_REQUIRED.indexOf(m.kind) >= 0 && visibleLength(trimmed) < MIN_REASON_LENGTH) return _fail("movement-reason-required")', ''],
   ['invisible counted', 'text.replace(INVISIBLE_RE, "").length : 0', 'text.length : 0'],
   ['zero-width space counted', '\\u200B-\\u200F', '\\u200C-\\u200F'],
-  ['soft hyphen counted', '[\\s\\u00AD', '[\\s'],
+  ['soft hyphen counted', '\\u007F-\\u009F\\u00AD', '\\u007F-\\u009F'],
   ['word joiner counted', '\\u2060-\\u206F', '\\u2061-\\u206F'],
   ['hangul filler counted', '\\u2800\\u3164', '\\u2800'],
   ['braille blank counted', '\\u2800\\u3164', '\\u3164'],
   ['variation selector counted', '\\uFE00-\\uFE0F', '\\uFE00-\\uFE0E'],
-  ['whitespace not removed', '[\\s\\u00AD', '[\\u00AD'],
-  ['letters removed', '\\uFFF9-\\uFFFB]/g', '\\uFFF9-\\uFFFB\\u0061-\\u007A]/g'],
+  ['whitespace not removed', '[\\s\\u0000-\\u001F', '[\\u0000-\\u001F'],
+  ['letters removed', '\\uFFF9-\\uFFFB]|', '\\uFFF9-\\uFFFB\\u0061-\\u007A]|'],
+  // review D-1b: control characters and the tag block, one mutant per edge
+  ['C0 controls counted', '\\u0000-\\u001F\\u007F', '\\u007F'],
+  ['NUL counted', '\\u0000-\\u001F', '\\u0001-\\u001F'],
+  ['last C0 control counted', '\\u0000-\\u001F', '\\u0000-\\u001E'],
+  ['DEL counted', '\\u007F-\\u009F', '\\u0080-\\u009F'],
+  ['NEL / last C1 control counted', '\\u007F-\\u009F', '\\u007F-\\u009E'],
+  ['C1 controls counted', '\\u007F-\\u009F\\u00AD', '\\u00AD'],
+  ['tag branch dropped', ']|\\uDB40[\\uDC00-\\uDFFF]/g', ']/g'],
+  ['tag branch loses its low surrogate', '|\\uDB40[\\uDC00-\\uDFFF]', '|\\uDB40'],
+  ['tag block end counted', '[\\uDC00-\\uDFFF]/g', '[\\uDC00-\\uDFFE]/g'],
+  ['tag block start counted', '[\\uDC00-\\uDFFF]/g', '[\\uDC01-\\uDFFF]/g'],
+  ['tag block grows past U+E03FF', '|\\uDB40[', '|[\\uDB40-\\uDB41]['],
+  ['every surrogate pair removed (eats emoji)', '|\\uDB40[\\uDC00-\\uDFFF]', '|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]'],
   ['non-string counted', 'typeof text === "string" ? text.replace', 'typeof text !== "xx" ? String(text).replace'],
   ['wrong error code', '_fail("movement-reason-required")', '_fail("invalid-movement-reason")'],
   ['stored reason untrimmed', 'movements.push({ kind: m.kind, qty: m.qty, reason: trimmed,', 'movements.push({ kind: m.kind, qty: m.qty, reason: reason,'],

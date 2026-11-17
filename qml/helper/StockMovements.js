@@ -29,9 +29,10 @@ var MAX_REASON = 500
 // P1 S2e-1: kinds that cannot be recorded without a reason (mirror of movementLogic.js REASON_REQUIRED).
 var REASON_REQUIRED = ["loss", "theft", "destroyed", "write_off", "gift"]
 var MIN_REASON_LENGTH = 3
-// Mirror of movementLogic.js INVISIBLE_RE: characters that show nothing (whitespace, zero-width, soft hyphen,
-// joiners, direction marks, variation selectors, fillers). They do not count toward MIN_REASON_LENGTH.
-var _INVISIBLE_RE = /[\s\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF9-\uFFFB]/g
+// Mirror of movementLogic.js INVISIBLE_RE (read its comment: what is and is not covered): characters that show
+// nothing (whitespace, control characters, zero-width, soft hyphen, joiners, direction marks, variation selectors,
+// fillers, tag characters). They do not count toward MIN_REASON_LENGTH. BMP escapes only, no `u` flag.
+var _INVISIBLE_RE = /[\s\u0000-\u001F\u007F-\u009F\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF9-\uFFFB]|\uDB40[\uDC00-\uDFFF]/g
 var EPSILON = 1e-9
 
 function _hasKeys(obj) {

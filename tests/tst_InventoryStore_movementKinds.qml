@@ -274,6 +274,22 @@ TestCase {
         compare(InventoryStore._movementsFor("adjustment", 3, "x").length, 1)
         compare(InventoryStore._movementsFor("adjustment", -3, "x").length, 1)
     }
+    // PR #204 second sweep (KNOWN-ISSUES S2e-1 item 17). TODAY a kind that REQUIRES a reason (loss, theft, destroyed,
+    // write_off, gift) sent without a real one is dropped here like any bad label: the stock change goes through and
+    // the server writes a derived `adjustment` with no reason, so a theft would silently lose its classification.
+    // Nobody sends such a kind yet. This test pins the behaviour so that S2e-2 changes it on purpose (its picker must
+    // call StockMovements.reasonProblem first, and the store should probably REFUSE instead), never by accident.
+    function test_movementsFor_a_required_kind_without_a_real_reason_degrades_today() {
+        compare(InventoryStore._movementsFor("theft", -2, ""), undefined)
+        compare(InventoryStore._movementsFor("theft", -2, undefined), undefined)
+        compare(InventoryStore._movementsFor("loss", -2, "ab"), undefined)
+        compare(InventoryStore._movementsFor("gift", -2, "​​​"), undefined)
+        var m = InventoryStore._movementsFor("theft", -2, "  counter theft ")
+        compare(m.length, 1)
+        compare(m[0].kind, "theft")
+        compare(m[0].reason, "counter theft")
+        compare(InventoryStore._movementsFor("free_sample", -2, "").length, 1, "a free sample needs no reason")
+    }
     function test_a_credit_with_an_unknown_kind_still_queues_the_stock_change_as_a_derived_row() {
         InventoryStore.creditStockNoBatch("SKU-1", 2, "bogus", "x")
         var items = _inv("SKU-1")

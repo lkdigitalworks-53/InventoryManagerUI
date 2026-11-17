@@ -33,12 +33,19 @@ const MOVEMENT_KINDS = Object.keys(KIND_DIRECTION);
 const REASON_REQUIRED = ["loss", "theft", "destroyed", "write_off", "gift"];
 const MIN_REASON_LENGTH = 3;
 
-// Characters that show NOTHING on screen or in a report: whitespace plus zero-width, soft-hyphen, joiner,
-// direction-mark, invisible-operator, variation-selector, Hangul-filler, Mongolian, Khmer-vowel and braille-blank
-// characters. `trim()` strips only whitespace, so three U+200B would pass as a "reason" and be stored invisible
-// (PR #204 review, D-1). Written with BMP \u escapes only, so the V4 engine of the phone reads the same pattern
-// as Node (mirror: qml/helper/StockMovements.js). Letters of every script, digits and punctuation are NOT here.
-const INVISIBLE_RE = /[\s\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF9-\uFFFB]/g;
+// Characters that show NOTHING on screen or in a report: whitespace, ALL control characters (C0 incl. NUL, DEL, C1
+// incl. NEL), and zero-width, soft-hyphen, joiner, direction-mark, invisible-operator, variation-selector,
+// Hangul-filler, Mongolian, Khmer-vowel, braille-blank and Unicode TAG characters (U+E0000-U+E03FF, which also
+// holds the variation-selector supplement; two UTF-16 units each, hence the surrogate-pair branch). `trim()`
+// strips only whitespace, so three U+200B (PR #204 review D-1) or three NULs, or a run of tag characters
+// (the "hidden text" trick), would pass as a "reason" and be stored invisible (D-1b, second review sweep).
+// Written with BMP \u escapes only and NO `u` flag, so the V4 engine of the phone reads the same pattern as Node
+// (mirror: qml/helper/StockMovements.js; RP-06 pins both over every code unit). Letters of every script, digits and
+// punctuation are NOT here.
+// shortcut: a list of KNOWN invisible code points, not a "letters/digits only" rule (that needs Unicode property
+// escapes, unverified on Qt's engine). Still passing: a few astral format characters (musical, shorthand and
+// hieroglyph controls), unassigned and private-use code points, lone combining marks (KNOWN-ISSUES S2e-1 item 4).
+const INVISIBLE_RE = /[\s\u0000-\u001F\u007F-\u009F\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF9-\uFFFB]|\uDB40[\uDC00-\uDFFF]/g;
 
 // How many characters of `text` a person can actually see (UTF-16 units, like every other length here).
 function visibleLength(text) {

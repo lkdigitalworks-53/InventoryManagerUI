@@ -119,6 +119,26 @@ TestCase {
         for (var j = 0; j < shown.length; j++) compare(SM.reasonProblem("theft", shown[j]), "", "shown #" + j)
         compare(SM.reasonProblem("adjustment", "\u200b\u200b\u200b"), "")
     }
+    // PR #204 second sweep (D-1b): control characters and Unicode TAG characters (two UTF-16 units each, matched by the
+    // surrogate-pair branch of the pattern) are invisible too. This is the proof that Qt's engine reads that branch like Node.
+    function test_reason_problem_ignores_control_and_tag_characters() {
+        var words = "Add a short reason (at least 3 characters)."
+        var hidden = ["\u0001\u0002\u0003", "\u001f\u001f\u001f", "\u007f\u007f\u007f", "\u0085\u0085\u0085", "\u0080\u0081\u009f", "\u009f\u009f\u009f",
+                      "\udb40\udc20\udb40\udc21\udb40\udc22", "\udb40\udd00\udb40\udd01\udb40\udd02", "\udb40\udc00\udb40\udc00",
+                      "\udb40\udfff\udb40\udfff\udb40\udfff", " \u0001 ab \udb40\udc20 "]
+        for (var i = 0; i < hidden.length; i++) compare(SM.reasonProblem("theft", hidden[i]), words, "hidden #" + i)
+        // visible astral text and text that merely sits next to hidden characters must survive
+        var shown = ["\ud835\udc00\ud835\udc01", "\udb41\udc00\udb41\udc00", "\udb40a\udb40b\udb40c", "a\u0001b\u0002c", "\ud83d\ude00\ud83d\ude00", "\u0001abc\udb40\udc20"]
+        for (var j = 0; j < shown.length; j++) compare(SM.reasonProblem("theft", shown[j]), "", "shown #" + j)
+        compare(SM.validate("inventory", { stock: -1 }, {}, [{ kind: "theft", qty: -1, reason: "\udb40\udc20\udb40\udc21\udb40\udc22" }]), "movement-reason-required")
+    }
+    // NUL gets its own test: if Qt's string handling ever treated it specially, this one fails alone and says so.
+    function test_reason_problem_ignores_nul_characters() {
+        var words = "Add a short reason (at least 3 characters)."
+        compare(SM.reasonProblem("theft", "\u0000\u0000\u0000"), words)
+        compare(SM.reasonProblem("theft", "\u0000abc"), "")
+        compare(SM.validate("inventory", { stock: -1 }, {}, [{ kind: "theft", qty: -1, reason: "\u0000\u0000\u0000" }]), "movement-reason-required")
+    }
     function test_validate_refuses_an_invisible_reason_on_a_required_kind() {
         compare(SM.validate("inventory", { stock: -1 }, {}, [{ kind: "theft", qty: -1, reason: "\u200b\u200b\u200b" }]), "movement-reason-required")
         compare(SM.validate("inventory", { stock: -1 }, {}, [{ kind: "theft", qty: -1, reason: "a\u200bb\u200bc" }]), "")

@@ -1,6 +1,6 @@
 # P1 S2e-1: which stock events need a reason, and who stamps their cost value
 
-Status: **built** on `feat/2026-11-13-p1-s2e1-reason-policy-and-cost-snapshot` (stacked on PR #198). Parent: `2026-09-24-p1-server-side-stock-movements-design.md`, `2026-10-19-p1-s2-design.md` (Q1: wait for the CA; answered 2026-11-13), `2026-11-12-p1-s4b-register-client-design.md`.
+Status: **built** on `feat/2026-11-13-p1-s2e1-reason-policy-and-cost-snapshot` (PR #204, rebased onto `main` after PR #198 merged; no longer stacked). Parent: `2026-09-24-p1-server-side-stock-movements-design.md`, `2026-10-19-p1-s2-design.md` (Q1: wait for the CA; answered 2026-11-13), `2026-11-12-p1-s4b-register-client-design.md`.
 This slice is the SERVER contract and the client mirror only. The pickers (S2e-2) that let a person choose loss/theft/gift come next; until then nothing sends these kinds, so the change is invisible in the app.
 
 ## 1. What Taher decided (2026-11-13)
@@ -20,7 +20,7 @@ This slice is the SERVER contract and the client mirror only. The pickers (S2e-2
 
 | # | Decision | Lost alternative and why | Cost |
 |---|---|---|---|
-| E1 | **Required reason: loss, theft, destroyed, write_off, gift.** At least **3 visible characters after trim** (invisible characters such as zero-width ones do not count; review amendment D-1, 2026-11-17). | All six required: free_sample friction (above). None required: Taher asked for mandatory where sensitive. | A person recording a free sample may skip the why; an auditor may later ask. Accepted. |
+| E1 | **Required reason: loss, theft, destroyed, write_off, gift.** At least **3 visible characters after trim** (invisible characters such as zero-width ones do not count; review amendment D-1, 2026-11-17; control characters including NUL and the Unicode tag block do not count either, amendment D-1b, second sweep the same day). "Visible" is a list of known invisible code points, pinned over every code unit by test RP-06; KNOWN-ISSUES S2e-1 item 4 says what still passes. | All six required: free_sample friction (above). None required: Taher asked for mandatory where sensitive. | A person recording a free sample may skip the why; an auditor may later ask. Accepted. |
 | E2 | Optional reason: free_sample, adjustment, receipt, sale, sales_return. | adjustment required: Taher chose optional; the derived adjustment from a product edit has no reason by design. | Stock corrections from a form edit have blank reasons. |
 | E3 | The rule lives in **one server function** (`validateMovements`), so the single-delta endpoint and `recordOperation` ops both enforce it, plus a **client mirror** with a parity test over every kind x reason and 3000 random lists. | Client-only check: a bad client would write unreasoned theft rows. Server-only check: a terminal 4xx on a queued stock change loses the write (see the header of `qml/helper/StockMovements.js`), so the client must refuse BEFORE queuing. | Two files to change together; the parity test fails when they drift. |
 | E4 | The server error is `movement-reason-required`, classed as an **app problem** in `FailureCause.js` (the picker blocks the person first, so reaching the server is a bug). | A person-facing message: it would invite a UI that lets the person submit, and a queued write that then fails. | None. |
