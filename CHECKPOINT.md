@@ -36,8 +36,9 @@ Everything is pushed except nothing pending; resume at step 5. Counts to re-meas
   - F2 `f985f0b` Save of a lineless order zeroed total and items: `Edit.lineFields`, `_noLinesStored`. EOP-44, EOW-27, 2 QML cases in `tst_OrdersStore_mutations`.
   - F3 `4dff61b` New Order `+` deleted/lowered rows: `NP.stepQty`. NOP-36/37, NOW-18, EOW-24.
   - ponytail: dead `_whole` removed from EditOrderPicker.js.
-- [x] S5 docs: KNOWN-ISSUES 47 fixed up + 48/49/50, Skill 172 rules 3/5/9-11, README, AGENTS (S5b entry added), plan (decisions Q1-Q4 + sweep), test plan steps 115-119 (values checked against the helper).
-- [ ] S6 CI on the final head (read it; fix anything red). Not read at the time of this line.
+- [x] S5 docs: KNOWN-ISSUES 47 fixed up + 48/49/50, Skill 173 rules 3/5/9-11, README, AGENTS (S5b entry added), plan (decisions Q1-Q4 + sweep), test plan steps 115-119 (values checked against the helper).
+- [x] S5b-merge `main` moved to `db64115` (PR #198, P1 S4b-1) while the sweep ran: the PR became `dirty` (docs only: SKILLS, SKILLS-INDEX, KNOWN-ISSUES, CHECKPOINT) and CI did not start on the new head. Merged `origin/main` INTO the branch (no rebase, no force-push). Resolution: main's Skill 172 (stock register) kept, ours renumbered to **Skill 173** everywhere; KNOWN-ISSUES keeps both blocks (ours 47-50 in the global list, main's own `## P1 S4b-1` section after it); main's CHECKPOINT archived as `docs/superpowers/specs/2026-11-16-p1-s4b1-pr198-merged-prev-CHECKPOINT.md`, this file kept.
+- [x] S6 CI on merged head `037f626` (run 44017361860): QML 3185/3185, Functions 1909/1909, Rules 129/129, E2E 121/121, all green; PR `mergeable_state` was `unstable` (checks running) -> green. A docs-only commit after it re-runs CI: read it before merging.
 - [ ] S7 final report to Taher.
 
 ## Decisions (Taher, 2026-11-16, "as recommended")
