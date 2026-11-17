@@ -14,7 +14,7 @@
 - [x] 5. FIX D-1 (bug): invisible-only text passed as a reason. Shared `INVISIBLE_RE` + `visibleLength` (server), mirror in `StockMovements.js`; 18 invisible-only shapes refused, 7 visible shapes accepted; 10 new mutants; RP-05 real-module branch checks; 2 QML twin tests.
 - [x] 6. Evidence: functions 1898/1898, scripts 1061/1061, `movementLogic.js` 100% line/branch/function. QML not run (CI).
 - [x] 7. Docs: README, design E1, test plan (+ curl step), KNOWN-ISSUES 4 reworded, 13 refreshed, 15 and 16 added, Skill 173 rule 13 recounted + rule 14, this checkpoint.
-- [ ] 8. Commit + push, read CI on the new head, fix if red.
+- [x] 8. Committed + pushed `62318d3`; CI green on it (QML, Functions, Rules, E2E, PR comment); PR #204 `mergeable_state: clean`, base `main`.
 
 ## OPEN for Taher
 - D-2: should a delete of a product that still has stock ask for a reason/kind (KNOWN-ISSUES 16)? Belongs to S2e-2.
