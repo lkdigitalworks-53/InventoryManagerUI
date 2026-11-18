@@ -5145,7 +5145,7 @@ Rules:
 
 **The check:** for a "must record X" rule, name the one function that enforces it, the client mirror and the matrix that pins them, the code the failing request returns and how the client classifies it, which number the server stamps and what a forged one does, what a missing input records, and what the fixtures cost to fix.
 
-## Skill 172: Wire a store function to a server operation by running its REAL body in Node, and make every outcome (live, slow, replayed, unreadable, rejected) apply exactly once
+## Skill 174: Wire a store function to a server operation by running its REAL body in Node, and make every outcome (live, slow, replayed, unreadable, rejected) apply exactly once
 
 **Why:** AP3a replaced seven independent writes with one awaited operation. The risk is not the happy path: it is the same answer arriving twice (the waiting caller AND the late `operationApplied` signal), an answer that cannot be read after the server committed, a replay, and a person who taps again. The QML engine is not available in the sandbox, but the store functions are plain JavaScript inside QML text.
 
@@ -5165,7 +5165,7 @@ Rules:
 
 **Lesson from the PR #203 sweep (E2E red, 29 tests).** A test helper that flips a connectivity flag can run real app code. `AuthService.isOnline = true` runs `init()` when `AuthStore.isAuthenticated` is false, and `init()` -> `loadSession()` -> `clear()` wipes any fixture set by direct assignment, so the next send returns silently and the awaiting callback never fires ("callback never fired" with no error anywhere). Rule: before a helper flips such a flag, read what the flag's change handler does; save the fixture, flip, restore at once, and pin the helper's source order in a Node guard (`addProductE2eHelpers.guard.test.js`) so the QML suites cannot lose it silently. A weak assertion (`verify(!p || p.name === ...)`) passes whatever happens: write the strict form (`compare(getById(id), null)`).
 
-## Skill 173: Raise the PR and read CI from a Claude chat session: attach the repo with `add_repo` (push), then use REST only
+## Skill 175: Raise the PR and read CI from a Claude chat session: attach the repo with `add_repo` (push), then use REST only
 
 **Why:** AP3a pushed fine with the PAT in a per-command `http.extraHeader`, but `gh pr list`, `gh run list` and `curl https://api.github.com/...` all answered 403 "GitHub access to this repository is not enabled for this session". The git push path and the GitHub API path are gated separately: the API is open only for repos attached to the session.
 
@@ -5177,7 +5177,7 @@ Rules:
 5. PR body: what changed, what is NOT in it, evidence split into RUN and NOT RUN, the commit-message email line, then the session attribution lines.
 6. A privacy hook may refuse a single shell command that holds the account email AND the PAT together. Run the commit (email line, no PAT) and the push (PAT, no email) as two separate commands.
 
-7. Before every push that edits `SKILLS.md`, `AGENTS.md`, `README.md` or anything under `.github/`, run `node .github/scripts/skills-index.js --write` (never hand-edit `SKILLS-INDEX.md`: an index line must equal its heading byte for byte, backticks included) and then `node --test .github/scripts/__tests__/*.test.js` (about 45 s, no Qt, no network). The `PR Test Summary Comment` job runs that suite first and posts nothing when it fails. On PR 203 one hand-typed index line (Skill 173, backticks dropped) made that job red while all four test jobs were green, and the CI summary comment was lost.
+7. Before every push that edits `SKILLS.md`, `AGENTS.md`, `README.md` or anything under `.github/`, run `node .github/scripts/skills-index.js --write` (never hand-edit `SKILLS-INDEX.md`: an index line must equal its heading byte for byte, backticks included) and then `node --test .github/scripts/__tests__/*.test.js` (about 45 s, no Qt, no network). The `PR Test Summary Comment` job runs that suite first and posts nothing when it fails. On PR 203 one hand-typed index line (Skill 175, backticks dropped) made that job red while all four test jobs were green, and the CI summary comment was lost.
 
 **The check:** does `gh api .../pulls` return a number and URL, does the check-runs call return rows for the head SHA, and is the `PR Test Summary Comment` row green too (not only the four test jobs)?
 
