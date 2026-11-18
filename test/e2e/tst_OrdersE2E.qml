@@ -162,12 +162,27 @@ TestCase {
     function _createProduct(name, sku, stock) {
         var createdId = ""
         var done = false
-        InventoryStore.addProduct(
-            name, sku, "General", "", 100, "pc", stock, 2,
-            120, false, 0, fixture.supplierName, 80, "",
-            function(ok, id) { done = true; createdId = ok ? id : "" }
-        )
-        tryVerify(function() { return done }, 5000, "addProduct callback never fired")
+        // AP3a (design D-AP-7): adding a product needs a connection and is ONE awaited operation (recordOperation). This helper is
+        // setup for other features, so it makes the app "online" only for the add and restores it. CI is the oracle for this seam.
+        var wasOnline = AuthService.isOnline
+        var savedAuth = { idToken: AuthStore.idToken, uid: AuthStore.uid, tenantId: AuthStore.tenantId }
+        AuthService.isOnline = true
+        // Going online runs AuthService.init() while AuthStore.isAuthenticated is false (these files set the fields directly), and
+        // init() -> AuthStore.loadSession() -> clear() wipes the fixture token and tenant; Gateway._sendOperation then returns
+        // silently and the callback never fires. The wipe is synchronous inside the assignment, so put the fixture back at once.
+        AuthStore.idToken = savedAuth.idToken
+        AuthStore.uid = savedAuth.uid
+        AuthStore.tenantId = savedAuth.tenantId
+        try {
+            InventoryStore.addProduct(
+                name, sku, "General", "", 100, "pc", stock, 2,
+                120, false, 0, fixture.supplierName, 80, "",
+                function(ok, id) { done = true; createdId = ok ? id : "" }
+            )
+            tryVerify(function() { return done }, 5000, "addProduct callback never fired")
+        } finally {
+            AuthService.isOnline = wasOnline
+        }
         verify(createdId.length > 0, "addProduct did not return a productId")
         return createdId
     }

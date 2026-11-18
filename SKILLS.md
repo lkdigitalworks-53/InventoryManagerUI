@@ -5144,3 +5144,40 @@ Rules:
 16. A validator that REJECTS must be checked against every caller that DEGRADES. `InventoryStore._movementsFor` drops any movement the validator refuses so the stock change survives; a new rejection reason (here `movement-reason-required`) silently turns into "recorded as an unreasoned adjustment". Grep the callers of the validator, not just of the function you changed, pin today's behaviour with a test, and put the decision in KNOWN-ISSUES for the slice that wires the caller.
 
 **The check:** for a "must record X" rule, name the one function that enforces it, the client mirror and the matrix that pins them, the code the failing request returns and how the client classifies it, which number the server stamps and what a forged one does, what a missing input records, and what the fixtures cost to fix.
+
+## Skill 174: Wire a store function to a server operation by running its REAL body in Node, and make every outcome (live, slow, replayed, unreadable, rejected) apply exactly once
+
+**Why:** AP3a replaced seven independent writes with one awaited operation. The risk is not the happy path: it is the same answer arriving twice (the waiting caller AND the late `operationApplied` signal), an answer that cannot be read after the server committed, a replay, and a person who taps again. The QML engine is not available in the sandbox, but the store functions are plain JavaScript inside QML text.
+
+**Rules:**
+1. Extract the real function bodies from the `.qml` (`extractFunction`) and run them in a `vm` with fake stores around them, and let the REAL server code (`validateOperationRequest` + `applyOperation`) answer the operation the function queued. Mirror Gateway's one rule in the fake: the waiter fires first, the signal after, always. Then "applies once" is a test, not a hope.
+2. One settled flag per key: the waiter sets it when it applies, the signal consumes it. A queued answer sets nothing, so the later signal applies. Assert the map is EMPTY at the end of a 300-tap monkey: a leftover flag means a signal never followed.
+3. Order inside the function is part of the contract: pure refusals (so a typo shows its own text even offline), then the clash check, then the connection check, then remembering the typed name, then the send. Pin the order by index in the source, and pin that the old path's calls are gone from the body.
+4. A replayed answer reflects only what is idempotent by id (batch, supplier, history) and RE-READS what may have changed since (the product list). Never write a product from a replay.
+5. The server committed but the answer cannot be read: apply nothing, re-read every list the operation touches, tell the person to check the list, and give no retry that would make a second record (a new tap is a new key).
+6. A refusal callback must answer once and at once; a missing callback must never throw on any path (test all three: online, offline, bad value).
+7. A seeded LCG with a power-of-two modulus has short low-bit cycles: `seed % 6` visits only a few values and the monkey silently tests one path. Use the HIGH bits (`(seed >>> 8) % n`) and assert the monkey reached the gateway more than N times.
+8. A key regex must match the generator's alphabet (the nonce is base 36, not hex): assert the key shape the way the real validator does, or call the validator.
+9. When a legacy helper loses its last caller but a test still pins its format, keep it with a comment that names the pin, and put the cleanup in KNOWN-ISSUES.
+10. Existing e2e suites that called the old path offline need a scoped, try/finally online flip and the emulator operation URL; record that as CI-only and unproven.
+
+**The check:** run the wire test with the waiter AND the signal for every answer shape; does any shape change the product list twice, or leave a settled flag behind?
+
+**Lesson from the PR #203 sweep (E2E red, 29 tests).** A test helper that flips a connectivity flag can run real app code. `AuthService.isOnline = true` runs `init()` when `AuthStore.isAuthenticated` is false, and `init()` -> `loadSession()` -> `clear()` wipes any fixture set by direct assignment, so the next send returns silently and the awaiting callback never fires ("callback never fired" with no error anywhere). Rule: before a helper flips such a flag, read what the flag's change handler does; save the fixture, flip, restore at once, and pin the helper's source order in a Node guard (`addProductE2eHelpers.guard.test.js`) so the QML suites cannot lose it silently. A weak assertion (`verify(!p || p.name === ...)`) passes whatever happens: write the strict form (`compare(getById(id), null)`).
+
+## Skill 175: Raise the PR and read CI from a Claude chat session: attach the repo with `add_repo` (push), then use REST only
+
+**Why:** AP3a pushed fine with the PAT in a per-command `http.extraHeader`, but `gh pr list`, `gh run list` and `curl https://api.github.com/...` all answered 403 "GitHub access to this repository is not enabled for this session". The git push path and the GitHub API path are gated separately: the API is open only for repos attached to the session.
+
+**Rules:**
+1. Push as always (`git -c http.extraHeader="Authorization: Basic $(printf 'x-access-token:<PAT>' | base64 -w0)" push origin <branch>`). Never write the PAT into `.git/config`, a file or memory.
+2. To open a PR or read CI, call the `mcp__claude-code-remote__add_repo` tool with `owner`, `repo` and `access: "push"`. The auto-mode classifier may DENY it when the user never said it is allowed ("Unauthorized Access"); do not work around that. Report it, and ask. Once the user says PRs are allowed, call it again and it succeeds. It tells you to clone: skip that when a working clone with the branch already exists (the attach only widens API scope).
+3. GraphQL is blocked (`gh pr list`, `gh pr create` fail). Use REST: `GH_TOKEN=<PAT> gh api repos/<owner>/<repo>/pulls -f title=... -f head=<branch> -f base=main -F body=@body.md --jq '.number,.html_url'`. Set `GH_TOKEN` per command, not in the shell profile.
+4. Read CI with `gh api repos/<owner>/<repo>/commits/<sha>/check-runs --jq '.check_runs[] | [.name,.status,.conclusion] | @tsv'`. Functions and Rules finish in about a minute; QML and E2E take longer. Read it again before reporting; never report CI from memory.
+5. PR body: what changed, what is NOT in it, evidence split into RUN and NOT RUN, the commit-message email line, then the session attribution lines.
+6. A privacy hook may refuse a single shell command that holds the account email AND the PAT together. Run the commit (email line, no PAT) and the push (PAT, no email) as two separate commands.
+
+7. Before every push that edits `SKILLS.md`, `AGENTS.md`, `README.md` or anything under `.github/`, run `node .github/scripts/skills-index.js --write` (never hand-edit `SKILLS-INDEX.md`: an index line must equal its heading byte for byte, backticks included) and then `node --test .github/scripts/__tests__/*.test.js` (about 45 s, no Qt, no network). The `PR Test Summary Comment` job runs that suite first and posts nothing when it fails. On PR 203 one hand-typed index line (Skill 175, backticks dropped) made that job red while all four test jobs were green, and the CI summary comment was lost.
+
+**The check:** does `gh api .../pulls` return a number and URL, does the check-runs call return rows for the head SHA, and is the `PR Test Summary Comment` row green too (not only the four test jobs)?
+

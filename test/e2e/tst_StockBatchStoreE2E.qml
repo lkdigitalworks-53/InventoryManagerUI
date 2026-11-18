@@ -48,6 +48,7 @@ TestCase {
     readonly property string emulatorFirestoreHost: "http://127.0.0.1:8080"
     readonly property string emulatorFunctionsBase: "http://127.0.0.1:5001/inventorymanager-48392/asia-south1"
     readonly property string realFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
+    readonly property string realOperationFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordOperation"
     readonly property string fixtureUrl: Qt.resolvedUrl("../../test/e2e/.fixture.json")
 
     property var fixture: null
@@ -85,6 +86,8 @@ TestCase {
         fixture = _loadFixture()
         FirebaseService.emulatorHost = emulatorFirestoreHost
         Gateway.functionUrl = emulatorFunctionsBase + "/recordMutation"
+        // AP3a: add product is one recordOperation now; without this it hit the REAL cloud URL.
+        Gateway.operationFunctionUrl = emulatorFunctionsBase + "/recordOperation"
         AuthStore.idToken = fixture.idToken
         AuthStore.tenantId = fixture.tenantId
         // NOT []. As of 2026-08-27, StockBatchStore.nextBatchId() now
@@ -121,6 +124,7 @@ TestCase {
         Gateway.mutationConflicted.disconnect(_onMutationConflicted)
         FirebaseService.emulatorHost = ""
         Gateway.functionUrl = realFunctionUrl
+        Gateway.operationFunctionUrl = realOperationFunctionUrl
         AuthStore.idToken = ""
         AuthStore.tenantId = ""
     }
@@ -256,10 +260,25 @@ TestCase {
 
     function _createProductWithStock(name, sku) {
         var createdId = "", done = false
-        InventoryStore.addProduct(name, sku, "General", "", 100, "pc", 10, 2,
-                                  120, false, 0, fixture.supplierName, 80, "",
-                                  function(ok, id) { done = true; createdId = ok ? id : "" })
-        tryVerify(function() { return done }, 5000, "addProduct callback never fired")
+        // AP3a (design D-AP-7): adding a product needs a connection and is ONE awaited operation (recordOperation). This helper is
+        // setup for other features, so it makes the app "online" only for the add and restores it. CI is the oracle for this seam.
+        var wasOnline = AuthService.isOnline
+        var savedAuth = { idToken: AuthStore.idToken, uid: AuthStore.uid, tenantId: AuthStore.tenantId }
+        AuthService.isOnline = true
+        // Going online runs AuthService.init() while AuthStore.isAuthenticated is false (these files set the fields directly), and
+        // init() -> AuthStore.loadSession() -> clear() wipes the fixture token and tenant; Gateway._sendOperation then returns
+        // silently and the callback never fires. The wipe is synchronous inside the assignment, so put the fixture back at once.
+        AuthStore.idToken = savedAuth.idToken
+        AuthStore.uid = savedAuth.uid
+        AuthStore.tenantId = savedAuth.tenantId
+        try {
+            InventoryStore.addProduct(name, sku, "General", "", 100, "pc", 10, 2,
+                                      120, false, 0, fixture.supplierName, 80, "",
+                                      function(ok, id) { done = true; createdId = ok ? id : "" })
+            tryVerify(function() { return done }, 5000, "addProduct callback never fired")
+        } finally {
+            AuthService.isOnline = wasOnline
+        }
         verify(createdId.length > 0, "addProduct did not return a productId")
         E2EHelpers.pollEmulatorDoc(this, emulatorFirestoreHost, "tenants/" + fixture.tenantId + "/inventory/" + createdId,
                                    createdId, function(d) { return d !== null }, 5000, "product doc never appeared", true)

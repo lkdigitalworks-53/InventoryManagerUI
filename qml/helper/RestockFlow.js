@@ -249,12 +249,14 @@ function refusalText(reason) {
 // with the same new name, tapped meanwhile, would create a second supplier. True when a still-queued (or parked)
 // restock in `items` (OutboxStore.items) creates a supplier whose name matches `newName` (the same match key the
 // known-supplier lookup uses). Reads only what is stored, so it holds after a relaunch too. Anything unreadable is false.
+// AP3a: a still-queued ADD PRODUCT creates suppliers the same way (the same server mint, the same missing name check), so
+// it counts too: a restock and an add, or two adds, must not create one supplier twice.
 function queuedNewSupplierClash(newName, items) {
     var key = _matchKey(newName)
     if (key.length === 0 || !Array.isArray(items)) return false
     for (var i = 0; i < items.length; ++i) {
         var it = items[i]
-        if (!it || it.opType !== "restock" || !Array.isArray(it.ops)) continue
+        if (!it || (it.opType !== "restock" && it.opType !== "addProduct") || !Array.isArray(it.ops)) continue
         for (var j = 0; j < it.ops.length; ++j) {
             var o = it.ops[j]
             if (o && o.kind === "mutation" && o.entity === "supplier" && o.action === "create"

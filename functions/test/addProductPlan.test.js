@@ -557,15 +557,15 @@ test("D-1 DescribeItem labels an add by the typed product name, never by a mint"
 
 // ---------------------------------------------------------------------------- dormancy guard
 
-test("G-1 dormant: nothing but the helper, its tests and the docs refers to the add-product plan or its keys", () => {
+test("G-1 wiring (AP3a replaced the dormancy guard): only InventoryStore, the flow helper and the helpers themselves refer to the add-product plan or its keys; no page, dialog or other store does", () => {
     const hits = [];
     (function walk(dir) {
         for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
             const p = path.join(dir, f.name);
             if (f.isDirectory()) walk(p);
-            else if (/\.(qml|js)$/.test(f.name) && !/AddProductPlan\.js$|OperationKeys\.js$|FailureCause\.js$/.test(f.name)
+            else if (/\.(qml|js)$/.test(f.name) && !/AddProductPlan\.js$|AddProductFlow\.js$|OperationKeys\.js$|FailureCause\.js$/.test(f.name)
                      && /AddProductPlan|addProductKey|addProductNonce|forAddProduct/.test(fs.readFileSync(p, "utf8"))) hits.push(path.relative(QML_ROOT, p));
         }
     })(QML_ROOT);
-    assert.deepEqual(hits, [], "AP3 wires it; until then nothing calls it");
+    assert.deepEqual(hits, ["model/InventoryStore.qml"], "the planner is reached through InventoryStore.addProduct only");
 });

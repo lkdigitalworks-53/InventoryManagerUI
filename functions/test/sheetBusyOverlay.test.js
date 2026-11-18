@@ -121,7 +121,7 @@ test("SB-4 AddProduct: validation returns before busy; the store callback drops 
     assert.ok(busyAt > 0 && callAt > busyAt, "busy precedes the store call");
     const before = body.substring(0, busyAt);
     assert.match(before, /errs\.length > 0\) \{ errorLabel\.text = errs\.join\(" · "\); return \}/, "validation refuses before busy");
-    const cb = body.substring(body.indexOf("function(ok, newId, refusal) {", callAt));
+    const cb = body.substring(body.indexOf("function(ok, newId, refusal, status) {", callAt));
     const firstStatement = cb.substring(cb.indexOf("{") + 1).trim().split("\n")[0].trim();
     assert.equal(firstStatement, "busy = false", "callback's first statement drops busy, so the overlay never hides the refusal");
     assert.ok(cb.indexOf("busy = false") < cb.indexOf("errorLabel.text"), "busy dropped before the error text");

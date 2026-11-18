@@ -518,7 +518,7 @@ BottomSheet {
         InventoryStore.addProduct(nameField.text, skuField.text,
             categoryCombo.currentText, descField.text, p, unitCombo.currentText, s, ms, sp,
             taxable, taxable ? taxPercent : 0, supplierId, p /* unitCost = cost */,
-            sizeField.text.trim(), function(ok, newId, refusal) {
+            sizeField.text.trim(), function(ok, newId, refusal, status) {
                 busy = false
                 if (!ok) {
                     errorLabel.text = refusal ? refusal : "Could not add product — try again"
@@ -526,19 +526,26 @@ BottomSheet {
                 }
                 CategoryStore.setLastUsed(categoryCombo.currentText)
 
-                if (pendingPhotoSource && pendingPhotoSource.length > 0 && newId) {
-                    // addProductPhoto queues the upload and returns immediately (design spec) --
-                    // no callback needed. PhotoQueue.photoUploaded (wired in EditProductDialog's
-                    // gallery, Main.qml) reports the outcome once the product's own create
-                    // mutation has landed (PhotoQueue's Trap 1 gate, via OutboxStore) and the
-                    // upload itself completes -- both are already async elsewhere, this is not a
-                    // new wait introduced here.
-                    var addResult = StorageService.addProductPhoto(newId, pendingPhotoSource)
-                    if (!addResult.ok)
-                        console.warn("[AddProductDialog] addProductPhoto failed for", newId, addResult.error)
+                // AP3a: the photo is attached from the LIVE answer only (design D-AP-8). A queued answer (slow link) has no id
+                // yet, so the photo is not attached and the toast says where to add it; an unconfirmed answer (the server
+                // may have saved it) has none either, and the person is told to check the list before adding again.
+                var photoSkipped = false
+                if (pendingPhotoSource && pendingPhotoSource.length > 0) {
+                    if (status === "applied" && newId) {
+                        // addProductPhoto queues the upload and returns immediately (design spec) --
+                        // no callback needed. PhotoQueue.photoUploaded (wired in EditProductDialog's
+                        // gallery, Main.qml) reports the outcome once the upload itself completes.
+                        var addResult = StorageService.addProductPhoto(newId, pendingPhotoSource)
+                        if (!addResult.ok) {
+                            console.warn("[AddProductDialog] addProductPhoto failed for", newId, addResult.error)
+                            photoSkipped = true
+                        }
+                    } else {
+                        photoSkipped = true
+                    }
                 }
 
-                Toast.show("Product added")
+                Toast.show(InventoryStore.addDoneMessage(status, photoSkipped))
                 productCreated()
                 dlg.close()
             })

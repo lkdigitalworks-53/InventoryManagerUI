@@ -458,7 +458,7 @@ test("K-3 DOCUMENTED GAP (KNOWN-ISSUES 41): typed text is not escaped: a bound {
 
 // ------------------------------------------------------------------ guards
 
-test("G-1 dormancy: no store, model or page sends the addProduct operation yet (AP3 removes this guard when it wires the client). AP2 narrowed it: the pure helpers in qml/helper (planner, label) name the op type by design; addProductPlan.test.js G-1 guards that nothing calls them", () => {
+test("G-1 wiring (AP3a replaced the dormancy guard): the addProduct operation is SENT from InventoryStore.addProduct only, with a key made by the flow helper, awaiting the server", () => {
     const root = path.join(__dirname, "..", "..", "qml");
     const hits = [];
     (function walk(dir) {
@@ -469,7 +469,12 @@ test("G-1 dormancy: no store, model or page sends the addProduct operation yet (
                      && /["']addProduct["']/.test(fs.readFileSync(p, "utf8"))) hits.push(path.relative(root, p));
         }
     })(root);
-    assert.deepEqual(hits, []);
+    // InventoryStore sends it, DataModel routes its answers; nothing else may name the op type.
+    assert.deepEqual(hits.sort(), ["model/DataModel.qml", "model/InventoryStore.qml"]);
+    const store = fs.readFileSync(path.join(root, "model", "InventoryStore.qml"), "utf8");
+    assert.equal((store.match(/Gateway\.recordOperation\("addProduct"/g) || []).length, 1, "exactly one sender");
+    assert.match(store, /Gateway\.recordOperation\("addProduct", plan\.ops, plan\.key, \{ awaitServer: true \}/);
+    assert.match(store, /AddProductFlow\.newKey\(Date\.now\(\), Math\.random\)/);
 });
 
 test("G-2 source pins: the product counter and the kind table are where the design says", () => {

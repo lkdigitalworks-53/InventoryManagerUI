@@ -181,3 +181,5 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 171: Plan against the real server in Node, make every id the plan invents carry the operation, and neutralise or validate EVERY string that reaches a substitution grammar
 - 172: Put a client's every decision about a statutory report in one pure file: fixed-zone periods, an echoed-window check, and a service that answers exactly once
 - 173: Put a business rule about WHAT must be recorded on the server, mirror it in the client with a parity matrix, and let the server own every number that feeds a tax figure
+- 174: Wire a store function to a server operation by running its REAL body in Node, and make every outcome (live, slow, replayed, unreadable, rejected) apply exactly once
+- 175: Raise the PR and read CI from a Claude chat session: attach the repo with `add_repo` (push), then use REST only
