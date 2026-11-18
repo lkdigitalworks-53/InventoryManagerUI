@@ -38,7 +38,7 @@ Everything is pushed except nothing pending; resume at step 5. Counts to re-meas
   - ponytail: dead `_whole` removed from EditOrderPicker.js.
 - [x] S5 docs: KNOWN-ISSUES 57 fixed up + 48/49/50, Skill 176 rules 3/5/9-11, README, AGENTS (S5b entry added), plan (decisions Q1-Q4 + sweep), test plan steps 115-119 (values checked against the helper).
 - [x] S5b-rebase `main` moved twice while the sweep ran (#198, then #203 and #204 -> `591077e`). The branch was first merged with main, then, on Taher's request, REBASED onto `origin/main` (merge commit dropped, 11 commits replayed, force-with-lease push; the old tip is only in the local ref `backup/pre-rebase-sweep1`). Conflicts were docs only: CHECKPOINT.md kept as ours; SKILLS, SKILLS-INDEX, KNOWN-ISSUES union-merged, then renumbered in one commit: Skill 172 -> **176**, KNOWN-ISSUES 47-50 -> **57-60**, one code-comment pointer fixed (the lineless-subtotal item is 59, two comments said 48). Main's own CHECKPOINT of #198 is already archived on main. Node suites on the rebased tree: see the S6 line.
-- [ ] S6 CI on the REBASED head: read it (the green run 44017361860 was on the pre-rebase merged head `037f626`: QML 3185, Functions 1909, Rules 129, E2E 121). Fix anything red before merging.
+- [x] S6 CI on the REBASED head `29f22cb` (run 44222901686): QML 3232/3232, Functions 1990/1990, Rules 129/129, E2E 121/121 = 5472/5472, PR `mergeable_state: clean`. This checkpoint line was added in a docs-only commit after it, which re-runs CI: glance at it before merging.
 - [ ] S7 final report to Taher.
 
 ## Decisions (Taher, 2026-11-16, "as recommended")
