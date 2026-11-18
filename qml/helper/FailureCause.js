@@ -34,7 +34,7 @@ var _BUG_CODES = {
     // code that is neither a person-facing cause below nor listed here.
     "unsupported-entity": true, "unsupported-action": true, "missing-deltas": true, "invalid-delta-value": true,
     "invalid-movements": true, "too-many-movements": true, "invalid-movement-kind": true,
-    "invalid-movement-qty": true, "invalid-movement-value": true, "invalid-movement-reason": true,
+    "invalid-movement-qty": true, "invalid-movement-value": true, "invalid-movement-reason": true, "movement-reason-required": true,
     "movements-not-supported": true, "movements-require-inventory": true, "movements-require-stock-delta": true
 }
 function _isBugCode(code) { return Object.prototype.hasOwnProperty.call(_BUG_CODES, code) }

@@ -326,7 +326,7 @@ test("SR-27 rows built by the real movementLogic (derive + buildRows) flow into 
     put(Movement.deriveMovement(-12, "sale"), "b");                                      // completeOrder -> sale
     put(Movement.deriveMovement(3, "sale"), "c");                                        // sale on an increase -> adjustment
     put(Movement.deriveForMutation("update", { stock: 31 }, { stock: 30 }), "d");        // edit -> adjustment -1
-    put(Movement.validateMovements([{ kind: "sales_return", qty: 2 }, { kind: "loss", qty: -1, reason: "x" }]).movements, "e");
+    put(Movement.validateMovements([{ kind: "sales_return", qty: 2 }, { kind: "loss", qty: -1, reason: "lost" }]).movements, "e");
     put(Movement.deriveForMutation("delete", { stock: 31 }, null), "f");                 // delete -> adjustment to 0
     const reg = Reg.buildRegister(rows, [], WIN);
     const p = find(reg, "p1");

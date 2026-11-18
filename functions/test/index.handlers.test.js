@@ -1047,12 +1047,24 @@ test("recordDelta: invalid movement -> 400 with the specific error, applyDelta n
     assert.equal(mockState.lastApplyDeltaParams, null);
 });
 
+test("recordDelta: a theft without a reason -> 400 movement-reason-required, applyDelta never called", async () => {
+    seedHappyPathAuth(mockState);
+    mockState.lastApplyDeltaParams = null;
+    const res = mockRes();
+    await handlers.recordDelta(mockReq({ body: validDeltaBody({
+        entity: "inventory", entityId: "p1", deltas: { stock: -3 }, movements: [{ kind: "theft", qty: -3, reason: " " }]
+    }) }), res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(jsonBody(res).error, "movement-reason-required");
+    assert.equal(mockState.lastApplyDeltaParams, null);
+});
+
 test("recordDelta: movement-qty-mismatch from applyDelta is forwarded as 409 with field/current", async () => {
     seedHappyPathAuth(mockState);
     mockState.applyDeltaResult = { ok: false, status: 409, error: "movement-qty-mismatch", field: "stock", current: 0 };
     const res = mockRes();
     await handlers.recordDelta(mockReq({ body: validDeltaBody({
-        entity: "inventory", entityId: "p1", deltas: { stock: -3 }, movements: [{ kind: "loss", qty: -3 }]
+        entity: "inventory", entityId: "p1", deltas: { stock: -3 }, movements: [{ kind: "loss", qty: -3, reason: "spoiled" }]
     }) }), res);
     assert.equal(res.statusCode, 409);
     assert.equal(jsonBody(res).error, "movement-qty-mismatch");

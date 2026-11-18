@@ -93,7 +93,7 @@ test('SM-4 validate: one error code per fault, same codes as the server', () => 
 test('SM-5 validate: accepts every kind with its own direction, a split that sums, float noise, a null reason', () => {
   for (const kind of Object.keys(ML.KIND_DIRECTION)) {
     const dir = ML.KIND_DIRECTION[kind] || 1;
-    assert.equal(H.validate('inventory', { stock: 3 * dir }, {}, [{ kind, qty: 3 * dir }]), '', kind);
+    assert.equal(H.validate('inventory', { stock: 3 * dir }, {}, [{ kind, qty: 3 * dir, reason: 'water damage' }]), '', kind);
   }
   assert.equal(H.validate('inventory', { stock: 7 }, {}, [{ kind: 'receipt', qty: 10 }, { kind: 'sale', qty: -3 }]), '');
   assert.equal(H.validate('inventory', { stock: 0.3 }, {}, [{ kind: 'receipt', qty: 0.1 }, { kind: 'receipt', qty: 0.2 }]), '');

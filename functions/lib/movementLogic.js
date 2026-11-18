@@ -24,6 +24,38 @@ const KIND_DIRECTION = {
 };
 const MOVEMENT_KINDS = Object.keys(KIND_DIRECTION);
 
+// P1 S2e-1 reason policy (design docs/superpowers/specs/2026-11-13-p1-s2e1-reason-policy-and-cost-design.md).
+// A kind in REASON_REQUIRED cannot be recorded without a reason of at least MIN_REASON_LENGTH VISIBLE characters
+// (after trim, invisible characters not counted): these are the events an auditor, an insurer or a tax officer asks "what happened" about, and
+// all of them are ITC-blocked under CGST 17(5)(h). free_sample is optional on purpose (high volume, and the ITC
+// block on it is under review), adjustment and the supply kinds are optional. Mirrored client side in
+// qml/helper/StockMovements.js; functions/test/stockMovementsParity.test.js fails when they drift.
+const REASON_REQUIRED = ["loss", "theft", "destroyed", "write_off", "gift"];
+const MIN_REASON_LENGTH = 3;
+
+// Characters that show NOTHING on screen or in a report: whitespace, ALL control characters (C0 incl. NUL, DEL, C1
+// incl. NEL), and zero-width, soft-hyphen, joiner, direction-mark, invisible-operator, variation-selector,
+// Hangul-filler, Mongolian, Khmer-vowel, braille-blank and Unicode TAG characters (U+E0000-U+E03FF, which also
+// holds the variation-selector supplement; two UTF-16 units each, hence the surrogate-pair branch). `trim()`
+// strips only whitespace, so three U+200B (PR #204 review D-1) or three NULs, or a run of tag characters
+// (the "hidden text" trick), would pass as a "reason" and be stored invisible (D-1b, second review sweep).
+// Written with BMP \u escapes only and NO `u` flag, so the V4 engine of the phone reads the same pattern as Node
+// (mirror: qml/helper/StockMovements.js; RP-06 pins both over every code unit). Letters of every script, digits and
+// punctuation are NOT here.
+// shortcut: a list of KNOWN invisible code points, not a "letters/digits only" rule (that needs Unicode property
+// escapes, unverified on Qt's engine). Still passing: a few astral format characters (musical, shorthand and
+// hieroglyph controls), unassigned and private-use code points, lone combining marks (KNOWN-ISSUES S2e-1 item 4).
+const INVISIBLE_RE = /[\s\u0000-\u001F\u007F-\u009F\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF9-\uFFFB]|\uDB40[\uDC00-\uDFFF]/g;
+
+// How many characters of `text` a person can actually see (UTF-16 units, like every other length here).
+function visibleLength(text) {
+    return typeof text === "string" ? text.replace(INVISIBLE_RE, "").length : 0;
+}
+
+// Kinds whose cost value the SERVER stamps (the six non-supply outward events of CGST 56(2)): qty x the
+// product's cost (`price`, as stored when the row is written), never a client-sent number.
+const VALUE_KINDS = ["loss", "theft", "destroyed", "write_off", "free_sample", "gift"];
+
 // Default kind for a stock change the client did not describe, by operation.
 // Anything else defaults to "adjustment".
 const DEFAULT_KIND_BY_OPTYPE = { completeOrder: "sale" };
@@ -64,7 +96,10 @@ function validateMovements(raw) {
         const reason = (m.reason === undefined || m.reason === null) ? "" : m.reason;
         if (typeof reason !== "string" || reason.length > MAX_REASON) return _fail("invalid-movement-reason");
 
-        movements.push({ kind: m.kind, qty: m.qty, reason: reason.trim(), valueAtCost: value, derived: false });
+        const trimmed = reason.trim();
+        if (REASON_REQUIRED.indexOf(m.kind) >= 0 && visibleLength(trimmed) < MIN_REASON_LENGTH) return _fail("movement-reason-required");
+
+        movements.push({ kind: m.kind, qty: m.qty, reason: trimmed, valueAtCost: value, derived: false });
     }
     return { ok: true, movements: movements };
 }
@@ -131,6 +166,24 @@ function nameFor(before, after) {
 // serverTimestamp, clientTimestamp, requestId, productName?, operationId?, opType?, opIndex? }.
 // `baseId` is the audit_log id of the write that carries the movements, so a
 // retried request (which replays from that audit entry) never writes a row twice.
+// The product's cost per unit as stored (`price` is COST in this app, `sellingPrice` is what customers pay).
+// 0 when the product has no usable cost: a loss must still be recorded, so a missing cost is never an error.
+function unitCostOf(doc) {
+    const c = doc && typeof doc === "object" ? doc.price : undefined;
+    return (typeof c === "number" && isFinite(c) && c > 0) ? c : 0;
+}
+
+// valueAtCost of one movement: stamped for VALUE_KINDS (client value ignored), untouched otherwise.
+// Rounded to paise. `unitCost` undefined means the caller has no product doc: leave the value as it is.
+function valueFor(m, unitCost) {
+    if (unitCost === undefined || VALUE_KINDS.indexOf(m.kind) < 0) return m.valueAtCost;
+    // Round half-up to paise. The absolute 1e-6 paise nudge undoes binary float error at exact halves
+    // (2.5 x 19.99 is 49.974999999999994 in floats, but 49.975 on paper = 49.98). It is ABSOLUTE, not relative:
+    // a relative nudge would move a big honest value (1e13 paise) by whole paise.
+    const v = Math.round(Math.abs(m.qty) * unitCost * 100 + 1e-6) / 100;
+    return isFinite(v) ? v : 0;
+}
+
 function buildRows(movements, ctx) {
     return movements.map(function (m, j) {
         const id = ctx.baseId + "~m" + j;
@@ -140,7 +193,7 @@ function buildRows(movements, ctx) {
             kind: m.kind,
             qty: m.qty,
             reason: m.reason,
-            valueAtCost: m.valueAtCost,
+            valueAtCost: valueFor(m, ctx.unitCost),
             derived: m.derived === true,
             actorUid: ctx.actorUid,
             actorRole: ctx.actorRole,
@@ -160,6 +213,6 @@ function buildRows(movements, ctx) {
 }
 
 module.exports = {
-    KIND_DIRECTION, MOVEMENT_KINDS, DEFAULT_KIND_BY_OPTYPE, MAX_MOVEMENTS, MAX_REASON, MAX_TXN_WRITES, MAX_PRODUCT_NAME,
+    KIND_DIRECTION, MOVEMENT_KINDS, REASON_REQUIRED, MIN_REASON_LENGTH, visibleLength, VALUE_KINDS, unitCostOf, valueFor, DEFAULT_KIND_BY_OPTYPE, MAX_MOVEMENTS, MAX_REASON, MAX_TXN_WRITES, MAX_PRODUCT_NAME,
     cleanProductName, nameFor, validateMovements, totalsMatch, deriveMovement, stockOf, deriveForMutation, buildRows
 };

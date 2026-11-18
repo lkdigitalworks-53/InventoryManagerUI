@@ -31,7 +31,7 @@ const rowsOf = (db) => db.writes.filter((w) => w.path.indexOf("/stock_movements/
 // ── validateDeltaRequest ────────────────────────────────────────────────────
 function deltaBody(overrides) {
     return Object.assign({ entity: "inventory", entityId: "p1", requestId: "req-1",
-        deltas: { stock: -3 }, movements: [{ kind: "loss", qty: -3, reason: "r", valueAtCost: 9 }] }, overrides || {});
+        deltas: { stock: -3 }, movements: [{ kind: "loss", qty: -3, reason: "spoiled", valueAtCost: 9 }] }, overrides || {});
 }
 
 test("validateDeltaRequest: accepts movements and returns them normalized", () => {
@@ -344,10 +344,98 @@ test("applyOperation: the largest accepted operations stay within the Firestore 
 
 test("applyOperation: movement on a later op carries THAT op's index in id and row", async () => {
     const db = makeDb({ [T + "inventory/p1"]: { stock: 10 }, [T + "inventory/p2"]: { stock: 5 } });
-    const v = O.validateOperationRequest(opBody([deltaOp("p1", -1, undefined), deltaOp("p2", -2, [{ kind: "loss", qty: -2 }])]));
+    const v = O.validateOperationRequest(opBody([deltaOp("p1", -1, undefined), deltaOp("p2", -2, [{ kind: "loss", qty: -2, reason: "spoiled" }])]));
     assert.equal((await O.applyOperation(db, oParams(v))).ok, true);
     const row = db.store[T + "stock_movements/completeOrder:o1:1~1~m0"];
     assert.ok(row);
     assert.equal(row.opIndex, 1);
     assert.equal(row.productId, "p2");
+});
+
+// ── P1 S2e-1: the server stamps the cost value of the six non-supply outward kinds ───────────────────────
+const lossBody = (kind, qty, extra) => [Object.assign({ kind: kind, qty: qty, reason: "counted at close" }, extra || {})];
+
+test("S2e-1 applyDelta: a loss is valued at qty x the product's cost as stored, and a client-sent value is ignored", async () => {
+    const db = makeDb({ [T + "inventory/p1"]: { stock: 10, price: 20, sellingPrice: 35 } });
+    const r = await G.applyDelta(db, dParams({ movements: lossBody("loss", -3, { valueAtCost: 1 }) }));
+    assert.equal(r.ok, true);
+    assert.equal(db.store[T + "stock_movements/req-1~m0"].valueAtCost, 60);
+});
+
+test("S2e-1 applyDelta: every one of the six stamped kinds uses the cost, never the selling price", async () => {
+    for (const kind of M.VALUE_KINDS) {
+        const db = makeDb({ [T + "inventory/p1"]: { stock: 10, price: 4, sellingPrice: 99 } });
+        const r = await G.applyDelta(db, dParams({ deltas: { stock: -2 }, movements: lossBody(kind, -2, { valueAtCost: 777 }) }));
+        assert.equal(r.ok, true, kind);
+        assert.equal(db.store[T + "stock_movements/req-1~m0"].valueAtCost, 8, kind);
+    }
+});
+
+test("S2e-1 applyDelta: a product with no cost records the loss with value 0 (a loss is never refused for a missing cost)", async () => {
+    for (const doc of [{ stock: 10 }, { stock: 10, price: 0 }, { stock: 10, price: -5 }, { stock: 10, price: "20" }, { stock: 10, price: null }]) {
+        const db = makeDb({ [T + "inventory/p1"]: doc });
+        const r = await G.applyDelta(db, dParams({ movements: lossBody("theft", -3, { valueAtCost: 50 }) }));
+        assert.equal(r.ok, true, JSON.stringify(doc));
+        assert.equal(db.store[T + "stock_movements/req-1~m0"].valueAtCost, 0, JSON.stringify(doc));
+    }
+});
+
+test("S2e-1 applyDelta: supply and inward kinds keep the value they were given (only the six are stamped)", async () => {
+    const db = makeDb({ [T + "inventory/p1"]: { stock: 10, price: 20 } });
+    const r = await G.applyDelta(db, dParams({ deltas: { stock: -1 }, movements: [{ kind: "sale", qty: -1, reason: "", valueAtCost: 5 }] }));
+    assert.equal(r.ok, true);
+    assert.equal(db.store[T + "stock_movements/req-1~m0"].valueAtCost, 5);
+});
+
+test("S2e-1 applyDelta: a derived adjustment (no movements sent) carries value 0 as before", async () => {
+    const db = makeDb({ [T + "inventory/p1"]: { stock: 10, price: 20 } });
+    const r = await G.applyDelta(db, dParams({ movements: [] }));
+    assert.equal(r.ok, true);
+    assert.equal(db.store[T + "stock_movements/req-1~m0"].valueAtCost, 0);
+});
+
+test("S2e-1 applyDelta: a replay of the same request does not re-value the row after the cost changed", async () => {
+    const db = makeDb({ [T + "inventory/p1"]: { stock: 10, price: 20 } });
+    const p = dParams({ movements: lossBody("loss", -3) });
+    assert.equal((await G.applyDelta(db, p)).ok, true);
+    db.store[T + "inventory/p1"].price = 50;
+    await G.applyDelta(db, p);
+    assert.equal(db.store[T + "stock_movements/req-1~m0"].valueAtCost, 60);
+    assert.equal(db.writes.filter((w) => w.path.indexOf("/stock_movements/") >= 0).length, 1);
+});
+
+test("S2e-1 applyOperation: each op's rows are valued at THAT product's cost", async () => {
+    const db = makeDb({ [T + "inventory/p1"]: { stock: 10, price: 10 }, [T + "inventory/p2"]: { stock: 5, price: 3.5 }, [T + "inventory/p3"]: { stock: 5 } });
+    const v = O.validateOperationRequest(opBody([
+        deltaOp("p1", -2, lossBody("theft", -2, { valueAtCost: 999 })),
+        deltaOp("p2", -4, lossBody("gift", -4)),
+        deltaOp("p3", -1, lossBody("loss", -1))]));
+    assert.equal(v.ok, true);
+    const r = await O.applyOperation(db, oParams(v));
+    assert.equal(r.ok, true);
+    assert.equal(db.store[T + "stock_movements/completeOrder:o1:1~0~m0"].valueAtCost, 20);
+    assert.equal(db.store[T + "stock_movements/completeOrder:o1:1~1~m0"].valueAtCost, 14);
+    assert.equal(db.store[T + "stock_movements/completeOrder:o1:1~2~m0"].valueAtCost, 0);
+});
+
+test("S2e-1 applyOperation: a sale op keeps its own value and an op with no movements stays value 0", async () => {
+    const db = makeDb({ [T + "inventory/p1"]: { stock: 10, price: 10 }, [T + "inventory/p2"]: { stock: 5, price: 10 } });
+    const v = O.validateOperationRequest(opBody([deltaOp("p1", -1, [{ kind: "sale", qty: -1, valueAtCost: 2 }]), deltaOp("p2", -1, undefined)]));
+    const r = await O.applyOperation(db, oParams(v));
+    assert.equal(r.ok, true);
+    assert.equal(db.store[T + "stock_movements/completeOrder:o1:1~0~m0"].valueAtCost, 2);
+    assert.equal(db.store[T + "stock_movements/completeOrder:o1:1~1~m0"].valueAtCost, 0);
+});
+
+test("S2e-1 validateOperationRequest: a required-reason kind without a reason is refused and names the op", () => {
+    const v = O.validateOperationRequest(opBody([deltaOp("p1", -1, [{ kind: "sale", qty: -1 }]), deltaOp("p2", -1, [{ kind: "theft", qty: -1, reason: "  " }])]));
+    assert.equal(v.error, "movement-reason-required");
+    assert.equal(v.opIndex, 1);
+});
+
+test("S2e-1 validateDeltaRequest: the same refusal on the single-delta endpoint", () => {
+    const v = G.validateDeltaRequest(deltaBody({ movements: [{ kind: "destroyed", qty: -3 }] }));
+    assert.equal(v.ok, false);
+    assert.equal(v.status, 400);
+    assert.equal(v.error, "movement-reason-required");
 });

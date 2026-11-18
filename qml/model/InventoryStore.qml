@@ -1278,6 +1278,9 @@ QtObject {
     // direction for the kind, zero or non-finite qty. Needed because Gateway.recordDelta refuses a
     // bad `movements` BEFORE queueing (the server's rejection would be terminal), so passing a bad
     // label through would drop the stock change itself, silently for the fire-and-forget credit.
+    // CAUTION (P1 S2e-1): a kind that REQUIRES a reason (StockMovements.reasonRequired) sent without one is dropped
+    // HERE too, so the stock change becomes an unreasoned derived `adjustment`. A caller of such a kind must check
+    // StockMovements.reasonProblem BEFORE calling (KNOWN-ISSUES S2e-1 item 17, pinned in tst_InventoryStore_movementKinds).
     function _movementsFor(kind, signedQty, reason) {
         if (!kind) return undefined
         var movements = [StockMovements.make(kind, signedQty, reason)]

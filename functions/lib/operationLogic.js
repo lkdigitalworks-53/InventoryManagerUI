@@ -485,10 +485,11 @@ async function applyOperation(db, params) {
                     return { ok: false, status: 409, error: "movement-qty-mismatch",
                              opIndex: i, field: "stock", current: before.stock };
                 }
+                const unitCost = MovementLogic.unitCostOf(entry.data);   // cost as it stood before this change
                 entry.data = Object.assign({}, entry.data, after);
                 entry.dirty = true;
                 audits.push({ i: i, op: op, action: "delta", before: before, after: after, movements: movements,
-                              productName: MovementLogic.nameFor(null, entry.data) });
+                              unitCost: unitCost, productName: MovementLogic.nameFor(null, entry.data) });
                 results.push({ entity: op.entity, entityId: op.entityId, kind: "delta", after: after });
             } else {
                 if (!_deepEqual(entry.data, op.before)) {
@@ -558,7 +559,8 @@ async function applyOperation(db, params) {
                 requestId: opAuditId(params.requestId, a.i),
                 operationId: params.requestId,
                 opType: params.opType,
-                opIndex: a.i
+                opIndex: a.i,
+                unitCost: a.unitCost
             });
             for (const row of rows) txn.set(db.doc(tenantRoot + "/stock_movements/" + row.id), row.data);
         }

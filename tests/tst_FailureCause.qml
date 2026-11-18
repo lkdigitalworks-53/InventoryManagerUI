@@ -291,7 +291,7 @@ TestCase {
     function test_R3b_validator_codes_are_app_problems_data() {
         var codes = ["unsupported-entity", "unsupported-action", "missing-deltas", "invalid-delta-value", "invalid-movements",
                      "too-many-movements", "invalid-movement-kind", "invalid-movement-qty", "invalid-movement-value",
-                     "invalid-movement-reason", "movements-not-supported", "movements-require-inventory",
+                     "invalid-movement-reason", "movement-reason-required", "movements-not-supported", "movements-require-inventory",
                      "movements-require-stock-delta"]
         return codes.map(function(c) { return { tag: c, code: c } })
     }

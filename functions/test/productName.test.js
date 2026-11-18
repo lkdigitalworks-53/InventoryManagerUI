@@ -93,7 +93,7 @@ test("PN-05 buildRows writes productName only when it is a usable string, and ne
 });
 
 test("PN-06 buildRows caps a 300-char name and writes the same name on every row of one write", () => {
-    const rows = M.buildRows(M.validateMovements([{ kind: "loss", qty: -1, reason: "a" }, { kind: "loss", qty: -2, reason: "b" }]).movements, ctx({ productName: "n".repeat(300) }));
+    const rows = M.buildRows(M.validateMovements([{ kind: "loss", qty: -1, reason: "dropped" }, { kind: "loss", qty: -2, reason: "damp" }]).movements, ctx({ productName: "n".repeat(300) }));
     assert.equal(rows.length, 2);
     for (const r of rows) assert.equal(r.data.productName.length, 200);
 });

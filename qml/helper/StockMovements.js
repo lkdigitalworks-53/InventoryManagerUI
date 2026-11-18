@@ -26,6 +26,13 @@ var KIND_DIRECTION = {
 }
 var MAX_MOVEMENTS = 50
 var MAX_REASON = 500
+// P1 S2e-1: kinds that cannot be recorded without a reason (mirror of movementLogic.js REASON_REQUIRED).
+var REASON_REQUIRED = ["loss", "theft", "destroyed", "write_off", "gift"]
+var MIN_REASON_LENGTH = 3
+// Mirror of movementLogic.js INVISIBLE_RE (read its comment: what is and is not covered): characters that show
+// nothing (whitespace, control characters, zero-width, soft hyphen, joiners, direction marks, variation selectors,
+// fillers, tag characters). They do not count toward MIN_REASON_LENGTH. BMP escapes only, no `u` flag.
+var _INVISIBLE_RE = /[\s\u0000-\u001F\u007F-\u009F\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF9-\uFFFB]|\uDB40[\uDC00-\uDFFF]/g
 var EPSILON = 1e-9
 
 function _hasKeys(obj) {
@@ -44,6 +51,19 @@ function _sameFloors(a, b) {
         if (!Object.prototype.hasOwnProperty.call(fb, ka[i]) || fa[ka[i]] !== fb[ka[i]]) return false
     }
     return true
+}
+
+// True when this kind needs a reason before it may be recorded (the picker uses it to show the field as
+// required and to keep its confirm button off).
+function reasonRequired(kind) {
+    return REASON_REQUIRED.indexOf(kind) >= 0
+}
+
+// "" when `reason` is enough for `kind`, else the words for the person. Counted after trim, like the server.
+function reasonProblem(kind, reason) {
+    if (!reasonRequired(kind)) return ""
+    var text = (typeof reason === "string") ? reason.replace(_INVISIBLE_RE, "") : ""
+    return text.length >= MIN_REASON_LENGTH ? "" : "Add a short reason (at least " + MIN_REASON_LENGTH + " characters)."
 }
 
 // True for a non-empty movements array (the only shape that means "explicit movements").
@@ -85,6 +105,7 @@ function validate(entity, deltas, clamps, movements) {
         if (m.reason !== undefined && m.reason !== null
                 && (typeof m.reason !== "string" || m.reason.length > MAX_REASON))
             return "invalid-movement-reason"
+        if (reasonProblem(m.kind, m.reason) !== "") return "movement-reason-required"
         sum += m.qty
     }
     if (Math.abs(sum - deltas.stock) > EPSILON) return "movement-qty-mismatch"
