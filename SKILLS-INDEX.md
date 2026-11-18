@@ -183,4 +183,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 173: Put a business rule about WHAT must be recorded on the server, mirror it in the client with a parity matrix, and let the server own every number that feeds a tax figure
 - 174: Wire a store function to a server operation by running its REAL body in Node, and make every outcome (live, slow, replayed, unreadable, rejected) apply exactly once
 - 175: Raise the PR and read CI from a Claude chat session: attach the repo with `add_repo` (push), then use REST only
-- 172: One limit, one function: every reader of "how many may this order hold" calls it, and the sweep proves it by replaying the OLD check
+- 176: One limit, one function: every reader of "how many may this order hold" calls it, and the sweep proves it by replaying the OLD check

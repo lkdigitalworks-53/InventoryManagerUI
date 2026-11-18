@@ -288,7 +288,7 @@ TestCase {
     // PR #202 sweep F2: an order with no lines keeps its stored total and items when the update carries no `products`
     // key (OrderDetailDialog sends none for an order that never stored lines). The same update WITH `products: []`
     // and `items: 0` zeroes both, which is why the dialog must not send them. Subtotal/tax/discount are recomputed
-    // from the (missing) lines on every update either way (KNOWN-ISSUES 48).
+    // from the (missing) lines on every update either way (KNOWN-ISSUES 59).
     function test_updateOrder_without_products_keeps_total_and_items_of_a_lineless_order() {
         OrdersStore.orders = [{
             orderId: "ORD-001", customer: "Old", email: "", phone: "",

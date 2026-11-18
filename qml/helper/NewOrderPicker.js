@@ -77,7 +77,7 @@ function availableFor(product, lines) {
 // The quantity of a New Order cart row after a tap of + (delta above 0) or - (delta below 0), the same contract as
 // EditOrderPicker.stepUp. + adds at most delta, up to the ceiling (ceilingOf; `product` null or not a product has none),
 // and NEVER lowers or removes a row: a row above the ceiling (stock fell) or a product that ran out keeps its quantity
-// and trySubmit reports it, instead of the tap silently deleting the row and its discount (PR #202 sweep; Skill 172
+// and trySubmit reports it, instead of the tap silently deleting the row and its discount (PR #202 sweep; Skill 176
 // rule 3). - takes exactly delta off whatever the ceiling is; a result of 0 means the caller removes the row. A quantity
 // or a step that is not a finite number is returned as the quantity.
 function stepQty(qty, delta, product) {

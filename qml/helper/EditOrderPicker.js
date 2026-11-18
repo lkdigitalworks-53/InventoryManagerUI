@@ -133,7 +133,7 @@ function stockShortfalls(lines, ctx, productOf) {
 // recomputes total and items from `products` whenever that key is present, so writing [] would zero the order's total
 // and items on any save, even a customer-name edit (PR #202 sweep F2; picker v2 S5b removed the seed that used to invent
 // lines for it). Without the key OrdersStore keeps the stored total and items. Its subtotal, tax and discount are
-// recomputed from the (missing) lines on every update anyway: KNOWN-ISSUES 48, not fixed here. Every other order sends
+// recomputed from the (missing) lines on every update anyway: KNOWN-ISSUES 59, not fixed here. Every other order sends
 // both keys, as they are; anything but a real true reads as "stored".
 function lineFields(noLinesStored, rowCount, items, products) {
     if (noLinesStored === true && rowCount === 0) return {}

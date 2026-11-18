@@ -37,11 +37,11 @@ Node: NOP-33..35, EOP-32..39 (EOP-39 and NOP-35 are seeded monkeys, Node only), 
 S5c touch targets, Back key, in-stock double toggle (24a, 28b, 8, 19b, 19a); S5d measure then tune (19c, 25, 14); S5e TalkBack, themes, font scale, ToastHost wrap (26), KI 29 cap.
 
 ## Decisions on the open questions (Taher, 2026-11-16, "as recommended")
-Q1 skip a product that left the catalog at Save. Q2 accept, now narrowed by the sweep: Save keeps the order's total and items (F2); subtotal, tax and discount of a lineless order stay a pre-existing quirk (KNOWN-ISSUES 49). Q3 `trySubmit` stays on raw `inv.stock`. **Q4 (new, from the sweep):** completion compares RAW stock, Save compares whole units; decided: keep whole units (a pending line of 2.5 with stock 2.5 completes but cannot be saved untouched until lowered to 2; KNOWN-ISSUES 48).
+Q1 skip a product that left the catalog at Save. Q2 accept, now narrowed by the sweep: Save keeps the order's total and items (F2); subtotal, tax and discount of a lineless order stay a pre-existing quirk (KNOWN-ISSUES 59). Q3 `trySubmit` stays on raw `inv.stock`. **Q4 (new, from the sweep):** completion compares RAW stock, Save compares whole units; decided: keep whole units (a pending line of 2.5 with stock 2.5 completes but cannot be saved untouched until lowered to 2; KNOWN-ISSUES 58).
 
 ## Sweep 1 (PR #202 review, 2026-11-16)
 - **F1:** the completed-order ceiling is now `whole on-hand + heldAtCompletion` (ALL original lines, exactly as booked). It can be fractional; `availableFor` and `stepUp` still hand out whole units (`stepUp` floors its cap). S5b-D4 (group per product) needed this: with first-match-and-floor an unchanged completed order with two lines, or a line of 2.5, was refused.
 - **F2:** `Edit.lineFields(noLinesStored, rowCount, items, products)`; the dialog keeps `_noLinesStored` (set in `openFor`, cleared in `onClosed`). Supersedes the "Side effect" of S5b-D6 (Save stored `products: []`, `items: 0`).
 - **F3:** New Order's `changeQty` now calls `NP.stepQty` (`+` never lowers or removes a row; `-` exactly one). Behavior change vs S5b: a `+` at stock 0 used to delete the row.
-- Tests added: NOP-36, NOP-37, EOP-40..44, EOW-26, EOW-27, two QML cases in `tst_OrdersStore_mutations`. EOP-32, EOP-30, EOP-33 models and the EOW-11 needle changed on purpose (see Skill 172 rule 10).
+- Tests added: NOP-36, NOP-37, EOP-40..44, EOW-26, EOW-27, two QML cases in `tst_OrdersStore_mutations`. EOP-32, EOP-30, EOP-33 models and the EOW-11 needle changed on purpose (see Skill 176 rule 10).
 

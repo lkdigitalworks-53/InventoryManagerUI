@@ -5180,7 +5180,7 @@ Rules:
 7. Before every push that edits `SKILLS.md`, `AGENTS.md`, `README.md` or anything under `.github/`, run `node .github/scripts/skills-index.js --write` (never hand-edit `SKILLS-INDEX.md`: an index line must equal its heading byte for byte, backticks included) and then `node --test .github/scripts/__tests__/*.test.js` (about 45 s, no Qt, no network). The `PR Test Summary Comment` job runs that suite first and posts nothing when it fails. On PR 203 one hand-typed index line (Skill 175, backticks dropped) made that job red while all four test jobs were green, and the CI summary comment was lost.
 
 **The check:** does `gh api .../pulls` return a number and URL, does the check-runs call return rows for the head SHA, and is the `PR Test Summary Comment` row green too (not only the four test jobs)?
-## Skill 172: One limit, one function: every reader of "how many may this order hold" calls it, and the sweep proves it by replaying the OLD check
+## Skill 176: One limit, one function: every reader of "how many may this order hold" calls it, and the sweep proves it by replaying the OLD check
 
 **Why:** the product sheet, the `+` stepper and the Save check each had their own stock formula (raw `stock`, per line, with and without the units a completed order already took out). A fractional stock (2.5) was 2 in the sheet and 3 at the stepper; a gone product was unlimited at the stepper and refused later; two lines of one product each passed Save. Skill 170 says it generally; this is the worked case.
 
