@@ -1319,6 +1319,19 @@ QtObject {
         return movements
     }
 
+    // P1 S2d-2: the kind to send as a derived row's default, or undefined (the server then derives an
+    // `adjustment`). Same principle as _movementsFor: a label the server would refuse is dropped here, never sent,
+    // because Gateway.recordDelta refuses a bad hint BEFORE queueing and that would lose the stock change.
+    function _kindHintFor(kind) {
+        if (!kind) return undefined
+        var error = StockMovements.validateKindHint("inventory", { stock: -1 }, undefined, kind)
+        if (error !== "") {
+            console.warn("[InventoryStore] kind hint dropped, stock change kept:", kind, error)
+            return undefined
+        }
+        return kind
+    }
+
     // atomic-ops R4 (design 2026-11-02-r4-restock-wire-design.md). A queued restock is not a second copy of
     // state: the durable outbox item IS the latch. The product stays out of the order picker and out of sales
     // until it applies or is discarded (Q-A2), and a second restock of it is refused meanwhile (R4-D1).
@@ -1465,9 +1478,11 @@ QtObject {
     // floor-crossing behavior differs.
     //
     // `kind` + `reason` (P1 S2d, optional): the ledger kind of this deduction (e.g. "sale").
-    // Ignored in clamp mode: the server cannot match an explicit row to a clamped quantity
-    // (it would reject with movement-qty-mismatch and the deduction would be lost), so a
-    // clamped deduction keeps the server-derived row (S2d-2 decides how to type it).
+    // In clamp mode the server cannot match an explicit row to a clamped quantity (it would reject with
+    // movement-qty-mismatch and the deduction would be lost), so `kind` travels as a HINT (P1 S2d-2): the server
+    // still derives the row from the quantity it applied, with this kind (a hint it cannot use, e.g. a kind the
+    // hint list refuses, is dropped and the row stays an `adjustment`). `reason` is not used in clamp mode: a
+    // derived row carries none.
     function deductStock(productId, qty, callback, clampInsteadOfReject, kind, reason) {
         var arr = _clone();
         var exists = false;
@@ -1482,6 +1497,7 @@ QtObject {
         var floors = clampInsteadOfReject ? {} : { stock: 0 }
         var clamps = clampInsteadOfReject ? { stock: 0 } : {}
         var movements = clampInsteadOfReject ? undefined : _movementsFor(kind, -qty, reason)
+        var kindHint = clampInsteadOfReject ? _kindHintFor(kind) : undefined
         Gateway.recordDelta("inventory", productId, { stock: -qty }, floors, clamps, function(result) {
             if (result && result.ok && result.after && result.after.stock !== undefined) {
                 var arr2 = _clone()
@@ -1494,7 +1510,7 @@ QtObject {
                 products = arr2
             }
             if (callback) callback(result)
-        }, movements)
+        }, movements, kindHint)
     }
 
     // Increment product.stock WITHOUT creating a batch or purchase event. Used by

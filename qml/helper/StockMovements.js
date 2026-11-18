@@ -26,6 +26,10 @@ var KIND_DIRECTION = {
 }
 var MAX_MOVEMENTS = 50
 var MAX_REASON = 500
+// P1 S2d-2: kinds a DERIVED row may be hinted as (mirror of movementLogic.js HINT_KINDS): the kinds that need
+// neither a reason nor a stamped value. Naming loss, theft, destroyed, write_off, gift or free_sample here would
+// record a reasonless, unvalued loss and bypass the S2e-1 policy, so the server refuses them.
+var HINT_KINDS = ["receipt", "sales_return", "sale", "adjustment"]
 // P1 S2e-1: kinds that cannot be recorded without a reason (mirror of movementLogic.js REASON_REQUIRED).
 var REASON_REQUIRED = ["loss", "theft", "destroyed", "write_off", "gift"]
 var MIN_REASON_LENGTH = 3
@@ -112,6 +116,23 @@ function validate(entity, deltas, clamps, movements) {
     return ""
 }
 
+// "" when `kindHint` (the default kind of a server-derived row, P1 S2d-2) is acceptable for this delta call, else
+// the server's error code. undefined/null = no hint, always fine. Call it AFTER validate(): a hint never travels
+// with explicit movements (they already say everything) and only makes sense for a stock delta on inventory.
+// Why it exists: a CLAMPED deduction cannot carry explicit movements (the applied quantity is only known on the
+// server), but it can still say "this is a sale".
+function validateKindHint(entity, deltas, movements, kindHint) {
+    if (kindHint === undefined || kindHint === null) return ""
+    if (typeof kindHint !== "string" || HINT_KINDS.indexOf(kindHint) < 0) return "invalid-kind-hint"
+    if (hasMovements(movements)) return "kind-hint-with-movements"
+    if (entity !== "inventory" || !deltas || typeof deltas !== "object"
+            || !Object.prototype.hasOwnProperty.call(deltas, "stock"))
+        return "invalid-kind-hint"
+    return ""
+}
+
+function _hintOf(x) { return (x && typeof x.kindHint === "string") ? x.kindHint : "" }
+
 // May two held delta calls for the same record become ONE outbox item? The server needs
 // sum(movements.qty) == the delta it applies, so:
 //   - neither side explicit: the old rule (sum the deltas), unchanged for stock_batch and the
@@ -123,7 +144,10 @@ function validate(entity, deltas, clamps, movements) {
 //     would be dropped by a later restock (stock could go negative), or a restock would be rejected
 //     together with a floored sale it never depended on (batch written, stock not raised).
 // `a` and `b` are outbox items / calls: { movements?, clamps?, floors? }.
+//   - a kind hint labels the WHOLE merged delta, so two derived calls merge only when their hints are equal
+//     (none counts as equal to none): merging a "sale" with an unlabelled call would mislabel one of them.
 function canCoalesce(a, b) {
+    if (_hintOf(a) !== _hintOf(b)) return false
     var aExplicit = hasMovements(a && a.movements)
     var bExplicit = hasMovements(b && b.movements)
     if (!aExplicit && !bExplicit) return true

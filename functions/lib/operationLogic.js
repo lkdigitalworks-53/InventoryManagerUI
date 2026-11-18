@@ -185,6 +185,9 @@ function validateOperationRequest(body) {
         else if (raw.kind === "mutation") v = validateMutationRequest(perOp);
         else return { ok: false, status: 400, error: "unsupported-kind", opIndex: i };
         if (!v.ok) return Object.assign({}, v, { opIndex: i });
+        // P1 S2d-2: the delta validator accepts a kind hint (recordDelta reads it); an operation types its own rows
+        // (DEFAULT_KIND_BY_OPTYPE, or explicit movements), so a hint here would be a silent no-op. Refuse it.
+        if (v.kindHint !== undefined) return { ok: false, status: 400, error: "kind-hint-not-supported", opIndex: i };
         if (!isSafeDocId(v.entityId)) return { ok: false, status: 400, error: "invalid-entity-id", opIndex: i };
         // PH3 (design Q11): a product delete must leave a pending_cleanup marker, which this
         // transaction deliberately does not write (an unverified write ceiling, see MAX_OPS, and the

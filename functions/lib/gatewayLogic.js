@@ -81,6 +81,10 @@ function validateMutationRequest(body, entityCollections) {
     if (body.movements !== undefined) {
         return { ok: false, status: 400, error: "movements-not-supported" };
     }
+    // Nor a kind hint (P1 S2d-2): a hint is only read by recordDelta, so accepting one here would be a silent no-op.
+    if (body.kindHint !== undefined) {
+        return { ok: false, status: 400, error: "kind-hint-not-supported" };
+    }
 
     return {
         ok: true,
@@ -134,6 +138,16 @@ function validateDeltaRequest(body, entityCollections) {
             return { ok: false, status: 400, error: "movements-require-stock-delta" };
     }
 
+    // P1 S2d-2: an optional default kind for the server-derived row (see movementLogic HINT_KINDS). Never together
+    // with explicit movements (they already say everything), and only for a stock delta on inventory.
+    const kh = MovementLogic.validateKindHint(body.kindHint);
+    if (!kh.ok) return kh;
+    if (kh.kindHint !== undefined) {
+        if (mv.movements.length > 0) return { ok: false, status: 400, error: "kind-hint-with-movements" };
+        if (entity !== "inventory" || !Object.prototype.hasOwnProperty.call(deltas, "stock"))
+            return { ok: false, status: 400, error: "invalid-kind-hint" };
+    }
+
     return {
         ok: true,
         entity: entity,
@@ -143,6 +157,7 @@ function validateDeltaRequest(body, entityCollections) {
         floors: floors,
         clamps: clamps,
         movements: mv.movements,
+        kindHint: kh.kindHint,
         clientTimestamp: clientTimestamp,
         collection: collection
     };
@@ -298,10 +313,10 @@ async function applyDelta(db, params) {
         }
 
         // Every stock change on inventory leaves a ledger row: the client's
-        // movements if it sent any, else one server-derived "adjustment".
+        // movements if it sent any, else one server-derived row (kind = the client's hint, else "adjustment").
         let movements = params.movements || [];
         if (movements.length === 0 && params.entity === "inventory" && Object.prototype.hasOwnProperty.call(after, "stock"))
-            movements = MovementLogic.deriveMovement(after.stock - before.stock, "adjustment");
+            movements = MovementLogic.deriveMovement(after.stock - before.stock, params.kindHint || "adjustment");
         if (movements.length > 0 && !MovementLogic.totalsMatch(movements, after.stock - before.stock)) {
             return { ok: false, status: 409, error: "movement-qty-mismatch", field: "stock", current: before.stock };
         }

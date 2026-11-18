@@ -1188,7 +1188,8 @@ Item {
                         InventoryStore.deductStock(invP.productId, qqty, function(result) {
                             if (!result || !result.ok)
                                 console.warn("[DataModel] completeImportedOrder: deductStock did not confirm", JSON.stringify(result))
-                        }, true /* clamp, don't reject — "complete + report shortfall" business rule */)
+                        }, true /* clamp, don't reject — "complete + report shortfall" business rule */,
+                        "sale" /* P1 S2d-2: a hint, the server types the derived row from the quantity it applied */)
                         _pushLine(consumption)
                     }
                     if (fifoResult.shortfall > 0) {
