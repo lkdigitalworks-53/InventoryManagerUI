@@ -216,6 +216,51 @@ TestCase {
     function test_canCoalesce_derived_pairs_ignore_floors() {
         compare(SM.canCoalesce({ floors: { stock: 0 } }, { floors: {} }), true)
     }
+    // ── P1 S2d-2: kind hint of a derived row ─────────────────────────────
+    function test_HINT_KINDS_are_exactly_the_kinds_needing_no_reason_and_no_value() {
+        compare(SM.HINT_KINDS.slice().sort().join(","), "adjustment,receipt,sale,sales_return")
+        for (var i = 0; i < SM.REASON_REQUIRED.length; ++i)
+            compare(SM.HINT_KINDS.indexOf(SM.REASON_REQUIRED[i]), -1, SM.REASON_REQUIRED[i])
+        compare(SM.HINT_KINDS.indexOf("free_sample"), -1)
+    }
+    function test_validateKindHint_no_hint_is_always_fine() {
+        compare(SM.validateKindHint("inventory", { stock: -1 }, undefined, undefined), "")
+        compare(SM.validateKindHint("inventory", { stock: -1 }, undefined, null), "")
+        compare(SM.validateKindHint("orders", { total: 1 }, undefined, undefined), "")
+    }
+    function test_validateKindHint_accepts_each_hint_kind_on_an_inventory_stock_delta() {
+        for (var i = 0; i < SM.HINT_KINDS.length; ++i)
+            compare(SM.validateKindHint("inventory", { stock: -1 }, undefined, SM.HINT_KINDS[i]), "", SM.HINT_KINDS[i])
+    }
+    function test_validateKindHint_refuses_a_kind_outside_the_list_or_a_non_string() {
+        var bad = ["loss", "theft", "destroyed", "write_off", "gift", "free_sample", "nope", "", "SALE", 5, true, {}, []]
+        for (var i = 0; i < bad.length; ++i)
+            compare(SM.validateKindHint("inventory", { stock: -1 }, undefined, bad[i]), "invalid-kind-hint", String(bad[i]))
+    }
+    function test_validateKindHint_refuses_a_hint_next_to_explicit_movements() {
+        compare(SM.validateKindHint("inventory", { stock: -1 }, [{ kind: "sale", qty: -1 }], "sale"), "kind-hint-with-movements")
+    }
+    function test_validateKindHint_an_empty_movements_array_is_not_explicit() {
+        compare(SM.validateKindHint("inventory", { stock: -1 }, [], "sale"), "")
+    }
+    function test_validateKindHint_needs_inventory_and_a_stock_delta() {
+        compare(SM.validateKindHint("orders", { stock: -1 }, undefined, "sale"), "invalid-kind-hint")
+        compare(SM.validateKindHint("inventory", { qty: -1 }, undefined, "sale"), "invalid-kind-hint")
+        compare(SM.validateKindHint("inventory", undefined, undefined, "sale"), "invalid-kind-hint")
+        compare(SM.validateKindHint("inventory", null, undefined, "sale"), "invalid-kind-hint")
+    }
+    function test_canCoalesce_derived_pairs_merge_only_with_an_equal_hint() {
+        compare(SM.canCoalesce({ kindHint: "sale" }, { kindHint: "sale" }), true)
+        compare(SM.canCoalesce({ kindHint: "sale" }, {}), false)
+        compare(SM.canCoalesce({}, { kindHint: "sale" }), false)
+        compare(SM.canCoalesce({ kindHint: "sale" }, { kindHint: "receipt" }), false)
+        compare(SM.canCoalesce({}, {}), true)
+        compare(SM.canCoalesce({ kindHint: "" }, {}), true, "an empty hint counts as none")
+        compare(SM.canCoalesce(undefined, undefined), true)
+    }
+    function test_canCoalesce_a_non_string_hint_counts_as_none() {
+        compare(SM.canCoalesce({ kindHint: 5 }, {}), true)
+    }
     function test_mergeMovements_keeps_call_order_and_does_not_mutate() {
         var a = [{ kind: "receipt", qty: 10 }]
         var b = [{ kind: "sale", qty: -3 }]

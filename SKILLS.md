@@ -5199,3 +5199,17 @@ Rules:
 
 **The check:** `grep` for a raw `.stock` in the dialogs; every hit must be display text, not a limit. For a stock rule, also run the helper over an UNCHANGED completed order with duplicate and fractional lines at stock 0: it must ask for nothing.
 
+## Skill 177: Label a row the server derives with a validated hint, so a clamped write keeps its stock change and still gets the right ledger kind
+
+When a client write cannot carry explicit ledger rows (the applied quantity is only known on the server, for example a deduction clamped to the stock that exists), do not send rows that may not match. Send a small **hint** and let the server derive the row.
+
+1. **Name the hint's kinds by what they must NOT need.** `HINT_KINDS` is computed as all kinds minus those that need a reason or a stamped value, so a sensitive kind added later cannot become hintable by accident (`movementLogic.js`). A hint that could name `theft` would write a reasonless, unvalued loss and bypass the reason policy.
+2. **A wrong label must never lose the stock change.** On the server, a hint whose direction contradicts the applied delta degrades to the neutral kind (`adjustment`); it never answers 4xx, because a terminal 4xx on a queued write drops the change. On the client, an unacceptable hint is dropped with a warning and the call goes on without it (`InventoryStore._kindHintFor`); only `Gateway.recordDelta` called directly with a bad hint is refused, and it is refused BEFORE queueing.
+3. **Refuse, never ignore, where the field has no meaning.** A hint with explicit movements, on a non-inventory entity, or on `recordMutation`, `recordMutationsBatch` or an operation op is a 400 with its own code (`kind-hint-with-movements`, `invalid-kind-hint`, `kind-hint-not-supported`). A silent no-op makes the caller believe it was recorded. Add the codes to `FailureCause._BUG_CODES` so they are app problems, not a retry prompt.
+4. **A label that labels a merged call must match on both sides.** Outbox coalescing merges derived calls only with an EQUAL hint (`StockMovements.canCoalesce`); merging a `sale` with an unlabelled call mislabels one of them. The hint is stored on the item and must survive the outbox JSON round trip.
+5. **Prove it end to end in Node.** Run the real client function bodies in a vm (`extractFunction`/`load` in `qmlHelpers.js`) and feed what they queue to the real server apply: assert the ledger row's kind and the APPLIED quantity (not the ordered one), a replay writes nothing twice, and a seeded monkey keeps ledger equal to the stock change. Pin the wiring with source-text guards (the one caller passes the kind; the hint is sent only in clamp mode). Break each guard once by hand and see the suite fail.
+6. **Deploy order is free when the field is optional.** An old server ignores it (row stays `adjustment`), an old client sends none. Say so in the test plan and add a device step for the old-server case.
+7. **Old rows are not backfilled.** The ledger is immutable; a correcting pair of rows invents history. Write that in KNOWN-ISSUES so nobody is surprised by `adjustment.out` before the deploy date.
+
+**The check:** with the real server, does a deduction of 3 on a stock of 2, hinted `sale`, leave ONE `sale` row of -2 and stock 0, and does the same call with `loss` as the hint get dropped on the client and refused on the server without losing the deduction?
+

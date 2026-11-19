@@ -129,4 +129,50 @@ TestCase {
         compare(out.r.error, "bad-request")
         compare(out.r.detail, undefined)
     }
+
+    // ── P1 S2d-2: the optional 8th argument `kindHint` ───────────────────
+    function _hinted(entity, deltas, clamps, movements, hint) {
+        var out = { calls: 0, result: null }
+        out.id = Gateway.recordDelta(entity, "p1", deltas, {}, clamps || {},
+                                     function(r) { out.calls++; out.result = r }, movements, hint)
+        return out
+    }
+    function test_a_hinted_clamped_delta_is_queued_with_its_hint_and_no_movements() {
+        var o = _hinted("inventory", { stock: -2 }, { stock: 0 }, undefined, "sale")
+        verify(o.id.length > 0)
+        compare(OutboxStore.pendingCount, 1)
+        compare(OutboxStore.items[0].kindHint, "sale")
+        compare(OutboxStore.items[0].movements, undefined)
+        compare(o.calls, 0, "no server answer yet")
+    }
+    function test_a_call_without_a_hint_is_exactly_as_before() {
+        Gateway.recordDelta("inventory", "p1", { stock: -2 }, {}, { stock: 0 }, null)
+        compare("kindHint" in OutboxStore.items[0], false)
+    }
+    function test_a_hint_outside_the_list_is_refused_before_queueing() {
+        var kinds = ["loss", "theft", "destroyed", "write_off", "gift", "free_sample", "bogus"]
+        for (var i = 0; i < kinds.length; ++i) {
+            var o = _hinted("inventory", { stock: -2 }, { stock: 0 }, undefined, kinds[i])
+            compare(o.id, "", kinds[i])
+            compare(o.calls, 1)
+            compare(o.result.error, "bad-request")
+            compare(o.result.detail, "invalid-kind-hint")
+        }
+        compare(OutboxStore.pendingCount, 0)
+    }
+    function test_a_hint_next_to_explicit_movements_is_refused() {
+        var o = _hinted("inventory", { stock: -2 }, {}, [_mv("sale", -2)], "sale")
+        compare(o.result.detail, "kind-hint-with-movements")
+        compare(OutboxStore.pendingCount, 0)
+    }
+    function test_a_hint_on_a_non_inventory_entity_or_without_a_stock_delta_is_refused() {
+        compare(_hinted("orders", { stock: -2 }, {}, undefined, "sale").result.detail, "invalid-kind-hint")
+        compare(_hinted("inventory", { qty: -2 }, {}, undefined, "sale").result.detail, "invalid-kind-hint")
+        compare(OutboxStore.pendingCount, 0)
+    }
+    function test_a_refused_hint_with_no_callback_is_silent_and_queues_nothing() {
+        var id = Gateway.recordDelta("inventory", "p1", { stock: -2 }, {}, { stock: 0 }, null, undefined, "loss")
+        compare(id, "")
+        compare(OutboxStore.pendingCount, 0)
+    }
 }

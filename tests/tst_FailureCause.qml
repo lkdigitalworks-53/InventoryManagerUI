@@ -292,7 +292,8 @@ TestCase {
         var codes = ["unsupported-entity", "unsupported-action", "missing-deltas", "invalid-delta-value", "invalid-movements",
                      "too-many-movements", "invalid-movement-kind", "invalid-movement-qty", "invalid-movement-value",
                      "invalid-movement-reason", "movement-reason-required", "movements-not-supported", "movements-require-inventory",
-                     "movements-require-stock-delta"]
+                     "movements-require-stock-delta",
+                     "invalid-kind-hint", "kind-hint-with-movements", "kind-hint-not-supported"]
         return codes.map(function(c) { return { tag: c, code: c } })
     }
 
