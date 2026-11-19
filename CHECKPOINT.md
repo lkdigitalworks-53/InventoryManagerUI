@@ -29,7 +29,7 @@
 - [x] 6. Design doc + test plan + test-plans README row.
 - [x] 7. CA questions document (`docs/superpowers/CA-QUESTIONS.md`, 17 questions, 4 blocking, none answered by a CA).
 - [x] 8. Docs (done; index regenerated, `.github` suite 1061/1061, functions suite 1999/1999): KNOWN-ISSUES, ATOMIC-OPERATIONS-STATUS, README, AGENTS, SKILLS 176 + `skills-index.js --write`, then the `.github` suite (Skill 175 rule 7).
-- [ ] 9. (commit + push done below; PR and CI read pending) Final commit + push, CI read if reachable, final report (done / next).
+- [x] 9. Pushed `3c51b70`, PR #205 opened. CI on 3c51b70: Functions, Rules green; QML 3243 pass, 1 fail (my test used entity `orders`, which Gateway refuses earlier with no detail; fixed to `stock_batch` in the next commit); E2E was still running. Read CI again on the new head before trusting it.
 
 ## Deploy order (for Taher)
 Functions can deploy FIRST or LAST: an old server ignores the new `kindHint` field (the row stays `adjustment`, today's behaviour); an old client sends none. No rules change.

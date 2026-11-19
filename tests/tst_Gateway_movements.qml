@@ -166,7 +166,7 @@ TestCase {
         compare(OutboxStore.pendingCount, 0)
     }
     function test_a_hint_on_a_non_inventory_entity_or_without_a_stock_delta_is_refused() {
-        compare(_hinted("orders", { stock: -2 }, {}, undefined, "sale").result.detail, "invalid-kind-hint")
+        compare(_hinted("stock_batch", { stock: -2 }, {}, undefined, "sale").result.detail, "invalid-kind-hint")
         compare(_hinted("inventory", { qty: -2 }, {}, undefined, "sale").result.detail, "invalid-kind-hint")
         compare(OutboxStore.pendingCount, 0)
     }
