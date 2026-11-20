@@ -6,14 +6,14 @@ Honesty note: the Node tests were RUN in the sandbox against the real server cod
 ## 1. Unit tests
 | File | Cases | Run? | Covers |
 |---|---|---|---|
-| `functions/test/kindHint.test.js` (new) | 20 | RUN 20/20 | KH-1 the hint list is exactly the kinds needing no reason and no value; KH-2..KH-6 validator (none, listed, every other value, with movements, wrong entity, no stock delta); KH-7 the fix: a clamped deduction with hint `sale` writes ONE derived `sale` row of the APPLIED quantity; KH-8 default unchanged (`adjustment`); KH-9 direction mismatch degrades to `adjustment`, never refuses; KH-10 other hints; KH-11 a clamp that applies nothing writes no row; KH-12 explicit movements win over a stray hint; KH-13 replay writes nothing twice; KH-14 full pipeline for the imported-order case; KH-15..KH-17 recordMutation, batch and operation refuse a hint; KH-18, KH-19 the handler forwards a good hint and never reaches apply with a bad one; KH-20 monkey, 4000 random deltas, ledger equals applied change |
+| `functions/test/kindHint.test.js` (new) | 22 | RUN 22/22 | KH-1 the hint list is exactly the kinds needing no reason and no value; KH-2..KH-6 validator (none, listed, every other value, with movements, wrong entity, no stock delta); KH-7 the fix: a clamped deduction with hint `sale` writes ONE derived `sale` row of the APPLIED quantity; KH-8 default unchanged (`adjustment`); KH-9 direction mismatch degrades to `adjustment`, never refuses; KH-10 other hints; KH-11 a clamp that applies nothing writes no row; KH-12 explicit movements win over a stray hint; KH-13 replay writes nothing twice; KH-14 full pipeline for the imported-order case; KH-15..KH-17 recordMutation, batch and operation refuse a hint; KH-18, KH-19 the handler forwards a good hint and never reaches apply with a bad one; KH-20 monkey, 4000 random deltas, ledger equals applied change |
 | `functions/test/kindHintClient.test.js` (new) | 16 | RUN 16/16 | the REAL `StockMovements`, `Gateway`, `OutboxStore`, `InventoryStore` function bodies in a vm, fed to the real server: KC-1 list mirror; KC-2 same code and order as the server; KC-3 monkey, 4000 calls, client and server agree on accept versus refuse (the codes can differ for a faulty movement, see KNOWN-ISSUES); KC-4 coalescing needs an equal hint; KC-5 Gateway queues a good hint, refuses a bad one before queueing; KC-6 outbox stores it, survives JSON, never merges into a sent or parked item; KC-7 `deductStock` hints only in clamp mode and drops a refused kind while keeping the stock change; KC-8 the app's own calls reach the server as one `sale` row; KC-9 source wiring pins; KC-10 error codes are app problems; KC-11 monkey, 2000 imported-order lines |
 | `tests/tst_StockMovements.qml` (+9 functions, CI) | | CI only | `HINT_KINDS`, `validateKindHint`, `canCoalesce` with hints |
 | `tests/tst_OutboxStore_movements.qml` (+5) | | CI only | hint stored, equal hints merge, unequal queue apart, JSON round trip |
 | `tests/tst_Gateway_movements.qml` (+6) | | CI only | 8th argument queued, refused before queueing, silent without callback |
 | `tests/tst_InventoryStore_movementKinds.qml` (1 replaced by 6) | | CI only | clamp mode sends the hint and no movements; no kind = no hint; refused kind dropped, stock change kept; exact mode sends movements and no hint; coalescing of equal and unequal hints |
 | `tests/tst_FailureCause.qml` (+3 data rows) | | CI only | the three new codes are app problems |
-| Hand mutants | 21 | 21 of 21 killed | each guard in the validator, apply, handler, coalescing and wiring was broken once; the suite failed each time |
+| Hand mutants | 21 + 3 (sweep) | 24 of 24 killed | each guard in the validator, apply, handler, coalescing and wiring was broken once; the suite failed each time |
 
 ## 2. Regression tests
 Full functions suite RUN 1999/1999 green (36 of them new in this slice; no existing test file was edited, so no existing assertion was weakened). `.github` scripts suite RUN 1061/1061. Restock, order completion, import, delete, register and reason-policy suites unchanged and green.
@@ -43,6 +43,13 @@ Imported-order completion; the stuck-writes sheet (must stay empty); the registe
 Complete a normal order, edit an order (exchange), return goods, reopen an order, restock a product, add a product: each must produce the same rows as before.
 ### Monkey
 Two minutes of rapid import / complete / cancel / restock while toggling airplane mode: no crash, no stuck write, stock never negative, rows only `sale`, `receipt`, `sales_return` or `adjustment`.
+
+## Review sweep 1 (2026-11-20, tsadmin@gmail.com): added tests
+| Case | Covers | Run? |
+|---|---|---|
+| KH-21 | negative stock under a clamp: a deduction of 3 on stock -2 with hint `sale` lands on 0, the applied change is +2, so the row is `adjustment` +2 (never a `sale` of +2); the deduction is not refused | RUN, red under mutant M1 (direction check removed) and M3 (clamp no longer raises) |
+| KH-22 | `kindHint: null` is "no hint" on a delta call and on a delta op (accepted, the op is not lost); the mutation endpoints refuse it (KH-15) | RUN, red under mutant M2 (null refused) |
+On device: KH-21 needs a product whose stock was edited below 0 by hand in the console, so there is no app-only step; Node proves it. If you want it on a device: set a product's `stock` to -2 in the Firestore console, import an order of 3 of it, complete it: expect stock 0 and ONE row `adjustment` +2.
 
 ## 5. CI result
 See CHECKPOINT.md (CI is the oracle for the QML twins; not read at the time of writing).

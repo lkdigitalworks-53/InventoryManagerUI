@@ -1,10 +1,29 @@
+# REVIEW SWEEP 1 of PR #205 (session 2026-11-20; commit rule: `tsadmin@gmail.com` line in every message) - resume here
+**Rules in force:** no build/run; no Qt in the sandbox (CI is the oracle); fixes go on THIS branch (same PR); no parallel agents; push without asking; tests + test plan for every change; scope kept small per turn. PAT per command via `git -c http.extraHeader`, never in `.git/config` (remote URL scrubbed after the clone).
+**Skills used:** requesting-code-review, qt-qml-review (3 phases, single-threaded), ponytail-audit.
+**Baseline:** PR head `cb0380d`, base `main@0ce6534` (no drift), 3 commits, 30 files +1291 -67. CI comment on the PR was for an OLDER head (`37fd1a2`); the run on `cb0380d` (44661353548) was still in progress at the start: read it again.
+
+## Sweep steps
+- [x] S0 clone, scrub PAT from remote, checkout PR branch, read skills, PR, CI, checkpoint.
+- [x] S1 Phase 1 lint on the 9 touched QML files, filtered to ADDED lines: 25 hits = 23 JS-1 `var` (house style) + 2 JS-2 on `x !== ""` (false positives, the operator is strict). No change.
+- [x] S2 deep read of every changed code line and of `applyDelta`, `validateDeltaRequest`, `canCoalesce`, `enqueueDelta`, all stock-moving callers in `DataModel`: no code defect found. Judged: items 9 and 10 of the new KNOWN-ISSUES section.
+- [x] S3 baseline: functions 2026/2026, `.github` scripts 1061/1061 (local counts; CI counts differ by how it counts).
+- [x] S4 tests added (red-first by hand mutants, 3/3 killed): KH-21 (negative stock under a clamp, `sale` hint must degrade to `adjustment` +2), KH-22 (`kindHint: null` accepted as no hint on a delta call and a delta op).
+- [x] S5 docs: stale KNOWN-ISSUES section "Imported-order completion is typed `adjustment`" marked CLOSED (the PR had closed only item 7 of the S4a list); commit-identity item corrected; items 9, 10 added; Skill 177 rule 8; test plan rows; this checkpoint (step 8 said Skill 176, real number 177).
+- [ ] S6 push, read CI on the new head (QML twins have never run on this PR's final head), fix red.
+- [ ] S7 Taher: answers to CA-QUESTIONS.md; reviews, merges.
+
+## Not reviewed in depth (be honest)
+QML twins beyond reading their diff (unproven until CI); real-device behaviour (no device, no Qt here); the rest of `docs/superpowers/CA-QUESTIONS.md` content (legal/accounting claims are for the CA, not for a code review).
+
+---
 # CHECKPOINT: 2026-11-18 P1 S2d-2 (kind hint for derived stock rows) + CA questions document - resume here
 
 **Branch:** `feat/2026-11-18-p1-s2d2-derived-kind-hint`, cut from `main` @ `591077e` (#203 AP3a merged; #204 P1 S2e-1 merged before it).
 **Design:** `docs/superpowers/specs/2026-11-18-p1-s2d2-derived-kind-hint-design.md`. **Test plan:** `docs/superpowers/test-plans/2026-11-18-p1-s2d2-derived-kind-hint-test-plan.md`.
 **CA document (for Taher's review):** `docs/superpowers/CA-QUESTIONS.md`.
 **Previous checkpoint archived:** `specs/2026-11-18-ap3a-merged-prev-CHECKPOINT.md` (AP3a; its follow-ups AP3b and AP4 are NOT done and are NOT P1: still queued, see NEXT).
-**Commit rule (Taher's project instructions, replaces the earlier addresses in old checkpoints):** every commit message carries the line `lkdwtaher@gmail.com`; git user email `lkdwtaher@gmail.com`. The PAT is never written to the repo, a doc or memory.
+**Commit rule:** commits 1-3 of this PR carry `lkdwtaher@gmail.com`; from the review sweep of 2026-11-20 on, every commit message carries `tsadmin@gmail.com` and the git user email is `tsadmin@gmail.com` (task prompt of the sweep session). The PAT is never written to the repo, a doc or memory.
 **Rules in force:** no build or run; no Qt in the sandbox (CI is the oracle); always a branch; push without asking; tests + test plan for every change; out-of-scope findings go to `docs/superpowers/KNOWN-ISSUES.md`; one short scope per session (token-limited, multi-account). Node tests of `functions/` DO run here (`cd functions && npm ci && node --test`).
 
 ## P1 standing (read from `main` @ 591077e, 2026-11-18)
@@ -28,7 +47,7 @@
 - [x] 5. QML twins (CI only, written, not run): `tst_StockMovements`, `tst_OutboxStore_movements`, `tst_InventoryStore_movementKinds` (old clamp-mode case flipped), `tst_Gateway_movements`, `tst_FailureCause`.
 - [x] 6. Design doc + test plan + test-plans README row.
 - [x] 7. CA questions document (`docs/superpowers/CA-QUESTIONS.md`, 17 questions, 4 blocking, none answered by a CA).
-- [x] 8. Docs (done; index regenerated, `.github` suite 1061/1061, functions suite 1999/1999): KNOWN-ISSUES, ATOMIC-OPERATIONS-STATUS, README, AGENTS, SKILLS 176 + `skills-index.js --write`, then the `.github` suite (Skill 175 rule 7).
+- [x] 8. Docs (done; index regenerated, `.github` suite 1061/1061, functions suite 1999/1999): KNOWN-ISSUES, ATOMIC-OPERATIONS-STATUS, README, AGENTS, SKILLS 177 (was written as 176 before the rebase; the real number is 177) + `skills-index.js --write`, then the `.github` suite (Skill 175 rule 7).
 - [x] 9. Pushed `3c51b70`, PR #205 opened. CI on 3c51b70: Functions, Rules green; QML 3243 pass, 1 fail (my test used entity `orders`, which Gateway refuses earlier with no detail; fixed to `stock_batch` in the next commit); E2E was still running. Read CI again on the new head before trusting it.
 
 ## Deploy order (for Taher)
