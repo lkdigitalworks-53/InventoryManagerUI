@@ -12,8 +12,7 @@ var CUSTOM_INDEX = 6
 
 // Keys of every ListModel row, in order. A wiring test requires StockRegisterPage.qml's row delegate to declare
 // `required property` names equal to these (Skill 161 rule 2). `id` is NOT a key: it is a reserved QML word.
-var ROW_KEYS = ["productId", "title", "note", "deleted", "reconciles", "movementCount",
-                "openingText", "inText", "outText", "closingText", "currentText", "rowName"]
+var ROW_KEYS = ["productId", "title", "note", "reconciles", "openingText", "inText", "outText", "closingText", "rowName"]
 
 function _isInt(x) { return typeof x === "number" && isFinite(x) && Math.floor(x) === x }
 function _trim(s) { return typeof s === "string" ? s.trim() : "" }
@@ -103,14 +102,11 @@ function toListRow(r) {
         productId: r.id,
         title: r.title,
         note: r.note,
-        deleted: r.deleted === true,
         reconciles: r.reconciles === true,
-        movementCount: r.movementCount,
         openingText: r.openingText,
         inText: r.inText,
         outText: r.outText,
         closingText: r.closingText,
-        currentText: r.currentText,
         rowName: r.note !== "" ? name + " " + r.note + "." : name
     }
 }
@@ -180,4 +176,9 @@ function asOfText(readAtMs) {
     var h12 = h % 12 === 0 ? 12 : h % 12
     return "as of " + d.getUTCDate() + " " + Model.MONTHS[d.getUTCMonth()] + " " + d.getUTCFullYear() + ", " +
            h12 + ":" + (m < 10 ? "0" + m : m) + " " + (h < 12 ? "am" : "pm") + " (IST)"
+}
+
+// The same line from the summary of a shown answer; "" when there is none.
+function summaryAsOf(summary) {
+    return summary && typeof summary === "object" ? asOfText(summary.readAt) : ""
 }

@@ -22,8 +22,7 @@ const plain = (v) => JSON.parse(JSON.stringify(v));
 const OFF = 19800000;
 const at = (y, m0, d, h, mi) => Date.UTC(y, m0, d, h || 0, mi || 0) - OFF;   // an IST wall-clock instant
 const NOW = at(2026, 10, 20, 15, 42);                                          // 20 Nov 2026 15:42 IST
-const LITERAL_KEYS = ['productId', 'title', 'note', 'deleted', 'reconciles', 'movementCount', 'openingText', 'inText',
-  'outText', 'closingText', 'currentText', 'rowName'];
+const LITERAL_KEYS = ['productId', 'title', 'note', 'reconciles', 'openingText', 'inText', 'outText', 'closingText', 'rowName'];
 
 function loadSrc(src) {
   const ctx = { Model: M };
@@ -92,7 +91,7 @@ function battery(P) {
   eq('ok keeps the window', s1.win, win);
   ok('quiet hidden by default', s1 && s1.rows.length === 1 && s1.summary.hiddenQuiet === 1 && s1.summary.shown === 1);
   eq('row keys in order', s1.rows[0] && Object.keys(plain(s1.rows[0])), LITERAL_KEYS);
-  const types = { productId: 'string', title: 'string', note: 'string', deleted: 'boolean', reconciles: 'boolean', movementCount: 'number', openingText: 'string', inText: 'string', outText: 'string', closingText: 'string', currentText: 'string', rowName: 'string' };
+  const types = { productId: 'string', title: 'string', note: 'string', reconciles: 'boolean', openingText: 'string', inText: 'string', outText: 'string', closingText: 'string', rowName: 'string' };
   ok('row types', s1.rows[0] && LITERAL_KEYS.every((k) => typeof s1.rows[0][k] === types[k]));
   const s2 = P.stateFromResult({ ok: true, body, window: win }, win, true);
   ok('showAll keeps quiet rows', s2.rows.length === 2 && s2.summary.hiddenQuiet === 0);
@@ -117,10 +116,11 @@ function battery(P) {
 
   // rows
   const lr = P.toListRow({ id: 'p9', title: 'T', note: '', deleted: false, reconciles: true, moved: true, movementCount: 2, openingText: '1', inText: '2', outText: '3', closingText: '0', currentText: '0' });
-  ok('no id key', !('id' in lr) && !('moved' in lr));
+  ok('no id key, no unused keys', !('id' in lr) && !('moved' in lr) && !('deleted' in lr) && !('movementCount' in lr) && !('currentText' in lr));
   eq('row name plain', lr.rowName, 'T. Opening 1, in 2, out 3, closing 0.');
   eq('row name with note', P.toListRow({ id: 'p9', title: 'T', note: 'Ledger 5 vs stock 4', deleted: false, reconciles: false, movementCount: 2, openingText: '1', inText: '2', outText: '3', closingText: '0', currentText: '0' }).rowName, 'T. Opening 1, in 2, out 3, closing 0. Ledger 5 vs stock 4.');
-  eq('deleted flag kept', P.toListRow({ id: 'p9', title: 'T', note: 'n', deleted: true, reconciles: true, movementCount: 0, openingText: '0', inText: '0', outText: '0', closingText: '0', currentText: '0' }).deleted, true);
+  eq('reconciles kept', P.toListRow({ id: 'p9', title: 'T', note: 'n', reconciles: false, openingText: '0', inText: '0', outText: '0', closingText: '0' }).reconciles, false);
+  eq('reconciles is a strict boolean', P.toListRow({ id: 'p9', title: 'T', note: '', reconciles: 'yes', openingText: '0', inText: '0', outText: '0', closingText: '0' }).reconciles, false);
   eq('productId from id', lr.productId, 'p9');
 
   // refusals
@@ -198,6 +198,9 @@ function battery(P) {
   eq('as of is IST not UTC', P.asOfText(Date.UTC(2026, 10, 19, 19, 0)), 'as of 20 Nov 2026, 12:30 am (IST)');
   eq('as of one ms', P.asOfText(1).startsWith('as of 1 Jan 1970'), true);
   for (const j of [0, -5, NaN, Infinity, null, undefined, '5', {}]) eq('as of junk ' + String(j), P.asOfText(j), '');
+  eq('summary as of', P.summaryAsOf({ readAt: NOW }), 'as of 20 Nov 2026, 3:42 pm (IST)');
+  eq('summary as of missing read time', P.summaryAsOf({ readAt: 0 }), '');
+  for (const j of [null, undefined, 5, 'x']) eq('summary as of junk ' + String(j), P.summaryAsOf(j), '');
 
   // seeded monkey: nothing throws, shapes hold
   let seed = 12345; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
@@ -244,7 +247,7 @@ test('SRP-04 the file is a pragma library that imports only the model', () => {
 const MUTANTS = [
   ['custom index moved', 'var CUSTOM_INDEX = 6', 'var CUSTOM_INDEX = 5'],
   ['chip label changed', '"This FY"', '"FY"'],
-  ['row key renamed', '"movementCount",\n', '"movements",\n'],
+  ['row key renamed', '"reconciles", "openingText"', '"reconciles", "opening"'],
   ['chip above custom accepted', 'chipIndex > CUSTOM_INDEX)', 'chipIndex > CUSTOM_INDEX + 1)'],
   ['non-int chip accepted', '!_isInt(chipIndex) || ', ''],
   ['bad preset passes', 'return p.ok ? { ok: true, win: p } : { ok: false, text: Model.message("window") }', 'return { ok: true, win: p }'],
@@ -270,7 +273,9 @@ const MUTANTS = [
   ['cache body not checked', '|| !cached.body)', '|| false)'],
   ['from body null builds', 'return body ? _ok(body, win, showAll) : initialState()', 'return _ok(body, win, showAll)'],
   ['productId wrong', 'productId: r.id,', 'productId: r.title,'],
-  ['deleted dropped', 'deleted: r.deleted === true,', 'deleted: false,'],
+  ['reconciles dropped', 'reconciles: r.reconciles === true,', 'reconciles: true,'],
+  ['reconciles loose', 'reconciles: r.reconciles === true,', 'reconciles: !!r.reconciles,'],
+  ['as of summary unguarded', 'return summary && typeof summary === "object" ? asOfText(summary.readAt) : ""', 'return asOfText(summary.readAt)'],
   ['note not in name', 'r.note !== "" ? name', 'false ? name'],
   ['note always in name', 'r.note !== "" ? name', 'true ? name'],
   ['label ok wrong', 'if (status === "ok") return "Reload register"', 'if (status === "idle") return "Reload register"'],
@@ -318,6 +323,7 @@ for (const [name, from, to] of MUTANTS) {
     const was = process.env.TZ;
     let failures;
     try { process.env.TZ = 'Pacific/Auckland'; failures = battery(loadSrc(SRC.replace(from, to))); }
+    catch (e) { failures = ['the battery threw: ' + e.message]; }   // a throw is a kill too
     finally { if (was === undefined) delete process.env.TZ; else process.env.TZ = was; }
     assert.ok(failures.length > 0, 'mutant survived: ' + name);
   });
