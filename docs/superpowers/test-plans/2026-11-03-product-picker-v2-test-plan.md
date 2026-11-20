@@ -65,6 +65,12 @@ Was, before CI: the two derived twins; `BottomSheet` with `scrollBody: false` an
 - **Mutation:** 18 hand mutants of `ceilingOf`, `ceilingFor`, `stepUp`, `stockShortfalls`, `shortfallText`, `availableFor`: all killed (two survivors on the first run led to two added assertions). Sweep 1: 6 more of `heldAtCompletion`/`ceilingFor`/`stepUp`, 7 of `lineFields` and its dialog wiring, 7 of `stepQty` and its wiring, all killed.
 - **Rules, E2E:** no Firestore rule and no server change; the E2E of S5a is unchanged. Edit Order on a COMPLETED order still has no E2E (KNOWN-ISSUES 34).
 
+### S5c unit and wiring tests (2026-11-20)
+- **Unit, helpers (Node and QML twin):** CSG-01..07 `CartStepperGeometry` (48 target, 32 frame, scaling, junk unit, width, extras, fits 320 dp); PGD-01..11 `PickerGuards` (`isRepeat`: window edge, first sight, clock backwards, junk, zero window; `backRoute`: pass, swallow, dismiss-confirm, request-close, junk state); BR-01..11 `BackRouter` (none, skipped closed, first open closed, busy swallowed, consumed, not consumed, only `true` counts, throwing hook, optional hook, busy beats hook, press stops at the consumer).
+- **Wiring (Node, real function text run in a sandbox):** S5C-01..04 both dialogs use `CartStepper`, own rows, same calls, the real minus and remove handlers; S5C-05..06 `CartStepper` sizes, spoken names, remove hidden unless removable; S5C-07..09 the real `handleBack` (not up, idle, busy, question open, one press on two routes, clock jump); S5C-10 the real `_toggleStockA11y`; S5C-11 BottomSheet's real key handler (4 combinations); S5C-12 only one `guardClose` sheet and both dialogs expose `consumeBack`; S5C-13 the real router with the real `consumeBack` of each dialog (sheet up: dialog stays open; sheet down: closes as before); S5C-14 `Main._handleBack` goes through the router.
+- **Mutation:** 26 hand mutants of the helpers (24 killed, 1 redundant guard deleted, 1 equivalent), 15 of the QML sources (all killed).
+- **Rules, E2E:** none: no server and no rule change.
+
 ## 2. Functional, rules, e2e
 
 - **Functional:** the pure helpers are driven together in Node: a catalog of 300 generated products through `filter`, then `summarize` with every guard, then a `PickerDraft` build, then `commitPlan` applied to an order, then the result through the REAL `CompletionPlan.build` (loaded as text, Skill 83) to prove the order completes, and that `MAX_LINES` new lines stay under `MAX_OPS`. Built in S1 as `functions/test/pickerFlow.test.js`, `FLOW-01..10`, RUN 10/10 ( happy path, hidden products never reach the draft, a draft that outlives a filter change, a product that goes out of stock mid-draft and is reconciled, an order at the line limit, a product spread over many batches that exceeds `MAX_OPS` and is refused by `CompletionPlan` as `too-many-ops`, repeated product across two commits). The completed-order edit is covered in S4. Status: RUN 8/8.
@@ -246,6 +252,24 @@ Prerequisites: dev tenant. Product A stock 5, price 10. Product F stock 2.5 (Fir
 119. (Sweep F3, New Order stepper.) New Order, add A x3 with a discount on the row. Console: set A stock to 0, refresh the app list. Tap `+` on the A row: expect the row STAYS at 3 with its discount (it used to vanish). Tap Create: expect the red message "<A name>: only 0 in stock" and nothing created. Tap `-` three times: 2, 1, then the row is removed. Regression: with A stock 5 and a row of 2, `+` goes 3, 4, 5 and stops at 5.
 Node only (no device step): sheet, stepper and save agree on every status x stock x held x quantity (EOP-35); the new save check equals the old one for one-line orders (EOW-22); an unchanged or smaller completed order is never refused over duplicate or fractional lines, 600 seeded orders (EOP-43).
 
+### Slice S5c checks (touch targets, Back, in-stock toggle; need a build, Taher decides)
+Prerequisites: dev tenant, products A (stock 5, price 10) with a long name (about 30 characters), B (stock 3, price 10). A pending order P1 holding A x2 and B x1. Phone at 360 dp width if possible; then repeat 120 and 124 at the largest system font.
+120. Happy. New Order, add A and B through Add products, close the sheet. Each cart card shows the name and price on the top line and a `- qty +` row under it, right aligned. Tap `+` and `-` with a thumb, not a fingertip: every tap lands, including slightly off the painted frame (the frame is 32 dp, the target 48 dp). The long name of A uses the full width.
+121. Edit Order on P1. Each line shows the card, then one row with the price field, `- qty +` and a red `x`. Tap `+`, `-`, `x` with a thumb: each lands. `-` at 1 removes the line. The title of A is not squeezed.
+122. Back, happy. New Order, Add products, tick two products. Press the system Back: expect the question "Discard 2 items?" and the sheet and the New Order dialog STAY open. Press Back again: the question closes and the sheet stays (keep picking). Press Back a third time (question again), then tap Discard: the sheet closes, the New Order dialog stays open.
+123. Back, no draft. Open Add products, tick nothing, press Back: the sheet closes, the dialog stays. Press Back again: the dialog closes as before.
+124. Edit Order, same as 122 and 123 on P1. The dialog and the order are never closed by the first Back while the sheet is up.
+125. Negative, Back while committing. Tick a product and press Add; press Back during the instant the sheet fades. Expect no crash and no lost lines (the commit stands).
+126. Negative, double Back. Tick a product, press Back twice as fast as you can. Expect ONE question, still showing (the second press is the same press as far as the sheet is concerned), not a closed question.
+127. Edge. Quantity of 999 in a line: the number does not touch the `-` or `+` frames harshly; the buttons still work.
+128. Edge. Rotate the phone with the sheet up and a draft, press Back: the question appears, the draft is intact.
+129. Edge. Open the sheet, press the Home button, come back, press Back: same as 122.
+130. TalkBack on. Focus a stepper button: it speaks "Decrease quantity of <name>", "Increase quantity of <name>" and (Edit Order) "Remove <name>". Double tap each: it acts once.
+131. TalkBack on, in the sheet. Double tap "In stock only": it flips ONCE (on, then off on the next double tap), never twice. This decides KNOWN-ISSUES 19a: if it ever flips twice, tell me and the gate window changes; if it always flips once with the gate removed too, the gate can go.
+132. Monkey. New Order with 3 lines: hammer `+`, `-` on all three, open the sheet, add, press Back, discard, rotate. Expect no crash, quantities never above stock, subtotal equals the lines.
+133. Regression. Steps 104 to 119 of S5a and S5b still behave as written.
+Node only (no device step): the Back decision matrix (BR, PGD), both dialogs' `consumeBack` through the real router (S5C-13), the stepper handlers (S5C-04).
+
 ### Affected areas
 | Area | What to check |
 |---|---|
@@ -253,7 +277,8 @@ Node only (no device step): sheet, stepper and save agree on every status x stoc
 | Auto-approve on New Order | Stock is deducted once, never twice. |
 | Edit Order on a completed order | Booked tax and discount are unchanged on existing lines; a removed line re-added returns at its booked tax; the limit is on-hand plus the original units minus the current ones. |
 | Edit Order on a pending or processing order | Limit is on-hand minus the order's units; a picker-built order completes; one over the size is refused in the sheet. |
-| Cart row stepper in Edit Order | Unchanged (its own formula, KNOWN-ISSUES 28). |
+| Cart row stepper in Edit Order and New Order | 48 dp targets on their own row (S5c); the stock formula is the shared one since S5b. |
+| Android Back with any dialog open | Router order unchanged: the first open dialog in `_allDialogs()` closes, a busy one swallows Back. Only a dialog with the product sheet up answers differently (S5c, checks 122 to 126). Spot check: Back on Add Product, Edit Product, order detail, sign-out sheet. |
 | Order approval (completion) | A picker-built order completes; one with too many lines is refused with the "too many changes" cause, not a crash. |
 | Other bottom sheets | Open every sheet that uses `BottomSheet`: scrolling and footers behave as before (`scrollBody` default is true). |
 | Inventory page, restock, product delete | Unchanged. |
@@ -271,7 +296,8 @@ Run the existing New Order, Edit Order, approve-all and restock checks from the 
 | S4 | picker, New Order and Edit Order files 299/299; functions suite 1616/1616 (after merging main @ `4c0f360`; 1531 before), scripts 1049/1049 after `npm ci` | PR #196 on `c4e612a`: QML 3049/3049 (includes the new `tst_EditOrderPicker` twin and the regenerated `tst_NewOrderPicker`), Functions 1616, Rules 108, E2E 111, all green, 4884/4884; mergeable clean | 27 hand mutants (script kept out of the repo): first run 3 survivors, 2 real gaps fixed with tests, 1 equivalent; final run all killed except that equivalent one | n/a (view layer; the pure helper's branches are all driven by EOP-01..30) | not yet. PR #196 sweep (2026-11-12): +7 Node tests (NOP-31, EOP-27..30, EOW-17, EOW-18), functions suite 1623/1623, QML twins regenerated, CI green on `aa09f9c` (5017/5017). Second sweep (2026-11-13): EOP-24 deleted, +EOP-31, +EOW-19; functions suite 1724/1724, scripts 1049/1049; 34 hand mutants on `EditOrderPicker.js` and `NewOrderPicker.js` all killed (script not kept) plus the new NaN-guard mutant killed by EOP-31; 40,000-order seeded fuzz of `applyPlan` clean after the fix; QML twin regenerated, CI pending. No device check changes (no screen change) |
 | S5a | functions suite 1793/1793 re-run by hand in the PR #200 sweep (1791 at the PR head, +SHEET-44, +NOP-32; the earlier 1786 in this cell was not the measured number), scripts 1049/1049 per the PR; E2E 3/3 offline dry run, then 3/3 on the CI emulator | PR #200 head `c68b40c`: QML 3073, Functions 1791, Rules 129, E2E 117, all green (5110/5110); the sweep commit regenerates `tst_PickerSheetModel` and `tst_ProductPickability`, its CI result is the next signal | 6 hand mutants on the new branch of `ProductPickability.js` (drop the `inOrder` gate, default false, flipped gate, hide instead of disable, wrong reason, no `typeof` guard): all killed on the first run | n/a (view layer; every branch of the new line is driven by PICK-35..42) | not yet (checks 97 to 101) |
 | S5b | functions suite 1909/1909 after sweep 1 (baseline 1882; S5b +18, sweep +9), scripts 1049/1049 | green on the pre-rebase merged head (QML 3185, Functions 1909, Rules 129, E2E 121 = 5344/5344); read CI again on the rebased head | 16 listed (104 to 119) | 18 hand mutants of the new helper code, all killed after two added assertions | not yet |
-| S5c to S5e | not yet | not yet | n/a | n/a | not yet |
+| S5c | new Node tests 43 (CSG 7, PGD 11, BR 11, S5C 14); functions suite 2033/2033, scripts 1061/1061 | pending: read CI on the PR head | 26 helper mutants (24 killed, 1 redundant guard deleted, 1 equivalent), 15 QML-source mutants all killed | n/a | not yet (checks 120 to 133) |
+| S5d to S5e | not yet | not yet | n/a | n/a | not yet |
 
 ## Known gaps stated up front
 - No line coverage number exists for the Felgo view layer.
