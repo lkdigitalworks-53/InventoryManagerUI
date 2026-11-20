@@ -65,3 +65,5 @@ Prerequisites: at least one category, one supplier named "Acme Farms", the Inven
 
 ## 5. CI result
 Head `ffe3a28` (rebased onto main@6951b1d): QML, Functions, Rules, E2E and PR Test Summary all green; the QML twin `tst_AddProductForm.qml` ran in CI. The dialog itself is device-only (steps above).
+
+After review sweep 1 (head `123a827`): QML 3274/3274 (the twin, now 12 functions, ran), Functions 2065/2065, Rules 129/129, E2E 121/121 = 5589/5589, all green. Device steps 22 to 28 are new and still to run.

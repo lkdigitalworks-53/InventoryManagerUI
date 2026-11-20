@@ -10,8 +10,8 @@
 - [x] S3 baseline: functions 2059/2059 (before), scripts 1061/1061.
 - [x] S4 fixes + tests, 10 hand mutants all killed: functions now 2065/2065 (+6: FM-12b, FM-12c, FM-12d, FM-13b, SB-17, SB-18), 2 new QML twin functions (CI only).
 - [x] S5 docs: KNOWN-ISSUES 65 amended, 67 (fixed), 68 (OPEN decimals), 69 (not checked); design D-AP3b-10; Skill 178 rules 11-15 (index still current); test plan rows + device steps 22-28; STATUS evidence line; AGENTS line.
-- [ ] S6 push (this commit), read CI on the new head, fix anything red.
-- [ ] S7 final report in chat.
+- [x] S6 pushed `123a827`; CI on it: QML 3274/3274, Functions 2065/2065, Rules 129/129, E2E 121/121 = 5589/5589, `mergeable_state: clean`, 5 commits. This checkpoint line came in a docs-only commit after it, which re-runs CI: glance at it before merging.
+- [x] S7 final report given in chat.
 - [ ] S8 Taher: answer D-AP3b-2/9 (fractional stock, below-cost), D-AP3b-10 (markup floor), item 68 (decimals); review and merge. Not reviewed: see below.
 
 ## Fixed in this sweep (KNOWN-ISSUES 67)
