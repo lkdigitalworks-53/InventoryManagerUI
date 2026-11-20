@@ -609,7 +609,7 @@ test('S2f-3 caller pin: nothing else in qml/ applies a tenant context or revives
 test('S2f-3 back key: _handleBack skips the overlay and tab steps while the blocked screen is up, dialogs stay first', () => {
   const main = fs.readFileSync(path.join(REPO, 'qml/Main.qml'), 'utf8');
   const body = fnText(main, '_handleBack');
-  const iDialogs = body.indexOf('dialogs[i].opened');
+  const iDialogs = body.indexOf('BackRouter.route(_allDialogs())');
   const iGuard = body.indexOf('if (!accessBlockedPage.visible)');
   const iProfile = body.indexOf('profilePage.visible');
   const iTab = body.indexOf('navigation.currentIndex = 0');

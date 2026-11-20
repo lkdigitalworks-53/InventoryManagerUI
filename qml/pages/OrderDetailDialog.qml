@@ -510,6 +510,11 @@ BottomSheet {
     }
 
     // Searchable product sheet with a quantity stepper per row (picker v2). Declared here, opened by "Add products".
+    // The app's Back router (Main.qml, BackRouter.js) asks the open dialog first. With the product sheet up, Back belongs
+    // to the sheet (it asks "Discard these items?" when a draft exists); without this the router would close THIS dialog
+    // under the sheet and the draft would be lost without a question. false = not ours, the router closes the dialog.
+    function consumeBack() { return picker.handleBack() }
+
     ProductPickerSheet {
         id: picker
         products: InventoryStore.products
@@ -692,122 +697,97 @@ BottomSheet {
                                                                                      : Constants.grad4
                     }
 
-                    RowLayout {
-                        spacing: dp(4)
-                        Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
+                  }
 
-                        // Editable per-line unit price. Commits on focus-loss /
-                        // accept (never per-keystroke) so the subtitle's
-                        // model.price binding and this field don't form a loop.
-                        // Shows a plain number while focused for easy typing,
-                        // formatted currency otherwise. The delegate is rebuilt
-                        // per row, so seeding `text` from model.price is safe.
-                        QQC.TextField {
-                            id: priceField
-                            Layout.preferredWidth: dp(64)
-                            Layout.alignment: Qt.AlignVCenter
-                            text: OrdersStore.formatCurrency(model.price)
-                            inputMethodHints: Qt.ImhFormattedNumbersOnly
-                            font.pixelSize: sp(Constants.fsBody)
-                            horizontalAlignment: Text.AlignRight
-                            selectByMouse: true
-                            padding: 0
-                            leftPadding: dp(6)
-                            rightPadding: dp(6)
-                            topPadding: dp(6)
-                            bottomPadding: dp(6)
-                            background: Rectangle {
-                                radius: dp(8)
-                                color: priceField.enabled ? Constants.cardBg : Constants.subtleBg
-                                border.color: priceField.activeFocus ? Constants.primaryBlue : Constants.borderColor
-                                border.width: priceField.activeFocus ? 2 : 1
-                            }
-                            onActiveFocusChanged: {
-                                if (activeFocus) {
-                                    text = String(model.price)
-                                    selectAll()
-                                } else {
-                                    text = OrdersStore.formatCurrency(model.price)
-                                }
-                            }
-                            function _commitPrice() {
-                                var v = parseFloat(String(text).replace(/[^0-9.]/g, ""))
-                                if (!isNaN(v) && v >= 0) {
-                                    products.setProperty(row.rowIdx, "price", v)
-                                    dlg.recomputeSubtotal()
-                                }
-                                // Re-sync the field to whatever actually committed
-                                // (rejects empty/NaN/negative by keeping old price).
-                                var cur = products.get(row.rowIdx)
-                                text = OrdersStore.formatCurrency(cur ? cur.price : model.price)
-                            }
-                            onEditingFinished: _commitPrice()
-                            onAccepted: _commitPrice()
-                        }
+                  // ── Per-line controls on their own row (picker v2 S5c): unit price, quantity stepper, remove.
+                  // They sat in the ListCard's trailing slot at 28 dp; as 48 dp targets they need about 250 dp,
+                  // which would leave the title no room on a phone, so they get a row under the card.
+                  RowLayout {
+                      Layout.fillWidth: true
+                      Layout.leftMargin: dp(14)
+                      Layout.rightMargin: dp(14)
+                      spacing: dp(4)
 
-                        QQC.AbstractButton {
-                            Layout.preferredWidth: dp(28); Layout.preferredHeight: dp(28)
-                            implicitWidth: dp(28); implicitHeight: dp(28)
-                            padding: 0
-                            background: Rectangle { radius: dp(8); border.color: Constants.borderColor; border.width: 1; color: "transparent" }
-                            contentItem: Item {
-                                Icon { anchors.centerIn: parent; name: "remove"; size: sp(16); color: Constants.textPrimary }
-                            }
-                            onClicked: {
-                                var q = model.quantity - 1
-                                if (q <= 0) {
-                                    Qt.callLater(dlg.recomputeSubtotal)
-                                    // Removing the row destroys THIS delegate (and
-                                    // its JS context), so a recompute called inline
-                                    // right after may not run — defer it to the event
-                                    // loop where it executes in the dialog's context.
-                                    products.remove(row.rowIdx)
-                                } else {
-                                    products.setProperty(row.rowIdx, "quantity", q)
-                                    dlg.recomputeSubtotal()
-                                }
-                            }
-                        }
-                        Text {
-                            text: String(model.quantity)
-                            color: Constants.textPrimary
-                            font.pixelSize: sp(Constants.fsBody)
-                            font.bold: true
-                            Layout.preferredWidth: dp(22)
-                            horizontalAlignment: Text.AlignHCenter
-                        }
-                        QQC.AbstractButton {
-                            Layout.preferredWidth: dp(28); Layout.preferredHeight: dp(28)
-                            implicitWidth: dp(28); implicitHeight: dp(28)
-                            padding: 0
-                            background: Rectangle { radius: dp(8); border.color: Constants.borderColor; border.width: 1; color: "transparent" }
-                            contentItem: Item {
-                                Icon { anchors.centerIn: parent; name: "add"; size: sp(16); color: Constants.textPrimary }
-                            }
-                            onClicked: {
-                                // One + tap: the ceiling is the same one the product sheet and Save use
-                                // (Edit.ceilingFor): whole units on hand, plus on a COMPLETED order the
-                                // units it already took out of stock. A product that left the catalog has
-                                // no stock, so its row can not go up. Picker v2, S5b.
-                                var inv = model.productId ? InventoryStore.getById(model.productId) : null
-                                var q = Edit.stepUp(model.quantity, model.productId, inv, dlg._pickerCtx(), dlg._pickerLinesNow())
-                                products.setProperty(row.rowIdx, "quantity", q)
-                                dlg.recomputeSubtotal()
-                            }
-                        }
-                        QQC.AbstractButton {
-                            Layout.preferredWidth: dp(28); Layout.preferredHeight: dp(28)
-                            implicitWidth: dp(28); implicitHeight: dp(28)
-                            padding: 0
-                            background: Rectangle { radius: dp(8); color: "transparent" }
-                            contentItem: Item {
-                                Icon { anchors.centerIn: parent; name: "close"; size: sp(14); color: Constants.danger }
-                            }
-                            // Defer recompute: products.remove destroys this
-                            // delegate's context, so run it on the event loop.
-                            onClicked: { Qt.callLater(dlg.recomputeSubtotal); products.remove(row.rowIdx) }
-                        }
-                    }
+                      Item { Layout.fillWidth: true }
+                      // Editable per-line unit price. Commits on focus-loss /
+                      // accept (never per-keystroke) so the subtitle's
+                      // model.price binding and this field don't form a loop.
+                      // Shows a plain number while focused for easy typing,
+                      // formatted currency otherwise. The delegate is rebuilt
+                      // per row, so seeding `text` from model.price is safe.
+                      QQC.TextField {
+                          id: priceField
+                          Layout.preferredWidth: dp(64)
+                          Layout.alignment: Qt.AlignVCenter
+                          text: OrdersStore.formatCurrency(model.price)
+                          inputMethodHints: Qt.ImhFormattedNumbersOnly
+                          font.pixelSize: sp(Constants.fsBody)
+                          horizontalAlignment: Text.AlignRight
+                          selectByMouse: true
+                          padding: 0
+                          leftPadding: dp(6)
+                          rightPadding: dp(6)
+                          topPadding: dp(6)
+                          bottomPadding: dp(6)
+                          background: Rectangle {
+                              radius: dp(8)
+                              color: priceField.enabled ? Constants.cardBg : Constants.subtleBg
+                              border.color: priceField.activeFocus ? Constants.primaryBlue : Constants.borderColor
+                              border.width: priceField.activeFocus ? 2 : 1
+                          }
+                          onActiveFocusChanged: {
+                              if (activeFocus) {
+                                  text = String(model.price)
+                                  selectAll()
+                              } else {
+                                  text = OrdersStore.formatCurrency(model.price)
+                              }
+                          }
+                          function _commitPrice() {
+                              var v = parseFloat(String(text).replace(/[^0-9.]/g, ""))
+                              if (!isNaN(v) && v >= 0) {
+                                  products.setProperty(row.rowIdx, "price", v)
+                                  dlg.recomputeSubtotal()
+                              }
+                              // Re-sync the field to whatever actually committed
+                              // (rejects empty/NaN/negative by keeping old price).
+                              var cur = products.get(row.rowIdx)
+                              text = OrdersStore.formatCurrency(cur ? cur.price : model.price)
+                          }
+                          onEditingFinished: _commitPrice()
+                          onAccepted: _commitPrice()
+                      }
+
+                      CartStepper {
+                          removable: true
+                          value: model.quantity
+                          itemName: model.name
+                          onDecrement: {
+                              var q = model.quantity - 1
+                              if (q <= 0) {
+                                  Qt.callLater(dlg.recomputeSubtotal)
+                                  // Removing the row destroys THIS delegate (and
+                                  // its JS context), so a recompute called inline
+                                  // right after may not run — defer it to the event
+                                  // loop where it executes in the dialog's context.
+                                  products.remove(row.rowIdx)
+                              } else {
+                                  products.setProperty(row.rowIdx, "quantity", q)
+                                  dlg.recomputeSubtotal()
+                              }
+                          }
+                          onIncrement: {
+                              // One + tap: the ceiling is the same one the product sheet and Save use
+                              // (Edit.ceilingFor): whole units on hand, plus on a COMPLETED order the
+                              // units it already took out of stock. A product that left the catalog has
+                              // no stock, so its row can not go up. Picker v2, S5b.
+                              var inv = model.productId ? InventoryStore.getById(model.productId) : null
+                              var q = Edit.stepUp(model.quantity, model.productId, inv, dlg._pickerCtx(), dlg._pickerLinesNow())
+                              products.setProperty(row.rowIdx, "quantity", q)
+                              dlg.recomputeSubtotal()
+                          }
+                          onRemoveRequested: { Qt.callLater(dlg.recomputeSubtotal); products.remove(row.rowIdx) }
+                      }
                   }
 
                   // ── Per-line discount (₹ / %) ───────────────────────────

@@ -5239,3 +5239,20 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 
 **The check:** grep the dialog for `parseFloat(`, `parseInt(` and any store call that creates something before the main operation; type `2.5`, `1e3`, `12abc` and a pasted 600-character text on a device.
 
+## Skill 179: Before fixing a key or a tap, find which route really delivers it; make a two-route fix idempotent; give a small control a big target without eating its row
+
+**Why:** S5c set out to fix a Back key that "needs focus" (KI 8) and found the app never routes Back that way: `Main.qml` closes the first open dialog from Felgo's global signal, so the sheet's own handler was beside the point and the dialog under the sheet could close with the draft. The 28 dp steppers could not simply grow: the Edit Order controls would have needed about 250 dp beside the title.
+
+**Rules:**
+1. Before designing a fix for an input event, read the app's own router (`_handleBack`, `onBackButtonPressedGlobally`) and list every route that can deliver it. A comment that says "if this does not fire, nothing is lost" is a guess until the router is read.
+2. When two routes may both deliver one press, put one gate in the owner (`isRepeat(lastAt, now, windowMs)`): a repeat inside the window is the same press, a clock that goes backwards or a first call is never a repeat. Keep the clock out of the helper (the caller passes `now`) so it is testable.
+3. Move a router's rules into a pure function over plain objects (`BackRouter.route`): busy swallows, a consumer stops the press, anything else closes as before, a throwing hook falls back to the old behaviour. Main.qml keeps one line. Update the guards that pinned the old text ON PURPOSE and say so in the plan.
+4. A sheet nested in a dialog is invisible to a router that lists dialogs: give the dialog a `consumeBack()` that asks the sheet, and pin that BOTH dialogs have it (S5C-12/13).
+5. Opt-in contract changes (`routesBack`, default false) keep every other owner working; add a test that fails when a second owner appears without a decision.
+6. A touch target is its own size, separate from the painted frame: 48 dp `AbstractButton`, 32 dp frame centered, name on the button (`Accessible.name`). Before enlarging, compute the row's width budget in a pure helper (`rowWidth`) and move the controls to their own row if it does not fit; never shrink the target to fit.
+7. Run the REAL function text of the sheet, the dialogs and the key handler in a `vm` sandbox against the real helpers; give the sandbox the bare names the function calls (`requestClose`), not only `root.` ones (the first S5C run failed on exactly that).
+8. Hand mutants: an equivalent survivor is named in the plan, a redundant guard is deleted (`windowMs <= 0` was implied by the comparison).
+9. Push the code commit BEFORE writing docs: the chat sandbox resets.
+
+**The check:** `grep -n "dp(28)" qml/pages/*Order*`: no stepper hit. `node --test functions/test/pickerS5cWiring.test.js`: green. On a device: checks 122 to 126 (Back with and without a draft) and 131 (TalkBack toggle).
+

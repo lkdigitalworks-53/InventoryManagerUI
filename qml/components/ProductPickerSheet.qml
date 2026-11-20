@@ -6,6 +6,7 @@ import "../helper"
 import "../model"
 import "../helper/PickerDraft.js" as Draft
 import "../helper/PickerSheetModel.js" as Model
+import "../helper/PickerGuards.js" as Guards
 
 // Searchable product sheet with a quantity stepper per row (picker v2, slice S2, design
 // docs/superpowers/specs/2026-11-03-product-picker-v2-design.md). DORMANT in S2: nothing instantiates it until S3 (New
@@ -41,7 +42,9 @@ BottomSheet {
     secondaryAction: qsTr("Cancel")
     scrollBody: false      // the ListView below owns scrolling and the footer stays pinned (D5)
     guardClose: true       // X, Cancel, tap outside and Back ask first when a draft exists (D1)
-    focus: true            // so the Back key reaches BottomSheet's Keys handler
+    focus: true            // so the Back key can reach BottomSheet's Keys handler (the app's global Back router is the other route, see handleBack)
+    routesBack: true       // Back goes to handleBack() below (idempotent, dismisses the discard question), not straight to requestClose()
+    onBackRequested: handleBack()
     primaryEnabled: !_committed && _view !== null && _view.canCommit.ok
 
     // ---- State ----
@@ -142,6 +145,35 @@ BottomSheet {
     function _typed(productId, text, maxQty) { _draft = Draft.setQty(_draft, productId, text, maxQty); rebuild(false) }
     // One place for the in-stock toggle: the tap and the two accessibility actions (TalkBack) all land here.
     function _toggleStock() { stockToggle.checked = !stockToggle.checked; _inStockOnly = stockToggle.checked; rebuild(true) }
+    // The accessibility actions only. One TalkBack double tap may send BOTH pressAction and toggleAction on a platform
+    // we have not seen (KNOWN-ISSUES 19a); two flips would cancel out. A second action inside TOGGLE_REPEAT_MS is the
+    // same gesture. The touch tap does not use this, so a fast real double tap still flips twice, as the person asked.
+    property double _lastToggleAt: 0
+    function _toggleStockA11y() {
+        var now = Date.now()
+        if (Guards.isRepeat(_lastToggleAt, now, Guards.TOGGLE_REPEAT_MS)) return
+        _lastToggleAt = now
+        _toggleStock()
+    }
+
+    // The system Back key (KNOWN-ISSUES 8, 19b). Two routes can deliver it: BottomSheet's key handler (when this sheet
+    // holds focus) and the app's global router (Main.qml _handleBack, through the owning dialog's consumeBack()), which
+    // would otherwise close the dialog UNDER this sheet and lose the draft without the discard question. Either route
+    // may fire, or both for one press, so a repeat inside BACK_REPEAT_MS is dropped. Returns true when the press was
+    // dealt with here (the router then leaves the dialog open) and false when the sheet is not up (the router then
+    // closes the dialog as before). Busy: nothing happens and it must not fall through. The discard question open:
+    // Back answers it "keep picking". Otherwise: close, or ask the question when a draft exists (onCloseRequested).
+    property double _lastBackAt: 0
+    function handleBack() {
+        var route = Guards.backRoute({ opened: root._live, busy: root.busy, confirmOpen: discardConfirm.visible })
+        if (route === "pass") return false
+        var now = Date.now()
+        if (Guards.isRepeat(_lastBackAt, now, Guards.BACK_REPEAT_MS)) return true
+        _lastBackAt = now
+        if (route === "dismiss-confirm") discardConfirm.close()
+        else if (route === "request-close") requestClose()
+        return true
+    }
 
     // Commit: re-read first, so the plan is made from the stock of THIS moment and a drift since the last tap is
     // clamped or refused (fail closed), then hand the plan over and close WITHOUT the discard question.
@@ -206,8 +238,8 @@ BottomSheet {
             Accessible.role: Accessible.CheckBox
             Accessible.name: qsTr("In stock only")
             Accessible.checked: checked
-            Accessible.onPressAction: root._toggleStock()
-            Accessible.onToggleAction: root._toggleStock()
+            Accessible.onPressAction: root._toggleStockA11y()
+            Accessible.onToggleAction: root._toggleStockA11y()
             RowLayout {
                 anchors.fill: parent
                 spacing: dp(Constants.space2)

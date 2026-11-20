@@ -186,3 +186,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 176: One limit, one function: every reader of "how many may this order hold" calls it, and the sweep proves it by replaying the OLD check
 - 177: Label a row the server derives with a validated hint, so a clamped write keeps its stock change and still gets the right ledger kind
 - 178: Move a sheet's whole submit decision into one pure function, parse numbers strictly, and run the real tap in Node
+- 179: Before fixing a key or a tap, find which route really delivers it; make a two-route fix idempotent; give a small control a big target without eating its row
