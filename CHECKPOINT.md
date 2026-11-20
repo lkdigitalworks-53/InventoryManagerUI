@@ -16,7 +16,7 @@ Out (documented in KNOWN-ISSUES): emulator e2e QML-to-endpoint case, date-picker
 
 ## Steps (tick as done)
 - [x] 0. Clone, read memory + P1 designs + service/model + Main/Profile patterns, picked S4b-2, cut branch.
-- [ ] 1. Pure glue `StockRegisterPage.js` + Node tests.
+- [x] 1. Pure glue `StockRegisterPage.js` + Node tests (67 tests, 52 hand mutants killed; mutants run under a non-UTC zone because the sandbox is UTC).
 - [ ] 2. Page QML + ProfilePage row + Main wiring + sign-out clear.
 - [ ] 3. Wiring tests (+ SRS-04 dormancy replaced by the real-caller pin) + QML twin.
 - [ ] 4. Test plan + test-plans README row.
