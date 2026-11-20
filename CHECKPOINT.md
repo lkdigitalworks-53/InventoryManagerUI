@@ -10,8 +10,9 @@
 - [x] S3 baseline: functions 2026/2026, `.github` scripts 1061/1061 (local counts; CI counts differ by how it counts).
 - [x] S4 tests added (red-first by hand mutants, 3/3 killed): KH-21 (negative stock under a clamp, `sale` hint must degrade to `adjustment` +2), KH-22 (`kindHint: null` accepted as no hint on a delta call and a delta op).
 - [x] S5 docs: stale KNOWN-ISSUES section "Imported-order completion is typed `adjustment`" marked CLOSED (the PR had closed only item 7 of the S4a list); commit-identity item corrected; items 9, 10 added; Skill 177 rule 8; test plan rows; this checkpoint (step 8 said Skill 176, real number 177).
-- [ ] S6 push, read CI on the new head (QML twins have never run on this PR's final head), fix red.
-- [ ] S7 Taher: answers to CA-QUESTIONS.md; reviews, merges.
+- [x] S6 pushed `cc57d4d`; CI on it: QML 3260/3260, Functions 2028/2028, Rules 129/129, E2E 121/121 = 5538/5538, `mergeable_state: clean`. PR body fixed (Skill 177, counts). This checkpoint line was added in a docs-only commit after it, which re-runs CI: glance at it before merging.
+- [x] S7 final report given in chat.
+- [ ] S8 Taher: answers to CA-QUESTIONS.md; reviews, merges. Then S2e-2 pickers or S4b-2 register page (need CA answers / a device); AP3b, AP4 independent.
 
 ## Not reviewed in depth (be honest)
 QML twins beyond reading their diff (unproven until CI); real-device behaviour (no device, no Qt here); the rest of `docs/superpowers/CA-QUESTIONS.md` content (legal/accounting claims are for the CA, not for a code review).
