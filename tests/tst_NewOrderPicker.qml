@@ -465,4 +465,68 @@ TestCase {
         eq(r3.lines[0].qty, 4.5);
         eq(r3.skipped, [{ productId: "A", name: "Name A", reason: "reduced", added: 2, asked: 5 }]);
     }
+
+    function test_NOP_33_ceilingof_is_the_whole_units_on_hand_a_fractional_stock_roun() {
+        eq(NP.ceilingOf(prod("A", 5)), 5);
+        eq(NP.ceilingOf(prod("A", 2.5)), 2);
+        eq(NP.ceilingOf(prod("A", 0.9)), 0);
+        eq(NP.ceilingOf(prod("A", 0)), 0);
+        eq(NP.ceilingOf(prod("A", -3)), 0);
+        for (const bad of [NaN, Infinity, -Infinity, undefined, null, "5", [], {}, true])
+            eq(NP.ceilingOf(prod("A", bad)), 0);
+        for (const notProduct of [null, undefined, 5, "A", true])
+            eq(NP.ceilingOf(notProduct), 0);
+        // it does not need a product id (the id rule belongs to availableFor)
+        eq(NP.ceilingOf({ stock: 4 }), 4);
+    }
+
+    function test_NOP_34_availablefor_is_the_ceiling_minus_what_the_cart_holds_same_n() {
+        const stocks = [0, 1, 2, 2.5, 5, 9.99, -2, NaN, undefined, "3"];
+        const carts = [[], [line("A", 1)], [line("A", 2), line("A", 2)], [line("A", 7)], [line("B", 3)], [line("A", 0)], [line("A", NaN)], [line("A", -2)]];
+        for (const st of stocks) {
+            for (const cart of carts) {
+                const p = prod("A", st);
+                const want = Math.max(0, NP.ceilingOf(p) - NP.cartQty(cart, "A"));
+                eq(NP.availableFor(p, cart), want);
+                ok(NP.availableFor(p, cart) >= 0);
+            }
+        }
+        eq(NP.availableFor(prod("", 5), []), 0);
+        eq(NP.availableFor(null, []), 0);
+    }
+
+    function test_NOP_36_stepqty_pr_202_sweep_adds_at_most_delta_up_to_the_ceiling_an() {
+        const p = (stock) => ({ productId: "P", name: "P", stock, sellingPrice: 5 });
+        // + : up to the ceiling
+        eq(NP.stepQty(2, 1, p(5)), 3);
+        eq(NP.stepQty(5, 1, p(5)), 5);
+        eq(NP.stepQty(4, 1, p(5)), 5);
+        eq(NP.stepQty(2, 1, p(2.5)), 2);
+        eq(NP.stepQty(1, 1, p(2.5)), 2);
+        // + never lowers and never removes: stock fell below the row, ran out, or is a fraction below 1
+        eq(NP.stepQty(3, 1, p(1)), 3);
+        eq(NP.stepQty(1, 1, p(0)), 1);
+        eq(NP.stepQty(1, 1, p(0.5)), 1);
+        eq(NP.stepQty(2, 1, p(-4)), 2);
+        // a product that left the catalog, or is not a product: + keeps the row
+        eq(NP.stepQty(2, 1, null), 2);
+        eq(NP.stepQty(2, 1, undefined), 2);
+        eq(NP.stepQty(2, 1, "P"), 2);
+        // - : exactly delta, the ceiling does not matter (a row above it comes down one unit at a time)
+        eq(NP.stepQty(3, -1, p(5)), 2);
+        eq(NP.stepQty(3, -1, p(1)), 2);
+        eq(NP.stepQty(3, -1, null), 2);
+        eq(NP.stepQty(1, -1, p(5)), 0);
+        eq(NP.stepQty(1, -1, p(0)), 0);
+        eq(NP.stepQty(0.5, -1, p(5)), 0);
+        // delta 0 changes nothing
+        eq(NP.stepQty(3, 0, p(1)), 3);
+        eq(NP.stepQty(3, 0, p(9)), 3);
+        // a quantity or a step that is not a finite number is returned as it is
+        eq(Number.isNaN(NP.stepQty(NaN, 1, p(5))), true);
+        eq(NP.stepQty(Infinity, -1, p(5)), Infinity);
+        eq(NP.stepQty("2", 1, p(5)), "2");
+        eq(NP.stepQty(2, NaN, p(5)), 2);
+        eq(NP.stepQty(2, "1", p(5)), 2);
+    }
 }

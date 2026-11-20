@@ -1,49 +1,52 @@
-# CHECKPOINT: 2026-11-16 AP3a (add product wired to the atomic operation) - resume here
+# CHECKPOINT: 2026-11-16 picker S5b (one stock rule, legacy seed deleted) - resume here
 
-**Branch:** `feat/2026-11-16-ap3a-add-product-wire`, cut from `main` @ `503adda` (#201 merged, device tested by Taher). Contract: `docs/superpowers/specs/2026-11-13-add-product-atomic-operation-design.md` sections 7 to 9; this slice: `docs/superpowers/specs/2026-11-16-ap3a-add-product-wire-design.md`.
-**Commit rule (current, Taher 2026-11-16, replaces the earlier address):** every commit message carries the line `allibaas52@gmail.com`; git user email `allibaas52@gmail.com`. The PAT is never written to the repo, a doc or memory.
-**Rules in force:** no build or run; no Qt in the sandbox (CI is the oracle); always a branch; push without asking; tests + test plan for every change; out-of-scope findings go to `docs/superpowers/KNOWN-ISSUES.md`; no parallel agents. Node tests of `functions/` DO run here (`cd functions && npm ci && node --test`).
-**Previous checkpoint archived:** `specs/2026-11-16-pr201-merged-prev-CHECKPOINT.md`.
-**Test plan:** `docs/superpowers/test-plans/2026-11-16-ap3a-add-product-wire-test-plan.md`.
+**Branch:** `feat/2026-11-16-picker-s5b-one-stock-formula-delete-legacy-seed` (cut from `main` @ `503adda`, AP2 #201 merged).
+**Commit rule:** every commit message carries `dextran52@gmail.com` (task prompt of 2026-11-16).
+**Rules in force:** no build or run; no Qt in the sandbox (CI is the oracle); always a branch; push without asking; tests + test plan for every change; out-of-scope findings go to `docs/superpowers/KNOWN-ISSUES.md`.
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-16-pr201-merged-prev-CHECKPOINT.md` (AP2 sweep, merged).
+**Plan:** `docs/superpowers/plans/2026-11-16-product-picker-v2-s5b-one-stock-rule.md`. **Test plan:** `docs/superpowers/test-plans/2026-11-03-product-picker-v2-test-plan.md` (S5b rows, device steps 104-114).
 
-## Step 2 arc (add product with opening stock)
-AP1 server (#199), AP2 client pure layer (#201) merged. **AP3 is split (D-AP3-1):** AP3a (THIS BRANCH) = `AddProductFlow.js`, `InventoryStore.addProduct` rewrite + apply/answer hooks, `DataModel` route, e2e helpers, guards; the dialog gets only the status handling. AP3b = dialog (inline supplier "Use" row, strict number parsing, limits, submit body tested in Node). AP4 = docs + device test of the whole arc.
+## Steps
+- [x] 0. Clone, memory, skills (caveman, brainstorming), roadmap read: S1-S4, S5a merged; next S5b (KI 28a, 37a, 39a, 30); Q1, Q2 decided as recommended (KI 44).
+- [x] 1. Design in the plan (D1-D7, open Q1-Q3). Baseline Node 1882, scripts 1049.
+- [x] 2. Code (commit 82e0fbf, pushed): `NP.ceilingOf`; `Edit.ceilingFor/stepUp/stockShortfalls/shortfallText`; `OrderDetailDialog` `+` stepper and `_stockErrors()`; legacy seed deleted; `NewOrderDialog.changeQty` reads `ceilingOf`.
+- [x] 3. Tests: NOP-33..35, EOP-32..39, EOW-20..25, NOW-18; EOW-01/09/11/17 updated; twins regenerated; 18 hand mutants killed; guard Q-3 caught reserved word `short`, renamed `need`.
+- [x] 4. Docs: plan, test plan, KNOWN-ISSUES 57, Skill 176 + index, README, this checkpoint.
+- [ ] 5. CI result of the PR (QML twins have NOT run anywhere yet). Read it, fix red.
+- [ ] 6. Taher answers plan Q1 (gone product at Save: skip or refuse), Q2, Q3; reviews and merges.
+- [ ] 7. Next: S5c touch targets, Back key, in-stock double toggle (24a, 28b, 8, 19b, 19a). Then S5d, S5e.
 
-## Steps (tick as done)
-- [x] 0. Clone, memory, read STATUS section 14/15, designs AP1/AP2, store, dialog, DataModel, e2e files. Next task = AP3.
-- [x] 1. Branch cut, previous checkpoint archived, this file written.
-- [x] 2. Design doc + test plan written (`specs/2026-11-16-ap3a-add-product-wire-design.md`, `test-plans/2026-11-16-ap3a-add-product-wire-test-plan.md`, README index row).
-- [x] 3. `AddProductFlow.js` + `RestockFlow.queuedNewSupplierClash` covers addProduct ops; Node tests.
-- [x] 4. `InventoryStore.addProduct` rewrite, `applyAddProductResults`, answer hooks, remove `_resolveSupplierId`.
-- [x] 5. `DataModel` route (call site + Connections).
-- [x] 6. Dialog status handling only.
-- [x] 7. e2e: 5 `_createProduct` helpers (scoped online flip), 3 files point `operationFunctionUrl` at the emulator.
-- [x] 8. Guards: delete AP1 G-1 and AP2 G-1, update SB-4, P-2, add wiring pins.
-- [x] 9. QML twins (CI-only): `tests/tst_AddProductFlow.qml` (16), `tests/tst_InventoryStore_addProduct.qml` (12).
-- [x] 10. `node --test` in `functions/`: 1918/1918 pass (1899 + `addProductWire.test.js` 19).
-- [x] 11. Docs: STATUS section 16, KNOWN-ISSUES 47-52, README, AGENTS, SKILLS 174 + index, test plan.
-- [ ] 12. Push, read CI if reachable, final report (done / next).
+## If this session is cut off
+Everything is pushed except nothing pending; resume at step 5. Counts to re-measure before claiming: `cd functions && npm ci && node --test` (1900 here, Node 22), `node --test .github/scripts/__tests__/*.test.js` (1049).
 
-## Review sweep of PR #203 (chat session 2026-11-16, no parallel agents)
-- [x] R0. Clone, read memory, fetch `refs/pull/203/head`, check out the PR branch (no rebase needed: `main` still `503adda`).
-- [x] R1. CI read via API: Functions, QML, Rules green on f01a59c; **E2E RED: 29 of 71 failed**, all inside the `_createProduct*` helpers (`addProduct callback never fired` / `did not return a productId`). Raw logs are on a blocked host; the PR bot comment named the tests.
-- [x] R2. Root cause: the helpers flip `AuthService.isOnline = true`; `AuthService.onIsOnlineChanged` runs `init()` because the e2e files set `AuthStore.idToken/uid/tenantId` directly (`isAuthenticated` stays false); `init()` -> `loadSession()` -> `clear()` wipes the fixture; `Gateway._sendOperation` returns silently on an empty token; the awaiting callback never fires. Fix: save the three fields, flip, restore at once (six files). Guard: `functions/test/addProductE2eHelpers.guard.test.js` (25 tests, mutation-checked).
-- [x] R2b. CI on 83ed1e0: Functions, QML, Rules AND E2E green. The fix is proven.
-- [x] R3. Store twin `tests/tst_InventoryStore_addProduct.qml` strengthened (+3 functions: stock 0, sync-first, no bookkeeping; vacuous replay assertion made strict). qt-qml-review lint on changed lines: nothing to fix (KNOWN-ISSUES 55). ponytail-audit: `nextProductId` kept on purpose (issue 50). KNOWN-ISSUES 49 rewritten, 53..55 added; test plan and Skill 174 updated. Functions suite 1943/1943.
-- [x] R4. CI on 710bef6: Functions, QML (incl. the 3 new twin cases), Rules, E2E all GREEN. `PR Test Summary Comment` job fails even with every test job green (so it is the bot step, not a test; cause not read, annotations only show Node 20 deprecation warnings).
-- [ ] R5. Next session: AP3b (dialog inline supplier "Use" row, strict parsing/limits, submit body in Node), then AP4 (docs + device test). Seed SupplierStore in ProductPhotosE2E and StockBatchStoreE2E with a CI run (KNOWN-ISSUES 54).
-- [x] R6. SECOND SWEEP (fresh session, 2026-11-17 by calendar, same PR; no parallel agents). CI head c72a04a: four test jobs green, `PR Test Summary Comment` RED. Root cause (reproduced locally): that job runs `node --test .github/scripts/__tests__/*.test.js` first; 2 of 1049 failed (skills-index REPO check + CLI --check) because the SKILLS-INDEX line for the add-product CI skill (now Skill 175) lacked the heading's backticks. Fix `1094efb` (`skills-index.js --write`), suite 1049/1049. Skill 175 rule 7 added (run the `.github` suite and never hand-edit the index before a push that touches SKILLS/AGENTS/README/.github).
-- [x] R7. Read in full: AddProductFlow, InventoryStore add path, DataModel route, dialog, Gateway.recordOperation/_finishOperation/discardParked (callback runs BEFORE the signal, so `_addSettled` is consumed once), FailureCause.forAddProduct, DescribeItem, PhotoQueue discard rule. Found and fixed: photo silently dropped on queued/unconfirmed/failed-queue (`AddProductFlow.doneText`, `InventoryStore.addDoneMessage`, dialog; tests DT-1, DT-2, G-2 + 2 QML functions; mutation-checked). KNOWN-ISSUES 56 holds the two accepted leftovers. Functions suite 1946/1946.
-- [x] R7b. `cde5f42` pushed but NO CI started: the PR had gone `dirty` (merge conflict) because `main` took #198 (P1 S4b-1, `db64115`). GitHub does not run `pull_request` workflows on a conflicted PR, so an empty check-runs list on a new head means "check mergeable_state", not "wait". Merged `main` into the branch (no force-push). Conflicts were docs only (CHECKPOINT, SKILLS, SKILLS-INDEX, KNOWN-ISSUES, test-plans README). `main` took Skill 172, so AP3a was then Skills 173 and 174 (see R7c for the final numbers). Main's checkpoint is archived in `specs/2026-11-17-p1-s4b1-merged-prev-CHECKPOINT.md`.
-- [x] R7c. `main` moved again (#204 took Skill 173). Rebased the 10 branch commits onto `main` @ 7b93c0d (the merge commit is gone; branch tip before the rebase kept as the local ref `backup-pre-rebase`, and as `7c8547c`/`e9211c0` on the remote until the force-push). Docs conflicts only, no code conflicts: CHECKPOINT = branch version, SKILLS/KNOWN-ISSUES/test-plans README = both sides kept, SKILLS-INDEX regenerated. FINAL skill numbers: 174 (wire a store function to an operation) and 175 (chat PR and CI).
-- [x] R8. CI on merge head 7c8547c: Functions, QML (incl. the 2 new twin functions), Rules, E2E AND `PR Test Summary Comment` all GREEN. Only the human review and the device test (test plan steps 1-13) remain.
-- [ ] R9. Next session: AP3b (dialog inline supplier "Use" row, strict parsing/limits, submit body in Node), then AP4 (docs + device test). Before any push touching docs run Skill 175 rule 7.
-- NOTE for the next session: PR #203 is review-clean and green; only the human review and the device test (test plan, on-device section) remain.
 
-## CI
-PR #203 opened. Functions Tests + Rules success on b7ccbfd; QML Tests and E2E were still running when last read. Unproven locally: both QML twins, the six e2e files.
+---
+# REVIEW SWEEP 1 of PR #202 (session 2026-11-16, commit rule: `tsadmin@gmail.com` line in every message) - resume here
+**Rules in force (this session):** no build/run; no Qt in sandbox (CI is the oracle); fixes go on THIS branch (same PR); no parallel agents; push without asking; tests + test plan for every change; scope kept small per turn. PAT per command via `git -c http.extraHeader`, never in `.git/config`.
+**Skills used:** requesting-code-review, qt-qml-review (3 phases, run single-threaded), ponytail-audit.
+**Baseline:** PR head `9495756`, base `main@503adda`, CI green (QML 3163, Functions 1900, Rules 129, E2E 121), `mergeable_state: clean`, 2 commits, 18 files +765 -139.
 
-## NEXT (if this session stops)
-If CI is red, fix on this branch first. Then AP3b (dialog inline supplier "Use" row, strict parsing/limits, submit body in Node), AP4 (device test).
+## Sweep steps (state at the last push)
+- [x] S0 clone, scrub PAT from `.git/config`, checkout PR branch, read skills/PR/CI/plan/diff.
+- [x] S1 Phase 1 lint on the 4 touched QML files: 4 hits on added lines = 3 JS-1 `var` (house style) + 1 DEL-1 `model.x` (pre-existing delegate pattern). No change.
+- [x] S2 deep read; `catalog`/`_rebuildCatalog` have no stray readers; `_findOriginalLine` still serves the tax forecast.
+- [x] S3 baseline functions 1900/1900, scripts 1049/1049.
+- [x] S4 fixes, each red-first with hand mutants killed, twin regenerated:
+  - F1 `72ac23a` completed order saved unchanged was refused (two lines of one product, fractional qty): `heldAtCompletion`, `stepUp` floors cap. EOP-40..43, EOW-26; EOP-32/30/33 + EOW-11 corrected on purpose.
+  - F2 `f985f0b` Save of a lineless order zeroed total and items: `Edit.lineFields`, `_noLinesStored`. EOP-44, EOW-27, 2 QML cases in `tst_OrdersStore_mutations`.
+  - F3 `4dff61b` New Order `+` deleted/lowered rows: `NP.stepQty`. NOP-36/37, NOW-18, EOW-24.
+  - ponytail: dead `_whole` removed from EditOrderPicker.js.
+- [x] S5 docs: KNOWN-ISSUES 57 fixed up + 48/49/50, Skill 176 rules 3/5/9-11, README, AGENTS (S5b entry added), plan (decisions Q1-Q4 + sweep), test plan steps 115-119 (values checked against the helper).
+- [x] S5b-rebase `main` moved twice while the sweep ran (#198, then #203 and #204 -> `591077e`). The branch was first merged with main, then, on Taher's request, REBASED onto `origin/main` (merge commit dropped, 11 commits replayed, force-with-lease push; the old tip is only in the local ref `backup/pre-rebase-sweep1`). Conflicts were docs only: CHECKPOINT.md kept as ours; SKILLS, SKILLS-INDEX, KNOWN-ISSUES union-merged, then renumbered in one commit: Skill 172 -> **176**, KNOWN-ISSUES 47-50 -> **57-60**, one code-comment pointer fixed (the lineless-subtotal item is 59, two comments said 48). Main's own CHECKPOINT of #198 is already archived on main. Node suites on the rebased tree: see the S6 line.
+- [x] S6 CI on the REBASED head `29f22cb` (run 44222901686): QML 3232/3232, Functions 1990/1990, Rules 129/129, E2E 121/121 = 5472/5472, PR `mergeable_state: clean`. This checkpoint line was added in a docs-only commit after it, which re-runs CI: glance at it before merging.
+- [ ] S7 final report to Taher.
 
-Continue at the first unchecked step. Each commit is independent. Do not force-push.
+## Decisions (Taher, 2026-11-16, "as recommended")
+Q1 skip gone product at Save. Q2 accept + track (KNOWN-ISSUES 59: `_normalizeOrder` zeroes subtotal/tax/discount of lineless orders). Q3 `trySubmit` stays on raw stock. Q4 Save keeps whole units although completion compares raw stock. F3 was decided by the reviewer (robustness first); say if you want it reverted.
+
+## Findings (all proven with the real helper in Node before the fix)
+- F1, F2, F3 fixed (above). F4 = Q4, decided, documented (KNOWN-ISSUES 58).
+- Judged, not changed (KNOWN-ISSUES 60): fractional `NP.availableFor` with a fractional cart (no bad outcome); Save fails open for a product the reader cannot return (Q1); blank-id lines cannot be raised.
+
+## Not reviewed in depth (be honest)
+Older S5a/S5b wiring tests other than EOW-11/20/22/24/26/27 and NOW-18; QML twins beyond regeneration; `ProductPickerSheet` visuals; real-device behavior (no device, no Qt here). QML-side tests (twins, `tst_OrdersStore_mutations`) are unproven until CI runs.

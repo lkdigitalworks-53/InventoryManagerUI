@@ -525,8 +525,8 @@ BottomSheet {
             var sp = selectedProducts[i]
             if (i === idx) {
                 var inv = InventoryStore.getById(sp.productId)
-                var maxQ = inv ? inv.stock : sp.qty
-                var newQ = Math.max(0, Math.min(maxQ, sp.qty + delta))
+                // The one stock rule (picker v2, S5b): + never lowers or removes a row, - takes exactly delta off
+                var newQ = Picker.stepQty(sp.qty, delta, inv)
                 if (newQ === 0) continue   // remove on hitting 0
                 arr.push({ name: sp.name, qty: newQ, price: sp.price, productId: sp.productId,
                           discountType: sp.discountType || "flat", discountValue: sp.discountValue || 0 })

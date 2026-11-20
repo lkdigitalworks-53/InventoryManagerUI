@@ -1,5 +1,5 @@
 "use strict";
-// Picker v2, slice S3: the New Order dialog is wired to the picker sheet. NOW-01..16. Plan:
+// Picker v2, slice S3: the New Order dialog is wired to the picker sheet. NOW-01..17; S5b adds NOW-18. Plan:
 // docs/superpowers/plans/2026-11-11-product-picker-v2-s3-new-order.md. Like pickerSheetWiring.test.js these read the QML
 // text (qmltestrunner cannot load Felgo), so they pin WIRING, not painting; two of them (NOW-14, NOW-15) also RUN the
 // dialog's real hook literal and its real _applyPicked body in a sandbox against the real helpers, so the glue between
@@ -278,4 +278,28 @@ test("NOW-17 S5a: the real hooks disable a product that cannot start a line (no 
     g2.apply(PD.commitPlan(PD.step({}, "NONE", 2, 4), g2.dlg.selectedProducts));
     assert.deepEqual(plain(g2.dlg.selectedProducts.map((l) => [l.productId, l.qty, l.price])), [["NONE", 3, 3]]);
     assert.deepEqual(g2.toasts, []);
+});
+
+test("NOW-18 S5b + sweep: the real cart-row stepper uses the one stock rule: a fractional stock is whole units, + never lowers or removes a row (stock ran out, fell, product gone), - takes one off and removes at 0", () => {
+    const fn = extractFunction("pages/NewOrderDialog.qml", "changeQty");
+    assert.ok(/Picker\.stepQty\(sp\.qty, delta, inv\)/.test(fn) && !/inv\.stock/.test(fn));
+    const stepped = (stock, qty, delta, gone) => {
+        const box = { Picker: NP, selectedProducts: [{ name: "W", qty, price: 5, productId: "P" }],
+                      InventoryStore: { getById: () => gone ? null : { productId: "P", stock } } };
+        vm.createContext(box);
+        vm.runInContext(fn + "\nchangeQty(0, " + delta + ")", box);
+        return plain(box.selectedProducts.map((l) => l.qty));
+    };
+    assert.deepEqual(stepped(5, 2, +1), [3]);
+    assert.deepEqual(stepped(5, 5, +1), [5]);
+    assert.deepEqual(stepped(2.5, 2, +1), [2], "the old stepper reached 2.5 here");
+    assert.deepEqual(stepped(2.5, 1, +1), [2]);
+    assert.deepEqual(stepped(0, 1, +1), [1], "stock ran out: + keeps the row (it used to delete it; trySubmit reports the stock)");
+    assert.deepEqual(stepped(0.5, 1, +1), [1]);
+    assert.deepEqual(stepped(1, 3, +1), [3], "stock fell below the row: + does not pull it down");
+    assert.deepEqual(stepped(1, 3, -1), [2], "- takes exactly one off, also above the ceiling");
+    assert.deepEqual(stepped(5, 1, -1), [], "- at 1 removes the row");
+    assert.deepEqual(stepped(5, 3, -1), [2]);
+    assert.deepEqual(stepped(0, 2, +1, true), [2], "a product that left the catalog: + keeps the row");
+    assert.deepEqual(stepped(0, 2, -1, true), [1]);
 });

@@ -61,11 +61,29 @@ function cartQty(lines, productId) {
     return used
 }
 
-// What NEW lines may still use: on-hand stock minus what the cart already holds (units are not deducted until the
+// The most units of this product an order may hold IN TOTAL: the whole units on hand (units leave stock only when the
+// order completes). 0 for something that is not a product (a product that left the catalog holds none). This is the ONE
+// stock rule of the order dialogs (picker v2, S5b): availableFor below, the cart-row steppers and Edit Order's save-time
+// check all read it, so a fractional stock such as 2.5 means 2 everywhere.
+function ceilingOf(product) { return (product && typeof product === "object") ? _whole(product.stock) : 0 }
+
+// What NEW lines may still use: the ceiling minus what the cart already holds (units are not deducted until the
 // order completes). Never negative, whole units, 0 for a product that is not a product.
 function availableFor(product, lines) {
     if (!product || typeof product !== "object" || _blankId(product.productId)) return 0
-    return Math.max(0, _whole(product.stock) - cartQty(lines, product.productId))
+    return Math.max(0, ceilingOf(product) - cartQty(lines, product.productId))
+}
+
+// The quantity of a New Order cart row after a tap of + (delta above 0) or - (delta below 0), the same contract as
+// EditOrderPicker.stepUp. + adds at most delta, up to the ceiling (ceilingOf; `product` null or not a product has none),
+// and NEVER lowers or removes a row: a row above the ceiling (stock fell) or a product that ran out keeps its quantity
+// and trySubmit reports it, instead of the tap silently deleting the row and its discount (PR #202 sweep; Skill 176
+// rule 3). - takes exactly delta off whatever the ceiling is; a result of 0 means the caller removes the row. A quantity
+// or a step that is not a finite number is returned as the quantity.
+function stepQty(qty, delta, product) {
+    if (typeof qty !== "number" || !isFinite(qty) || typeof delta !== "number" || !isFinite(delta)) return qty
+    if (delta < 0) return Math.max(0, qty + delta)
+    return Math.max(qty, Math.min(ceilingOf(product), qty + delta))
 }
 
 // Unit price of a NEW line: sellingPrice, else the legacy price field. null when it is not a finite number >= 0

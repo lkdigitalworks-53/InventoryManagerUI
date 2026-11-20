@@ -17,7 +17,6 @@
 // in the same order (linesOf). `ctx` is { status, original }: the order's SAVED status and its original lines
 // ({ productId, quantity, taxable, taxPercent }, the dialog's _originalLines). `lookup` is { productOf(id), batchesOf(id) }.
 
-function _whole(n) { return (typeof n === "number" && isFinite(n) && n > 0) ? Math.floor(n) : 0 }
 function _blankId(id) { return id === undefined || id === null || id === "" }
 function _completed(ctx) { return !!ctx && ctx.status === "completed" }
 // The picker line of a row that is not an object: it keeps the index of its row and holds nothing.
@@ -51,18 +50,98 @@ function originalOf(original, productId) {
 }
 function _originalOf(ctx, productId) { return originalOf(ctx && ctx.original, productId) }
 
-// Units NEW quantity may still use. Pending or processing: on-hand minus what the order holds (same as New Order).
-// Completed: its units are already out of stock, so on-hand plus the units the order held at completion minus what it
-// holds now (a removed line frees its units for a re-add, a bigger line uses them). Whole units, never negative. Any
-// other status uses the stricter first formula (fail closed).
+// The units of this product the order held when it was completed, exactly as booked: ALL its original lines added up
+// (a legacy order may hold two lines of one product), a line of 2.5 counts 2.5. A quantity that is not a positive finite
+// number holds nothing. (originalOf, the first match, stays for the booked TAX; units must not be read from it: PR #202
+// sweep, F1.)
+function heldAtCompletion(original, productId) {
+    if (_blankId(productId) || !Array.isArray(original)) return 0
+    var id = String(productId)
+    var total = 0
+    for (var i = 0; i < original.length; ++i) {
+        var l = original[i]
+        if (!l || typeof l !== "object" || _blankId(l.productId) || String(l.productId) !== id) continue
+        if (typeof l.quantity === "number" && isFinite(l.quantity) && l.quantity > 0) total += l.quantity
+    }
+    return total
+}
+
+// The most units this product may hold on the order IN TOTAL (all its lines together). Pending or processing: the whole
+// units on hand (NP.ceilingOf, the one stock rule). Completed: its units are already out of stock, so the whole units on
+// hand plus EVERYTHING the order held at completion, exactly as booked (heldAtCompletion), so an order saved with its
+// lines unchanged or smaller never asks for stock, also with two lines of one product or a line of 2.5 (the ceiling is
+// then fractional; availableFor and stepUp hand out whole units only). A product that left the catalog (`product` null)
+// has no stock: a pending order can not hold any of it more, a completed order can still go back to what it held. Any
+// other status uses the stricter first formula (fail closed). Never negative. The picker (availableFor), the + stepper
+// (stepUp) and the save check (stockShortfalls) all read THIS, so they cannot disagree (picker v2, S5b; KNOWN-ISSUES
+// 28a, 37a, 39a).
+function ceilingFor(productId, product, ctx) {
+    if (_blankId(productId)) return 0
+    var stock = NP.ceilingOf(product)
+    if (!_completed(ctx)) return stock
+    return stock + heldAtCompletion(ctx.original, productId)
+}
+
+// Units NEW quantity may still use: the ceiling minus what the order holds now (a removed line frees its units for a
+// re-add, a bigger line uses them). Whole units, never negative.
 function availableFor(product, lines, ctx) {
     if (!product || typeof product !== "object" || _blankId(product.productId)) return 0
     if (!_completed(ctx)) return NP.availableFor(product, lines)
-    var orig = _originalOf(ctx, product.productId)
-    var origQty = orig ? _whole(orig.quantity) : 0
-    var n = _whole(product.stock) + origQty - NP.cartQty(lines, product.productId)
+    var n = ceilingFor(product.productId, product, ctx) - NP.cartQty(lines, product.productId)
     return n > 0 ? Math.floor(n) : 0
 }
+
+// One tap of + on a cart row -> the row's new quantity: one more, never above what the stock leaves THIS row (the
+// ceiling minus the other lines of the same product), never below what the row already holds (a ceiling that fell since
+// the row was made must not pull it down on +). The cap is a whole number (a fractional ceiling never makes a fractional
+// row). `product` is null when it left the catalog and `lines` are the picker lines (linesOf), the row included. A
+// quantity that is not a finite number is returned as it is.
+function stepUp(qty, productId, product, ctx, lines) {
+    if (typeof qty !== "number" || !isFinite(qty)) return qty
+    var others = NP.cartQty(lines, productId) - (qty > 0 ? qty : 0)
+    var cap = Math.floor(ceilingFor(productId, product, ctx) - (others > 0 ? others : 0))
+    var q = Math.min(cap, qty + 1)
+    return q < qty ? qty : q
+}
+
+// The save-time stock check -> [{ productId, name, stock, need }], one entry per product (first line's name, order of
+// first appearance) whose lines together hold more than its ceiling; `stock` is the whole units on hand, `need` how many
+// more the order holds than it may. A product that left the catalog is skipped on purpose: the save keeps working for
+// an unrelated edit and completion refuses it later (KNOWN-ISSUES 6 and 28c, decision S5b-D4). `productOf(id)` reads the
+// catalog; a throwing reader reads as "gone".
+function stockShortfalls(lines, ctx, productOf) {
+    var out = []
+    if (!Array.isArray(lines)) return out
+    var seen = []
+    var lookup = { productOf: productOf }
+    for (var i = 0; i < lines.length; ++i) {
+        var l = lines[i]
+        if (!l || typeof l !== "object" || _blankId(l.productId)) continue
+        var id = String(l.productId)
+        if (seen.indexOf(id) >= 0) continue
+        seen.push(id)
+        var p = _productOf(lookup, l.productId)
+        if (!p) continue
+        var need = NP.cartQty(lines, id) - ceilingFor(id, p, ctx)
+        if (need > 0) out.push({ productId: id, name: l.name, stock: NP.ceilingOf(p), need: need })
+    }
+    return out
+}
+
+// The line part of the Save payload -> { items, products }, or {} for an order that never stored a products array
+// (`noLinesStored` is exactly true) and still has no rows. Such an order must send NEITHER key: OrdersStore.buildOrderUpdate
+// recomputes total and items from `products` whenever that key is present, so writing [] would zero the order's total
+// and items on any save, even a customer-name edit (PR #202 sweep F2; picker v2 S5b removed the seed that used to invent
+// lines for it). Without the key OrdersStore keeps the stored total and items. Its subtotal, tax and discount are
+// recomputed from the (missing) lines on every update anyway: KNOWN-ISSUES 59, not fixed here. Every other order sends
+// both keys, as they are; anything but a real true reads as "stored".
+function lineFields(noLinesStored, rowCount, items, products) {
+    if (noLinesStored === true && rowCount === 0) return {}
+    return { items: items, products: products }
+}
+
+// The sentence for one shortfall, as the dialog has always worded it: "Widget: only 2 in stock, need 1 more".
+function shortfallText(s) { return s.name + ": only " + s.stock + " in stock, need " + s.need + " more" }
 
 function _rate(v) { return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 0 }
 

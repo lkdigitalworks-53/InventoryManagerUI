@@ -5180,4 +5180,22 @@ Rules:
 7. Before every push that edits `SKILLS.md`, `AGENTS.md`, `README.md` or anything under `.github/`, run `node .github/scripts/skills-index.js --write` (never hand-edit `SKILLS-INDEX.md`: an index line must equal its heading byte for byte, backticks included) and then `node --test .github/scripts/__tests__/*.test.js` (about 45 s, no Qt, no network). The `PR Test Summary Comment` job runs that suite first and posts nothing when it fails. On PR 203 one hand-typed index line (Skill 175, backticks dropped) made that job red while all four test jobs were green, and the CI summary comment was lost.
 
 **The check:** does `gh api .../pulls` return a number and URL, does the check-runs call return rows for the head SHA, and is the `PR Test Summary Comment` row green too (not only the four test jobs)?
+## Skill 176: One limit, one function: every reader of "how many may this order hold" calls it, and the sweep proves it by replaying the OLD check
+
+**Why:** the product sheet, the `+` stepper and the Save check each had their own stock formula (raw `stock`, per line, with and without the units a completed order already took out). A fractional stock (2.5) was 2 in the sheet and 3 at the stepper; a gone product was unlimited at the stepper and refused later; two lines of one product each passed Save. Skill 170 says it generally; this is the worked case.
+
+**Rules:**
+1. Name the limit once (`ceilingOf`, `ceilingFor`) and make every reader call it: the "how many more" reader (`availableFor`), the stepper (`stepUp`) and the save check (`stockShortfalls`). A test that greps each reader for the call (EOW-24) stops a fourth formula.
+2. A stepper reads the ceiling PER ROW (ceiling minus the other lines of the product); a save check reads it PER PRODUCT. Both from the same number.
+3. A row already over the ceiling is never pulled down by `+`, and a `+` never removes a row; Save (or submit) reports it. Never hide an over-sell by clamping silently. This holds for EVERY stepper, not only the one the slice was about: New Order's `changeQty` clamped `+` to the ceiling and deleted a row at stock 0 until the PR #202 sweep (`NP.stepQty`).
+4. Move the QML logic into a small dialog function and a pure helper, then run the REAL dialog text in a Node `vm` sandbox (`_stockErrors`, the `onClicked` block). Arrays made inside a vm have another prototype: wrap results in `plain()` before `deepEqual`.
+5. Prove "nothing else changed" by REPLAYING the old algorithm in the test over a seeded matrix (EOW-22, 400 orders): same messages for the shapes the old code handled.
+6. Name new fields with care: `short` is a JS reserved word that QML refuses; the reserved-word guard (Q-3) failed the full run, not the focused one. Run the whole suite before pushing.
+7. Hand mutants: two survivors on the first run were an equivalent-looking guard and a junk-quantity branch; each became one assertion (the reader is not even asked about a blank id; a non-positive row counts as holding nothing).
+8. Push the code commit BEFORE writing docs: the chat sandbox resets, and an unpushed working tree is lost.
+9. A replay proves only the DOMAIN it generates. The first S5b replay (EOW-22) used one line per product and whole numbers, so it could not see two regressions the PR #202 sweep found: a completed order with two lines of one product or a line of 2.5 was refused on an unchanged Save (F1). Generate every shape the OLD code could hold (duplicate lines, fractional quantities, zero or negative stock, an unchanged order) or write the domain into the test title; EOW-26 and EOP-43 now do.
+10. A test model can pin a bug: EOP-32 asserted `2.5 held + 2.5 stock = 4`, the floor that caused F1. When a fix turns a model red, ask whether the model or the code was wrong before editing it, and say so in the commit.
+11. When code stops sending a key, read what the receiving store does with ABSENT versus EMPTY: `buildOrderUpdate` recomputes total and items when `products` is present, even as `[]` (F2). Pin both with a store test (`tst_OrdersStore_mutations`), not only the sender.
+
+**The check:** `grep` for a raw `.stock` in the dialogs; every hit must be display text, not a limit. For a stock rule, also run the helper over an UNCHANGED completed order with duplicate and fractional lines at stock 0: it must ask for nothing.
 

@@ -33,6 +33,9 @@ BottomSheet {
     signal adjustRequested(string orderId, var newLines, var originalLines)
     property string _orderStatus: ""
     property var _originalLines: []
+    // True when the opened order never stored a products array (a very old order). Save then sends neither `items` nor
+    // `products`: writing [] would zero the order's total and items (Edit.lineFields; PR #202 sweep F2).
+    property bool _noLinesStored: false
 
     property string orderId: ""
     property int orderIndex: -1
@@ -56,9 +59,6 @@ BottomSheet {
     // onClosed skips its normal release — ConfirmReturnSheet now owns it and
     // releases when IT closes. Reset immediately after being read.
     property bool _lockHandoffPending: false
-
-    // The catalog as of openFor(): used only to seed a legacy order that has no line items (see openFor).
-    property var catalog: []
 
     ListModel { id: products }
 
@@ -167,20 +167,6 @@ BottomSheet {
         _pickerLines = Edit.linesOf(lineArr)
     }
 
-    // The catalog for seeding a legacy order that has no line items (openFor). Skips any product with a batch-id mint
-    // still pending (StockBatchStore.hasPendingMint). The product picker (ProductPickerSheet, below) does not use this.
-    function _rebuildCatalog() {
-        var cat = []
-        for (var i = 0; i < InventoryStore.products.length; ++i) {
-            var p = InventoryStore.products[i]
-            if (StockBatchStore.hasPendingMint(p.productId)) continue
-            var sellPrice = p.sellingPrice !== undefined ? p.sellingPrice : p.price
-            cat.push({ name: p.name, price: sellPrice, productId: p.productId,
-                         taxable: !!p.taxable, taxPercent: p.taxPercent || 0 })
-        }
-        catalog = cat
-    }
-
     // ---- Product picker (picker v2, slice S4) ----
     // The sheet knows no store: everything it reads comes in through these. What may be added, how much, with which tax
     // and whether a pending order is still small enough to complete is decided in EditOrderPicker.js, NewOrderPicker.js
@@ -243,7 +229,7 @@ BottomSheet {
         if (!o) return
 
         // Seed status + the original-lines snapshot first: the picker's stock formula and booked-tax rule
-        // (_pickerCtx) read BOTH, and the legacy-order seeding below reads the catalog built right after them.
+        // (_pickerCtx) read BOTH.
         _orderStatus = String(o.status || "")
         _originalLines = (o.products || []).map(function(lp) {
             return { productId: lp.productId || "", name: lp.name, price: lp.price,
@@ -256,7 +242,6 @@ BottomSheet {
                 taxPercent: lp.taxPercent || 0,
                 consumption: lp.consumption || [] }
         })
-        _rebuildCatalog()
 
         customerField.text = o.customer
         emailField.text = o.email || ""
@@ -278,8 +263,9 @@ BottomSheet {
 
         products.clear()
         // An order that HAS a products array (even empty, e.g. after a full
-        // return) shows exactly those lines. The synthesis fallback below is
-        // ONLY for legacy orders that never stored a products array at all.
+        // return) shows exactly those lines. An order that never stored a
+        // products array (very old; picker v2 S5b removed the seed that invented
+        // two lines for it, KNOWN-ISSUES 30) opens with no lines.
         if (Array.isArray(o.products)) {
             for (var j = 0; j < o.products.length; ++j) {
                 var lp = o.products[j]
@@ -299,23 +285,8 @@ BottomSheet {
                                     taxPercent: isNaN(taxPercent) ? 0 : taxPercent
                                 })
             }
-        } else {
-            var itemCount = o.items
-            if (catalog.length >= 2 && itemCount >= 2) {
-                var qty1 = Math.ceil(itemCount / 2)
-                var qty2 = itemCount - qty1
-                products.append({ productId: catalog[0].productId, name: catalog[0].name, price: catalog[0].price, quantity: qty1,
-                                    discountType: "flat", discountValue: 0,
-                                    taxable: catalog[0].taxable, taxPercent: catalog[0].taxPercent })
-                if (qty2 > 0) products.append({ productId: catalog[1].productId, name: catalog[1].name, price: catalog[1].price, quantity: qty2,
-                                                  discountType: "flat", discountValue: 0,
-                                                  taxable: catalog[1].taxable, taxPercent: catalog[1].taxPercent })
-            } else if (catalog.length > 0) {
-                products.append({ productId: catalog[0].productId, name: catalog[0].name, price: catalog[0].price, quantity: Math.max(1, itemCount),
-                                    discountType: "flat", discountValue: 0,
-                                    taxable: catalog[0].taxable, taxPercent: catalog[0].taxPercent })
-            }
         }
+        _noLinesStored = !Array.isArray(o.products)
         recomputeSubtotal()
         stockErrorLabel.text = ""
 
@@ -351,6 +322,7 @@ BottomSheet {
         products.clear()
         _pickerLines = []   // the sheet's notifier must not keep the closed order's rows
         _originalLines = []
+        _noLinesStored = false
         _orderStatus = ""
         stockErrorLabel.text = ""
     }
@@ -380,6 +352,15 @@ BottomSheet {
     // firing for some unrelated order elsewhere in the app (both signals
     // are on the shared `logic` dispatcher, not scoped to this dialog).
     property string _pendingSaveOrderId: ""
+
+    // The save-time stock check, one sentence per product that holds more than the stock allows. Pending order: the whole
+    // units on hand. COMPLETED order: its original units already left stock at completion, so on-hand plus those units;
+    // a return or reduction never trips it, even when on-hand is now low. Same ceiling as the sheet and the + stepper
+    // (EditOrderPicker.ceilingFor, picker v2 S5b). A product that left the catalog is skipped here and refused by
+    // completion later (KNOWN-ISSUES 6, 28c).
+    function _stockErrors() {
+        return Edit.stockShortfalls(_pickerLinesNow(), _pickerCtx(), _pickerLookup.productOf).map(Edit.shortfallText)
+    }
 
     function _save() {
         // Bug found 2026-09-14: this dialog used to fire logic.updateOrder
@@ -421,7 +402,6 @@ BottomSheet {
         }
         var itemCount = 0
         var prods = []
-        var stockErrors = []
         for (var i = 0; i < products.count; ++i) {
             var p = products.get(i)
             itemCount += p.quantity
@@ -439,22 +419,10 @@ BottomSheet {
                            discountType: p.discountType === "percent" ? "percent" : "flat",
                            discountValue: p.discountValue || 0,
                            taxable: taxable, taxPercent: taxPercent })
-            var inv = InventoryStore.getById(p.productId)
-            // Stock check is only about units that must come OUT of on-hand
-            // stock on save. For a pending order that's the whole line. For a
-            // COMPLETED order the original units were already deducted at
-            // completion, so only the qty ADDED beyond the original line needs
-            // to be available — a return/reduction (qty <= original) never
-            // trips the guard even when on-hand is now low.
-            var needFromStock = p.quantity
-            if (_orderStatus === "completed") {
-                var origLine = _findOriginalLine(p.productId)
-                var origQty = origLine ? (origLine.quantity || 0) : 0
-                needFromStock = Math.max(0, p.quantity - origQty)
-            }
-            if (inv && needFromStock > inv.stock)
-                stockErrors.push(p.name + ": only " + inv.stock + " in stock, need " + (needFromStock - inv.stock) + " more")
         }
+        // Stock check: only units that must come OUT of on-hand stock on save count, per PRODUCT (all its lines
+        // together), against the same ceiling as the product sheet and the + stepper (_stockErrors).
+        var stockErrors = _stockErrors()
         if (stockErrors.length > 0) {
             stockErrorLabel.text = stockErrors.join("\n")
             return
@@ -515,26 +483,27 @@ BottomSheet {
                 ? qsTr("Completing order — this can take a few seconds")
                 : qsTr("Saving changes")
         _pendingSaveOrderId = dlg.orderId
-        logic.updateOrder(dlg.orderId, {
+        // Bug fix 2026-08-20: a plain save (this branch only runs
+        // when lines are UNCHANGED — see the linesChanged guard
+        // above) must not touch consumption[], the FIFO batch
+        // lineage stamped at completion. `prods` never carries it
+        // (not a user-editable field), so sending it straight to
+        // OrdersStore.updateOrder's full products replace was
+        // silently wiping it on every save — including this one,
+        // triggered by nothing more than a customer-name edit.
+        // See OrderAdjust.reconcileConsumptionOnSave and
+        // tests/tst_OrderAdjust.qml for the full writeup.
+        // The line part (items, products) goes through Edit.lineFields: an order that never stored a products array and
+        // still has no rows sends neither, so Save can not zero its total and items (PR #202 sweep F2).
+        logic.updateOrder(dlg.orderId, Object.assign({
                               customer: customerField.text,
                               email: emailField.text,
                               phone: phoneField.text,
                               status: statuses[Math.max(0, statusCombo.currentIndex)] || "pending",
-                              items: itemCount,
-                              // Bug fix 2026-08-20: a plain save (this branch only runs
-                              // when lines are UNCHANGED — see the linesChanged guard
-                              // above) must not touch consumption[], the FIFO batch
-                              // lineage stamped at completion. `prods` never carries it
-                              // (not a user-editable field), so sending it straight to
-                              // OrdersStore.updateOrder's full products replace was
-                              // silently wiping it on every save — including this one,
-                              // triggered by nothing more than a customer-name edit.
-                              // See OrderAdjust.reconcileConsumptionOnSave and
-                              // tests/tst_OrderAdjust.qml for the full writeup.
-                              products: OrderAdjust.reconcileConsumptionOnSave(prods, _originalLines),
                               orderChannel: channel,
                               staffId: staffId
-                          })
+                          }, Edit.lineFields(_noLinesStored, products.count, itemCount,
+                                             OrderAdjust.reconcileConsumptionOnSave(prods, _originalLines))))
         // dlg.orderUpdated + dlg.close() now happen in the Connections
         // block below, once logic actually confirms this specific save —
         // not here, synchronously, before the real write has even started.
@@ -816,27 +785,12 @@ BottomSheet {
                                 Icon { anchors.centerIn: parent; name: "add"; size: sp(16); color: Constants.textPrimary }
                             }
                             onClicked: {
-                                // Ceiling for this line's qty:
-                                // • pending/processing: raw on-hand (units not
-                                // deducted yet, so can't exceed stock).
-                                // • completed: this order's units are ALREADY out
-                                // of stock, so the ceiling is the original line
-                                // qty PLUS whatever remains on hand
-                                // (inv.stock + origQty). Capping at inv.stock
-                                // alone would wrongly snap qty DOWN when the
-                                // line already exceeds depleted on-hand.
+                                // One + tap: the ceiling is the same one the product sheet and Save use
+                                // (Edit.ceilingFor): whole units on hand, plus on a COMPLETED order the
+                                // units it already took out of stock. A product that left the catalog has
+                                // no stock, so its row can not go up. Picker v2, S5b.
                                 var inv = model.productId ? InventoryStore.getById(model.productId) : null
-                                var onHand = inv ? inv.stock : model.quantity + 1
-                                var maxQ = onHand
-                                if (dlg._orderStatus === "completed") {
-                                    var orig = dlg._findOriginalLine(model.productId)
-                                    maxQ = onHand + (orig ? (orig.quantity || 0) : 0)
-                                }
-                                var q = Math.min(maxQ, model.quantity + 1)
-                                // Never let the cap pull qty below the current
-                                // value (defensive: a stale/low cap shouldn't
-                                // reduce on a "+").
-                                if (q < model.quantity) q = model.quantity
+                                var q = Edit.stepUp(model.quantity, model.productId, inv, dlg._pickerCtx(), dlg._pickerLinesNow())
                                 products.setProperty(row.rowIdx, "quantity", q)
                                 dlg.recomputeSubtotal()
                             }
