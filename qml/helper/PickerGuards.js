@@ -13,7 +13,7 @@ var TOGGLE_REPEAT_MS = 250    // one accessibility activation may send both pres
 function isRepeat(lastAt, now, windowMs) {
     if (typeof lastAt !== "number" || typeof now !== "number" || typeof windowMs !== "number") return false
     if (!isFinite(lastAt) || !isFinite(now) || !isFinite(windowMs)) return false
-    if (lastAt <= 0 || windowMs <= 0) return false
+    if (lastAt <= 0) return false   // a window of 0 or less needs no guard of its own: now - lastAt < windowMs is then never true
     return now >= lastAt && now - lastAt < windowMs
 }
 
