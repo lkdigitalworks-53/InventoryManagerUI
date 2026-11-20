@@ -16,8 +16,9 @@
 - [x] 2. Plan `plans/2026-11-20-product-picker-v2-s5c-touch-back-toggle.md` (decisions D1..D9, evidence, risks).
 - [x] 3. Code (pushed `f9494e9`): helpers `CartStepperGeometry.js`, `PickerGuards.js`, `BackRouter.js`; `CartStepper.qml`; both dialogs; `ProductPickerSheet.handleBack` + `_toggleStockA11y`; `BottomSheet.routesBack`; `Main._handleBack` via `BackRouter`.
 - [x] 4. Tests (pushed `1027926`): CSG 7, PGD 11, BR 11, S5C 14, three QML twins; EOW-23, WIRE-18, `main-back-uses-list` (+ mutant), accessBlockBehavior updated on purpose. Functions 2033/2033, scripts 1061/1061 RUN; mutants: 26 helper (24 killed, 1 deleted, 1 equivalent), 15 QML-source (all killed).
-- [x] 5. Docs: test plan (unit section, checks 120 to 133, affected areas, status row), KNOWN-ISSUES (8, 19, 24, 28 amended; 61 to 64 new), Skill 177 + index, AGENTS, README.
-- [ ] 6. Push docs; open PR; read CI (QML twins and the 4 jobs); fix red.
+- [x] 5. Docs: test plan (unit section, checks 120 to 133, affected areas, status row), KNOWN-ISSUES (8, 19, 24, 28 amended; 70 to 73 new after the 2026-11-20 rebase, were 61 to 64), Skill 179 + index (was 178 before the rebase), AGENTS, README.
+- [x] 6. Docs pushed `6292b22`; PR #206 opened (was `dirty` vs main @ `6951b1d`); main merged in, my skill renumbered 177 -> 178. CI not yet read on the merge head.
+- [x] 6b. REBASE onto `main` @ `e064270` (#207 AP3b merged; 2026-11-20, asked by Taher, linear history, merge commit `5825a35` dropped). Conflicts: CHECKPOINT.md = branch version kept; SKILLS.md + SKILLS-INDEX.md = both kept, this slice renumbered 178 -> 179 (main took 177 and 178); KNOWN-ISSUES.md = both kept, this slice items 61-64 -> 70-73 under their own header (main took 61-69); refs fixed in AGENTS.md (Skill 179) and the S5c plan (KI 70 to 72); `skills-index.js --write` run, no drift. Old tip `5825a35` replaced by force-with-lease. CI NOT read yet on the new head. Device checks 120-133 and the test-plan rows still say S5c, unchanged. Run `grep -rn "Skill 178" docs README.md AGENTS.md` after the next main merge: 178 now belongs to AP3b.
 - [ ] 7. Final report to Taher: done / open decisions D1..D9 / device checks 120 to 133 / next = S5d, S5e.
 
 ## If this session is cut off
