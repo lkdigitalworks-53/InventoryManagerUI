@@ -5215,3 +5215,21 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 
 **The check:** with the real server, does a deduction of 3 on a stock of 2, hinted `sale`, leave ONE `sale` row of -2 and stock 0, and does the same call with `loss` as the hint get dropped on the client and refused on the server without losing the deduction?
 
+## Skill 178: Move a sheet's whole submit decision into one pure function, parse numbers strictly, and run the real tap in Node
+
+**Why:** the Add Product sheet read its fields with `parseFloat` and `parseInt` (`12abc` was 12, `1e3` was 1000, stock `2.5` was cut to 2 with no message), minted a typed supplier before the add (an orphan when the add failed), and a throw after `busy = true` would have left the full-sheet overlay on. None of it could run in Node, so each bug would only have shown on a device.
+
+**Rules:**
+1. The sheet reads each field's TEXT into a plain object and calls one pure function (`fromForm`) that returns the store's arguments or EVERY problem at once, in field order. The sheet keeps only glue: busy, the answer, the toast, close.
+2. Parse numbers with a regex first, `Number` second: plain decimal or plain digits only, a limit on the value, NaN otherwise. Never `parseFloat` or `parseInt` on user text; a source guard greps the helper and the dialog for them.
+3. A value the code cannot keep exactly is refused, not cut (stock `2.5` is an error, not 2). A silent cut is data loss with a clean-looking UI.
+4. The live pill and Save must call the SAME parser, and a test must prove the pill's price equals the price Save sends.
+5. Anything a typed value will CREATE (a supplier) is held until the operation that needs it and travels inside it; nothing is minted by a "Use" tap.
+6. Submit has a `try/catch` and a `settled` flag: a throw before the answer resets busy and says so; a throw after the answer adds no second message. Read the controls once at the tap and let the answer handler use those values.
+7. Run the REAL function bodies (`extractFunction`) in a `vm`, and assert the call's argument list against the real store's parameter list parsed from the source, so a reordered parameter fails a test.
+8. Prove "what the form accepts, the server accepts": a seeded monkey with an INDEPENDENT oracle (written from the rules, not from the helper), every accepted form sent through the real planner and validator, and a check that the monkey reached both outcomes and every error text. Bias the generator toward a valid form with 0 to 2 corrupted fields; a pure-junk generator reached 14 accepts in 4000 and proved little.
+9. When a refactor makes an old source-pin test fail, restate the invariant in the new shape (callback drops busy before any other effect) and say so in the commit; do not delete the pin.
+10. Hand mutants: a "mutant" that survives may be equivalent (`taxable ? taxPercent : 0` when the variable is already 0); prove it and delete the redundant line.
+
+**The check:** grep the dialog for `parseFloat(`, `parseInt(` and any store call that creates something before the main operation; type `2.5`, `1e3`, `12abc` and a pasted 600-character text on a device.
+
