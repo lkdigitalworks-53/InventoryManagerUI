@@ -395,13 +395,10 @@ test('SRS-03 wiring: singleton registered, URL = deployed handler, timeout above
   assert.match(SVC, /envelope\.env = FirebaseService\.environment/);
 });
 
-test('SRS-04 dormant: nothing but the service itself and tests names the service (S4b-2 will add the page)', () => {
-  const users = walk(REPO, []).filter((f) => /\.(qml|js)$/.test(f) && !f.includes(`${path.sep}functions${path.sep}`) && !f.includes(`${path.sep}.github${path.sep}`) && !f.includes(`${path.sep}test${path.sep}`))
-    .filter((f) => f !== SVC_PATH && !f.endsWith(path.join('helper', 'StockRegisterModel.js')))
-    .filter((f) => /StockRegisterService|StockRegisterModel/.test(fs.readFileSync(f, 'utf8')))
-    .map((f) => path.relative(REPO, f))
-    .filter((f) => !f.startsWith('tests' + path.sep) && f !== path.join('qml', 'model', 'qmldir'));
-  assert.deepEqual(users, [], 'unexpected users: ' + users.join(', '));
+test('SRS-04 (was: dormant) the real callers are pinned by stockRegisterPageWiring.test.js SRW-13: exactly Main.qml and StockRegisterPage.qml name the service', () => {
+  // Skill 155 rule 8: a dormancy pin is REPLACED by the real caller, not deleted. The exact allow-list lives in SRW-13.
+  const page = fs.readFileSync(path.join(REPO, 'qml/pages/StockRegisterPage.qml'), 'utf8');
+  assert.match(page, /StockRegisterService\.load\(/);
 });
 
 // ---- hand mutants -------------------------------------------------------------------------------------------------

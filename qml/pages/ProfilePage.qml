@@ -6,6 +6,7 @@ import "../components"
 import "../helper"
 import "../model"
 import "../helper/StaffScope.js" as StaffScope
+import "../helper/StockRegisterModel.js" as StockRegisterModel
 
 // Profile screen — avatar + stats card, Account & Preferences lists,
 // destructive sign-out CTA. Wired to AuthStore + emits navigation signals.
@@ -15,6 +16,7 @@ Item {
     signal backRequested()
     signal editProfileRequested()
     signal manageMembersRequested()
+    signal stockRegisterRequested()
     signal signOutRequested()
     signal leaveWorkspaceRequested()
 
@@ -202,6 +204,7 @@ Item {
 
                         SettingsRow { iconName: "profile"; label: "Edit profile";       onClicked: root.editProfileRequested() }
                         SettingsRow { iconName: "team"; label: "Team members";  onClicked: root.manageMembersRequested(); visible: AuthStore.canInviteMembers }
+                        SettingsRow { iconName: "report"; label: "Stock register"; onClicked: root.stockRegisterRequested(); visible: StockRegisterModel.canView(AuthStore.role) }
                         SettingsRow { iconName: "security"; label: "Security & passkeys" }
                         SettingsRow { iconName: "bell"; label: "Notifications";       last: true }
                     }

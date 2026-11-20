@@ -156,7 +156,7 @@ function violations(auth, main, files, page = PAGE) {
   if (!/if \(AuthService\.accessBlock === AccessState\.STATE_MOVED\) app\._closeAllForWorkspaceChange\(\)/.test(bc)) out.push('main-moved-closes-forms');
   const closeAll = fnBody(M, '_closeAllForWorkspaceChange');
   if (!/var dialogs = _allDialogs\(\)\.concat\(\[confirmReturnSheet, staffActionSheet\]\)/.test(closeAll) || !/dialogs\[i\]\.opened\) dialogs\[i\]\.close\(\)/.test(closeAll) || /busy/.test(closeAll)) out.push('main-close-all-dialogs');
-  for (const o of ['profilePage', 'staffPageOverlay', 'activityPageOverlay']) {
+  for (const o of ['profilePage', 'staffPageOverlay', 'stockRegisterOverlay', 'activityPageOverlay']) {
     if (!new RegExp(`if \\(${o}\\.visible\\)\\s*${o}\\.close\\(\\)`).test(closeAll)) { out.push('main-close-all-overlays'); break; }
   }
   // every popup declared in Main.qml is closed by the workspace change (Back's own list is _allDialogs)
@@ -257,7 +257,7 @@ const MUTANTS = [
   ['main', '            if (AuthService.accessBlock === AccessState.STATE_MOVED) app._closeAllForWorkspaceChange()', '', 'main-moved-closes-forms'],
   ['main', '_allDialogs().concat([confirmReturnSheet, staffActionSheet])', '_allDialogs()', 'main-close-all-dialogs'],
   ['main', 'if (dialogs[i] && dialogs[i].opened) dialogs[i].close()\n        }\n        if (profilePage', 'if (dialogs[i] && dialogs[i].opened && !dialogs[i].busy) dialogs[i].close()\n        }\n        if (profilePage', 'main-close-all-dialogs'],
-  ['main', '        if (profilePage.visible)         profilePage.close()\n        if (staffPageOverlay.visible)    staffPageOverlay.close()\n        if (activityPageOverlay.visible) activityPageOverlay.close()\n    }', '        if (profilePage.visible)         profilePage.close()\n        if (staffPageOverlay.visible)    staffPageOverlay.close()\n    }', 'main-close-all-overlays'],
+  ['main', '        if (profilePage.visible)         profilePage.close()\n        if (staffPageOverlay.visible)    staffPageOverlay.close()\n        if (stockRegisterOverlay.visible) stockRegisterOverlay.close()\n        if (activityPageOverlay.visible) activityPageOverlay.close()\n    }', '        if (profilePage.visible)         profilePage.close()\n        if (staffPageOverlay.visible)    staffPageOverlay.close()\n        if (activityPageOverlay.visible) activityPageOverlay.close()\n    }', 'main-close-all-overlays'],
   ['main', '                importDlg]\n    }', '                ]\n    }', 'main-popups-complete'],
   ['main', '        if (BackRouter.route(_allDialogs()) !== "none") return', '        if (BackRouter.route([signOutSheet]) !== "none") return', 'main-back-uses-list'],
   ['main', 'import "helper/AccessState.js" as AccessState\n', '', 'main-access-import'],

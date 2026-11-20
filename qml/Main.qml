@@ -11,6 +11,7 @@ import "helper"
 import "components"
 import "helper/AccessState.js" as AccessState
 import "helper/RefreshCaption.js" as RefreshCaption
+import "helper/StockRegisterModel.js" as StockRegisterModel
 import "helper/BackRouter.js" as BackRouter
 
 App {
@@ -132,6 +133,7 @@ App {
         }
         if (profilePage.visible)         profilePage.close()
         if (staffPageOverlay.visible)    staffPageOverlay.close()
+        if (stockRegisterOverlay.visible) stockRegisterOverlay.close()
         if (activityPageOverlay.visible) activityPageOverlay.close()
     }
 
@@ -149,6 +151,7 @@ App {
             // 2. Full-screen overlay visible → close back to Dashboard.
             if (profilePage.visible)         { profilePage.close();         return }
             if (staffPageOverlay.visible)    { staffPageOverlay.close();    return }
+            if (stockRegisterOverlay.visible) { stockRegisterOverlay.close(); return }
             if (activityPageOverlay.visible) { activityPageOverlay.close(); return }
             // 3. Not on Home tab → go to Home.
             if (navigation.visible && navigation.currentIndex !== 0) {
@@ -369,6 +372,7 @@ App {
         function onRoleChanged(role) {
             Toast.show(qsTr("Your role is now %1").arg(AccessState.roleLabel(role)))
             if (!AuthStore.canViewStaff) staffPageOverlay.close()
+            if (!StockRegisterModel.canView(role)) stockRegisterOverlay.close()
         }
 
         function onTenantContextReady(tenantId, role) {
@@ -423,6 +427,8 @@ App {
             TransactionStore.clear()
             SupplierStore.clear()
             StockBatchStore.clear()
+            // A register answer is a whole ledger in memory (P1 S4b-2): never keep it for the next account.
+            StockRegisterService.clear()
             // PartyStore is QSettings-backed (device-local, not tenant-
             // scoped). Without this, the next account inherits the previous
             // user's supplier names.
@@ -726,6 +732,7 @@ App {
         visible: navigation.visible
                  && !profilePage.visible
                  && !staffPageOverlay.visible
+                 && !stockRegisterOverlay.visible
                  && !activityPageOverlay.visible
         anchors.left: parent.left
         anchors.right: parent.right
@@ -1151,6 +1158,10 @@ App {
             close()
             staffPageOverlay.open()
         }
+        onStockRegisterRequested: {
+            close()
+            stockRegisterOverlay.open()
+        }
         onSignOutRequested: {
             // Confirm before signing out — destructive action that drops the
             // workspace context and clears local store caches. With queued
@@ -1233,6 +1244,30 @@ App {
         Connections {
             target: navigation
             function onCurrentIndexChanged() { staffPageOverlay.close() }
+        }
+    }
+
+    // ── Stock register overlay (P1 S4b-2) ───────────────────────────────────
+    // Reached from the Profile "Stock register" row (owner, admin, manager). Same overlay pattern as staffPageOverlay,
+    // not a fifth tab (sessionRecheckWiring pins the tab count at 4). The page keeps its state while closed and
+    // resets itself when the workspace or the role changes.
+    Item {
+        id: stockRegisterOverlay
+        anchors.fill: parent
+        z: 200
+        visible: false
+        function open() { visible = true }
+        function close() { visible = false }
+
+        StockRegisterPage {
+            anchors.fill: parent
+            isOnline: app.isOnline
+            onBackRequested: stockRegisterOverlay.close()
+        }
+
+        Connections {
+            target: navigation
+            function onCurrentIndexChanged() { stockRegisterOverlay.close() }
         }
     }
 
