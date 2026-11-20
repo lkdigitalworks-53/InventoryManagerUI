@@ -262,7 +262,7 @@ BottomSheet {
                         anchors.margins: dp(Constants.space3)
                         spacing: dp(Constants.space2)
 
-                        // ── Top row: avatar + name/price + qty stepper ──────
+                        // ── Top row: avatar + name/price ────────────────────
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: dp(Constants.space2)
@@ -290,31 +290,18 @@ BottomSheet {
                                     Layout.fillWidth: true
                                 }
                             }
-                            QQC.AbstractButton {
-                                implicitWidth: dp(28); implicitHeight: dp(28)
-                                padding: 0
-                                background: Rectangle { radius: dp(8); border.color: Constants.borderColor; border.width: 1; color: "transparent" }
-                                contentItem: Item {
-                                    Icon { anchors.centerIn: parent; name: "remove"; size: sp(16); color: Constants.textPrimary }
-                                }
-                                onClicked: dlg.changeQty(index, -1)
-                            }
-                            Text {
-                                text: String(modelData.qty)
-                                color: Constants.textPrimary
-                                font.pixelSize: sp(Constants.fsBody)
-                                font.bold: true
-                                Layout.preferredWidth: dp(22)
-                                horizontalAlignment: Text.AlignHCenter
-                            }
-                            QQC.AbstractButton {
-                                implicitWidth: dp(28); implicitHeight: dp(28)
-                                padding: 0
-                                background: Rectangle { radius: dp(8); border.color: Constants.borderColor; border.width: 1; color: "transparent" }
-                                contentItem: Item {
-                                    Icon { anchors.centerIn: parent; name: "add"; size: sp(16); color: Constants.textPrimary }
-                                }
-                                onClicked: dlg.changeQty(index, +1)
+                        }
+
+                        // ── Quantity row: its own line, so the 48 dp touch targets never squeeze the product name
+                        // (picker v2 S5c; the product sheet's row stacks its stepper the same way).
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Item { Layout.fillWidth: true }
+                            CartStepper {
+                                value: modelData.qty
+                                itemName: modelData.name
+                                onDecrement: dlg.changeQty(index, -1)
+                                onIncrement: dlg.changeQty(index, +1)
                             }
                         }
 
@@ -600,6 +587,11 @@ BottomSheet {
     }
 
     // Searchable product sheet with a quantity stepper per row (picker v2). Declared here, opened by "Add products".
+    // The app's Back router (Main.qml, BackRouter.js) asks the open dialog first. With the product sheet up, Back belongs
+    // to the sheet (it asks "Discard these items?" when a draft exists); without this the router would close THIS dialog
+    // under the sheet and the draft would be lost without a question. false = not ours, the router closes the dialog.
+    function consumeBack() { return picker.handleBack() }
+
     ProductPickerSheet {
         id: picker
         products: InventoryStore.products

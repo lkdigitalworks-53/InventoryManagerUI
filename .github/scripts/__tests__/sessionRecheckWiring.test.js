@@ -163,7 +163,7 @@ function violations(auth, main, files, page = PAGE) {
   const listed = ((fnBody(M, '_allDialogs').match(/\[([\s\S]*)\]/) || [])[1] || '').split(',').map((x) => x.trim()).filter(Boolean).concat(['confirmReturnSheet', 'staffActionSheet']);
   const popups = [...M.matchAll(/\b(\w+(?:Dialog|Sheet))\s*\{\s*id:\s*(\w+)/g)].map((m) => m[2]);
   if (popups.length < 25 || popups.some((id) => !listed.includes(id))) out.push('main-popups-complete');
-  if (!/var dialogs = _allDialogs\(\)/.test(fnBody(M, '_handleBack'))) out.push('main-back-uses-list');
+  if (!/BackRouter\.route\(_allDialogs\(\)\)/.test(fnBody(M, '_handleBack'))) out.push('main-back-uses-list');
   // the access screen's button says Continue only for the moved state, and the page knows the state
   if (!/text: root\.reason === AccessState\.STATE_MOVED \? qsTr\("Continue"\) : qsTr\("Try again"\)/.test(page)) out.push('ui-moved-button-label');
   if (!/import "\.\.\/helper\/AccessState\.js" as AccessState/.test(page)) out.push('ui-page-import');
@@ -259,7 +259,7 @@ const MUTANTS = [
   ['main', 'if (dialogs[i] && dialogs[i].opened) dialogs[i].close()\n        }\n        if (profilePage', 'if (dialogs[i] && dialogs[i].opened && !dialogs[i].busy) dialogs[i].close()\n        }\n        if (profilePage', 'main-close-all-dialogs'],
   ['main', '        if (profilePage.visible)         profilePage.close()\n        if (staffPageOverlay.visible)    staffPageOverlay.close()\n        if (activityPageOverlay.visible) activityPageOverlay.close()\n    }', '        if (profilePage.visible)         profilePage.close()\n        if (staffPageOverlay.visible)    staffPageOverlay.close()\n    }', 'main-close-all-overlays'],
   ['main', '                importDlg]\n    }', '                ]\n    }', 'main-popups-complete'],
-  ['main', '        var dialogs = _allDialogs()\n        for (var i = 0; i < dialogs.length; ++i) {\n            if (dialogs[i] && dialogs[i].opened) {', '        var dialogs = [signOutSheet]\n        for (var i = 0; i < dialogs.length; ++i) {\n            if (dialogs[i] && dialogs[i].opened) {', 'main-back-uses-list'],
+  ['main', '        if (BackRouter.route(_allDialogs()) !== "none") return', '        if (BackRouter.route([signOutSheet]) !== "none") return', 'main-back-uses-list'],
   ['main', 'import "helper/AccessState.js" as AccessState\n', '', 'main-access-import'],
 ];
 

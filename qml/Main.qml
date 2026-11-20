@@ -11,6 +11,7 @@ import "helper"
 import "components"
 import "helper/AccessState.js" as AccessState
 import "helper/RefreshCaption.js" as RefreshCaption
+import "helper/BackRouter.js" as BackRouter
 
 App {
     id: app
@@ -135,22 +136,13 @@ App {
     }
 
     function _handleBack() {
-        // 1. Open modal sheet / dialog → close the first open one, unless
-        // it's busy with an operation in flight — then swallow the back
-        // press entirely rather than falling through to close something
-        // else or navigate away; the busy dialog stays in the way, same
-        // rationale as the X/Cancel/tap-outside guards added to BottomSheet
-        // itself. Dialogs that don't expose `busy` (not BottomSheet-derived)
-        // read as undefined here, which is falsy, so they close exactly as
-        // before — this only changes behavior for dialogs that actually
-        // have something to guard.
-        var dialogs = _allDialogs()
-        for (var i = 0; i < dialogs.length; ++i) {
-            if (dialogs[i] && dialogs[i].opened) {
-                if (!dialogs[i].busy) dialogs[i].close()
-                return
-            }
-        }
+        // 1. Open modal sheet / dialog → BackRouter decides (qml/helper/BackRouter.js, tested headless): a busy
+        // dialog swallows the press entirely rather than falling through to close something else or navigate away
+        // (same rationale as the X/Cancel/tap-outside guards on BottomSheet); a dialog that holds a guarded child
+        // sheet answers through consumeBack() (the product picker, S5c: it asks "Discard these items?" instead of the
+        // dialog under it closing with the draft); anything else closes, exactly as before. Dialogs that don't
+        // expose `busy` or `consumeBack` read as undefined, which is falsy / not a function, so they close as before.
+        if (BackRouter.route(_allDialogs()) !== "none") return
         // The access-blocked screen (S2f-3) covers the whole app: nothing behind it may react to Back
         // (no overlay closing, no tab change out of sight); Back goes straight to the double-tap exit.
         if (!accessBlockedPage.visible) {

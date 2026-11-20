@@ -42,10 +42,15 @@ QQC.Dialog {
     property bool scrollBody: true
 
     // Opt-in (picker v2, D1). true: the X, Cancel and a tap outside ask the owner through closeRequested() instead of
-    // closing, so it can say "Discard N items?" first; the system Back key is routed by the owner (Keys handler on its
-    // body) and, if that does not fire on a device, does nothing rather than lose data. false (default): unchanged.
+    // closing, so it can say "Discard N items?" first. The system Back key reaches the Keys handler on the body below
+    // when the sheet holds focus, and ALSO the app's global router (Main.qml) through the owning dialog; see
+    // routesBack and the owner's handleBack (S5c, KNOWN-ISSUES 8). false (default): unchanged.
     property bool guardClose: false
     signal closeRequested()
+    // Opt-in (S5c) with guardClose. true: Back (the key handler below) emits backRequested() and the owner decides, so it
+    // can drop a repeated press and answer its own question. false (default): Back is requestClose(), as before.
+    property bool routesBack: false
+    signal backRequested()
     function requestClose() {
         if (busy) return
         if (guardClose) closeRequested()
@@ -149,7 +154,12 @@ QQC.Dialog {
         // guardClose: Escape and the Android Back key ask the owner instead of closing. Not accepted (so the Popup's own
         // closePolicy handling runs, exactly as before) when guardClose is false.
         Keys.onEscapePressed: function(event) { event.accepted = root.guardClose; if (root.guardClose) root.requestClose() }
-        Keys.onBackPressed: function(event) { event.accepted = root.guardClose; if (root.guardClose) root.requestClose() }
+        Keys.onBackPressed: function(event) {
+            event.accepted = root.guardClose
+            if (!root.guardClose) return
+            if (root.routesBack) root.backRequested()
+            else root.requestClose()
+        }
 
         // Must match PrimaryButton's label font (bold, fsBodyLg): same text, same width.
         TextMetrics {

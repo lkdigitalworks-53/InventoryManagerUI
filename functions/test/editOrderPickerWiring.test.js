@@ -383,8 +383,8 @@ test("EOW-23 the real + stepper: one more up to the one ceiling; a fractional st
     const body = (() => {
         const at = CODE.indexOf("Edit.stepUp(");
         assert.ok(at >= 0, "the + stepper no longer calls Edit.stepUp");
-        const start = CODE.lastIndexOf("onClicked: {", at);
-        return literal(CODE.slice(start), "onClicked:", "{", "}");
+        const start = CODE.lastIndexOf("onIncrement: {", at);   // CartStepper (S5c): the + tap is its onIncrement handler
+        return literal(CODE.slice(start), "onIncrement:", "{", "}");
     })();
     assert.ok(!/inv\.stock|maxQ|onHand/.test(body), "the stepper has its own stock formula again");
     const tap = (rows, idx, status, original, mutate) => {

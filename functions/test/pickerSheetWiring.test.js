@@ -210,12 +210,16 @@ test("WIRE-17 refresh cost: the chips array is replaced only when the categories
     assert.equal((sync.match(/_rows = rows/g) || []).length, 2);
 });
 
-test("WIRE-18 the in-stock toggle: the tap and both accessibility actions use one function", () => {
+test("WIRE-18 the in-stock toggle: the tap and both accessibility actions end in one function; the two actions share one repeat gate (S5c)", () => {
     assert.match(SHEET, /function _toggleStock\(\) \{ stockToggle\.checked = !stockToggle\.checked; _inStockOnly = stockToggle\.checked; rebuild\(true\) \}/);
     const toggle = block(SHEET, "Rectangle {\n            id: stockToggle");
-    assert.match(toggle, /Accessible\.onPressAction: root\._toggleStock\(\)/);
-    assert.match(toggle, /Accessible\.onToggleAction: root\._toggleStock\(\)/);
+    assert.match(toggle, /Accessible\.onPressAction: root\._toggleStockA11y\(\)/);
+    assert.match(toggle, /Accessible\.onToggleAction: root\._toggleStockA11y\(\)/);
     assert.match(toggle, /onClicked: root\._toggleStock\(\)/);
+    // the gate: a second action inside the window is dropped, the first one flips (KNOWN-ISSUES 19a)
+    const gate = block(SHEET, "function _toggleStockA11y() {");
+    assert.match(gate, /Guards\.isRepeat\(_lastToggleAt, now, Guards\.TOGGLE_REPEAT_MS\)\) return/);
+    assert.match(gate, /_lastToggleAt = now\s*_toggleStock\(\)/);
     assert.equal((noComments(SHEET).match(/_inStockOnly = stockToggle\.checked/g) || []).length, 1, "one place changes the filter");
 });
 
