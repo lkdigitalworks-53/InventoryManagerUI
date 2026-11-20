@@ -120,10 +120,13 @@ test("SB-4 AddProduct: validation returns before busy; the store callback drops 
     assert.equal((body.match(/busy = true/g) || []).length, 1, "one busy = true");
     assert.ok(busyAt > 0 && callAt > busyAt, "busy precedes the store call");
     const before = body.substring(0, busyAt);
-    assert.match(before, /errs\.length > 0\) \{ errorLabel\.text = errs\.join\(" · "\); return \}/, "validation refuses before busy");
+    // AP3b: validation moved into AddProductFlow.fromForm; the refusal still returns before busy.
+    assert.match(before, /!form\.ok\) \{ errorLabel\.text = form\.errors\.join\(" · "\); return \}/, "validation refuses before busy");
     const cb = body.substring(body.indexOf("function(ok, newId, refusal, status) {", callAt));
-    const firstStatement = cb.substring(cb.indexOf("{") + 1).trim().split("\n")[0].trim();
-    assert.equal(firstStatement, "busy = false", "callback's first statement drops busy, so the overlay never hides the refusal");
+    // AP3b: the first statement marks the answer as settled (the catch block must not claim "something went wrong" after an answer);
+    // the SECOND drops busy, so still nothing visible happens before the overlay is off.
+    const statements = cb.substring(cb.indexOf("{") + 1).trim().split("\n").map((l) => l.trim());
+    assert.deepEqual(statements.slice(0, 2), ["settled = true", "busy = false"], "callback drops busy before any other effect, so the overlay never hides the refusal");
     assert.ok(cb.indexOf("busy = false") < cb.indexOf("errorLabel.text"), "busy dropped before the error text");
 });
 

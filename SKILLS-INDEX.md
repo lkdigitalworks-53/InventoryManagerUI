@@ -185,3 +185,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 175: Raise the PR and read CI from a Claude chat session: attach the repo with `add_repo` (push), then use REST only
 - 176: One limit, one function: every reader of "how many may this order hold" calls it, and the sweep proves it by replaying the OLD check
 - 177: Label a row the server derives with a validated hint, so a clamped write keeps its stock change and still gets the right ledger kind
+- 178: Move a sheet's whole submit decision into one pure function, parse numbers strictly, and run the real tap in Node

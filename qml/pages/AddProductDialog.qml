@@ -4,11 +4,13 @@ import QtQuick.Layouts
 
 import "../components"
 import "../helper"
+import "../helper/AddProductFlow.js" as AddProductFlow
+import "../helper/RestockFlow.js" as RestockFlow
 import "../model"
 
 // Add Product bottom sheet — preserves photo upload, SKU generation, advanced
-// disclosure (stock + reorder). Public contract: signal productCreated(),
-// signal manageCategoriesRequested().
+// disclosure (stock + reorder). Public contract: signal manageCategoriesRequested().
+// AP3b: every decision before the store call (strict number parsing, limits, the supplier) is AddProductFlow.fromForm.
 BottomSheet {
     id: dlg
 
@@ -20,7 +22,6 @@ BottomSheet {
     // A constant, not set at the tap, so no early return can leave it stale or empty.
     busyMessage: qsTr("Adding product — this can take a few seconds")
 
-    signal productCreated()
     signal manageCategoriesRequested()
     // The photo-source sheet is hoisted to the App root (Main.qml) — a Popup
     // declared inside this BottomSheet's body opens off-screen. Main opens the
@@ -52,12 +53,17 @@ BottomSheet {
         dlg._refreshSuppliers("")
         addPartyField.text = ""
         dlg._addPartyOpen = false
+        dlg._newSupplierName = ""
         advToggle.open = true   // advanced section visible every time the sheet opens
     }
 
     // Local toggle for the inline "Add new party" row — see RestockDialog
     // for why we don't drive this off the field's own `visible`.
     property bool _addPartyOpen: false
+    // A typed NEW supplier name (AP3b, the R5a pattern). Nothing is created when the person taps "Use": the name travels inside
+    // the add operation and the server creates the supplier in the same transaction as the product, so an add that fails leaves
+    // no orphan supplier and burns no number. "" = none. Picking a row in the combo clears it.
+    property string _newSupplierName: ""
 
     // Mirror of SupplierStore for the picker: ids and labels move together.
     property var _supplierIds: [""]
@@ -78,13 +84,21 @@ BottomSheet {
         partyCombo.currentIndex = idx
     }
 
-    function getSellingPrice(sellingPriceText, costPriceText, isMarkupSelected) {
-        var v = parseFloat(sellingPriceText)
-        if (!isMarkupSelected) return v;
-
-        var c = parseFloat(costPriceText)
-        var sp = Math.round(((v * c) / 100) + c)
-        return sp
+    // The "Use" button of the inline new-supplier row. Creates NOTHING (see _newSupplierName). A name that matches a known
+    // supplier (case-insensitive) selects that row instead, so retyping "acme" never makes a second supplier.
+    function _useTypedParty() {
+        var c = RestockFlow.newPartyChoice(addPartyField.text, SupplierStore.suppliers)
+        if (c.kind === "none") return
+        if (c.kind === "invalid") { Toast.show(c.message); return }
+        if (c.kind === "existing") {
+            dlg._newSupplierName = ""
+            dlg._refreshSuppliers(c.id)
+        } else {
+            dlg._newSupplierName = c.name
+            partyCombo.currentIndex = 0
+        }
+        addPartyField.text = ""
+        dlg._addPartyOpen = false
     }
 
     onPrimaryClicked: { if (!busy) trySubmit() }
@@ -150,6 +164,7 @@ BottomSheet {
             Layout.fillWidth: true
             label: "Name"
             placeholderText: "e.g. Cappuccino"
+            maximumLength: AddProductFlow.MAX_NAME
         }
 
         RowLayout {
@@ -198,12 +213,7 @@ BottomSheet {
                 color: Constants.success
                 font.pixelSize: sp(Constants.fsSmall)
                 font.bold: true
-                text: {
-                    var c = parseFloat(priceField.text)
-                    var s = parseFloat(sellingPriceField.text)
-                    if (isNaN(c) || isNaN(s) || c <= 0) return "Markup —"
-                    return "Markup " + Math.round(((s - c) / c) * 100) + "%   ·   profit ₹" + (s - c).toFixed(2)
-                }
+                text: AddProductFlow.priceSummary(priceField.text, sellingPriceField.text, false)
             }
         }
 
@@ -220,13 +230,7 @@ BottomSheet {
                 color: Constants.success
                 font.pixelSize: sp(Constants.fsSmall)
                 font.bold: true
-                text: {
-                    var c = parseFloat(priceField.text)
-                    var m = parseFloat(sellingPriceField.text)
-                    if (isNaN(c) || isNaN(m) || c <= 0) return "Selling price —"
-                    var sp = Math.round(((m * c) / 100) + c)
-                    return "Selling price ₹" + sp + "   ·   profit ₹" + (sp - c).toFixed(2)
-                }
+                text: AddProductFlow.priceSummary(priceField.text, sellingPriceField.text, true)
             }
         }
 
@@ -287,6 +291,7 @@ BottomSheet {
                             Layout.fillWidth: true
                             label: "SKU"
                             placeholderText: "Auto-generated"
+                            maximumLength: AddProductFlow.MAX_SKU
                         }
                         GhostButton {
                             text: "Gen"
@@ -334,6 +339,7 @@ BottomSheet {
                         Layout.fillWidth: true
                         label: qsTr("Size")
                         placeholderText: qsTr("e.g. M, L, XL, 500ml")
+                        maximumLength: AddProductFlow.MAX_SIZE
                     }
 
                     RowLayout {
@@ -344,12 +350,16 @@ BottomSheet {
                             Layout.fillWidth: true
                             label: qsTr("Initial stock")
                             placeholderText: "0"
+                            maximumLength: String(AddProductFlow.MAX_STOCK).length
+                            inputMethodHints: Qt.ImhDigitsOnly
                         }
                         AuthTextField {
                             id: minStockField
                             Layout.fillWidth: true
                             label: qsTr("Reorder at")
-                            placeholderText: "2"
+                            placeholderText: "0"
+                            maximumLength: String(AddProductFlow.MAX_STOCK).length
+                            inputMethodHints: Qt.ImhDigitsOnly
                         }
                     }
 
@@ -384,6 +394,7 @@ BottomSheet {
                         Layout.fillWidth: true
                         label: qsTr("Description")
                         placeholderText: qsTr("Optional")
+                        maximumLength: AddProductFlow.MAX_DESCRIPTION
                     }
 
                     // Supplier / party picker — optional. Tracking the source
@@ -405,9 +416,12 @@ BottomSheet {
                             // supplierId resolved via `_supplierIds[idx]`.
                             model: dlg._supplierLabels
                             font.pixelSize: sp(Constants.fsBody)
-                            displayText: currentIndex > 0
-                                    ? currentText
-                                    : qsTr("Select or add a supplier")
+                            displayText: dlg._newSupplierName.length > 0
+                                    ? qsTr("New: %1").arg(dlg._newSupplierName)
+                                    : (currentIndex > 0 ? currentText : qsTr("Select or add a supplier"))
+                            // A user pick replaces a typed new name (one supplier per product). Programmatic currentIndex
+                            // changes do not emit `activated`, so _useTypedParty / _refreshSuppliers never clear it by accident.
+                            onActivated: dlg._newSupplierName = ""
                         }
                         QQC.AbstractButton {
                             id: addPartyToggle
@@ -445,25 +459,25 @@ BottomSheet {
                             id: addPartyField
                             Layout.fillWidth: true
                             placeholderText: qsTr("New supplier name")
+                            maximumLength: RestockFlow.MAX_SUPPLIER_NAME
                             onAccepted: addPartyBtn.clicked()
                         }
                         PrimaryButton {
                             id: addPartyBtn
-                            text: qsTr("Save")
+                            text: qsTr("Use")
                             implicitHeight: dp(44)
                             implicitWidth: dp(80)
-                            onClicked: {
-                                var n = (addPartyField.text || "").trim()
-                                if (n.length === 0) return
-                                addPartyBtn.enabled = false
-                                SupplierStore.addSupplier({ name: n }, function(s) {
-                                    addPartyBtn.enabled = true
-                                    dlg._refreshSuppliers(s ? s.supplierId : "")
-                                    addPartyField.text = ""
-                                    dlg._addPartyOpen = false
-                                })
-                            }
+                            onClicked: dlg._useTypedParty()
                         }
+                    }
+                    // Says what "Use" did: the supplier does not exist yet, it is created with the product.
+                    Text {
+                        Layout.fillWidth: true
+                        visible: dlg._newSupplierName.length > 0
+                        text: qsTr("“%1” will be added as a new supplier when you save this product.").arg(dlg._newSupplierName)
+                        wrapMode: Text.WordWrap
+                        color: Constants.textSecondary
+                        font.pixelSize: sp(Constants.fsSmall)
                     }
 
                     GhostButton {
@@ -486,68 +500,69 @@ BottomSheet {
     }
 
     function trySubmit() {
-        var errs = []
-        if (!nameField.text || nameField.text.length < 2) errs.push("Enter a valid product name")
-        if (!skuField.text) errs.push("SKU required (tap Gen)")
-        if (categoryCombo.currentIndex < 0) errs.push("Select a category")
-        var p = parseFloat(priceField.text)
-        if (isNaN(p) || p < 0) errs.push("Enter a valid cost")
-        var sp = getSellingPrice(sellingPriceField.text, priceField.text,  priceRow.isMarkupSelected)
-        if (isNaN(sp) || sp <= 0) errs.push("Enter a valid price")
-        if (!isNaN(p) && !isNaN(sp) && sp < p) errs.push("Price < cost")
-        var s = parseInt(stockField.text)
-        if (isNaN(s) || s < 0) errs.push("Enter valid stock")
-        var ms = parseInt(minStockField.text)
-        if (isNaN(ms) || ms < 0) ms = 0
-        var taxable = taxableCombo.currentIndex === 1
-        var taxPercent = 0
-        if (taxable) {
-            taxPercent = parseFloat(taxPercentField.text)
-            if (isNaN(taxPercent) || taxPercent < 0 || taxPercent > 100)
-                errs.push("Enter a valid tax % (0–100)")
-        }
-        if (errs.length > 0) { errorLabel.text = errs.join(" · "); return }
-        errorLabel.text = ""
+        // Same shape as RestockDialog._confirm (PR #183): a throw before the answer must not leave the full-sheet busy overlay on.
+        var settled = false
+        try {
+            var form = AddProductFlow.fromForm({
+                name: nameField.text, sku: skuField.text, size: sizeField.text, description: descField.text,
+                category: categoryCombo.currentText, categoryIndex: categoryCombo.currentIndex, unit: unitCombo.currentText,
+                costText: priceField.text, priceText: sellingPriceField.text, markup: priceRow.isMarkupSelected,
+                stockText: stockField.text, minStockText: minStockField.text,
+                taxable: taxableCombo.currentIndex === 1, taxPercentText: taxPercentField.text,
+                pendingPartyText: addPartyField.text, newSupplierName: dlg._newSupplierName,
+                partyIndex: partyCombo.currentIndex, supplierIds: dlg._supplierIds })
+            if (!form.ok) { errorLabel.text = form.errors.join(" · "); return }
+            errorLabel.text = ""
+            var a = form.args
+            // Initial-batch unit cost is the product cost (same convention as RestockDialog's default).
+            busy = true
+            InventoryStore.addProduct(a.name, a.sku, a.category, a.description, a.price, a.unit, a.stock, a.minStock,
+                a.sellingPrice, a.taxable, a.taxPercent, a.party, a.unitCost, a.size, function(ok, newId, refusal, status) {
+                    settled = true
+                    busy = false
+                    if (!ok) {
+                        errorLabel.text = refusal ? refusal : "Could not add product — try again"
+                        return
+                    }
+                    // Review sweep 1 of PR 207: the product exists from here on. This part runs from the Gateway's callback, NOT inside
+                    // the try/catch around the call, so a throw in a side effect (last-used category, photo queue) or in the toast must not
+                    // skip the toast and the close: the sheet would stay open with the form filled and a second tap would add a SECOND product.
+                    try { CategoryStore.setLastUsed(a.category) } catch (e1) { console.warn("[AddProductDialog] setLastUsed failed:", e1) }
 
-        // Resolve picker selection to a stable supplierId; index 0 means
-        // "no supplier", which leaves the initial-stock batch unattributed.
-        var supplierId = partyCombo.currentIndex > 0 ? dlg._supplierIds[partyCombo.currentIndex] : ""
-        // Initial-batch unit cost defaults to product cost — same convention
-        // as RestockDialog. Future "advanced" UI could expose this separately.
-        busy = true
-        InventoryStore.addProduct(nameField.text, skuField.text,
-            categoryCombo.currentText, descField.text, p, unitCombo.currentText, s, ms, sp,
-            taxable, taxable ? taxPercent : 0, supplierId, p /* unitCost = cost */,
-            sizeField.text.trim(), function(ok, newId, refusal, status) {
-                busy = false
-                if (!ok) {
-                    errorLabel.text = refusal ? refusal : "Could not add product — try again"
-                    return
-                }
-                CategoryStore.setLastUsed(categoryCombo.currentText)
-
-                // AP3a: the photo is attached from the LIVE answer only (design D-AP-8). A queued answer (slow link) has no id
-                // yet, so the photo is not attached and the toast says where to add it; an unconfirmed answer (the server
-                // may have saved it) has none either, and the person is told to check the list before adding again.
-                var photoSkipped = false
-                if (pendingPhotoSource && pendingPhotoSource.length > 0) {
-                    if (status === "applied" && newId) {
-                        // addProductPhoto queues the upload and returns immediately (design spec) --
-                        // no callback needed. PhotoQueue.photoUploaded (wired in EditProductDialog's
-                        // gallery, Main.qml) reports the outcome once the upload itself completes.
-                        var addResult = StorageService.addProductPhoto(newId, pendingPhotoSource)
-                        if (!addResult.ok) {
-                            console.warn("[AddProductDialog] addProductPhoto failed for", newId, addResult.error)
+                    // AP3a: the photo is attached from the LIVE answer only (design D-AP-8). A queued answer (slow link) has no id
+                    // yet, so the photo is not attached and the toast says where to add it; an unconfirmed answer (the server
+                    // may have saved it) has none either, and the person is told to check the list before adding again.
+                    var photoSkipped = false
+                    if (pendingPhotoSource && pendingPhotoSource.length > 0) {
+                        if (status === "applied" && newId) {
+                            // addProductPhoto queues the upload and returns immediately (design spec) --
+                            // no callback needed. PhotoQueue.photoUploaded (wired in EditProductDialog's
+                            // gallery, Main.qml) reports the outcome once the upload itself completes.
+                            try {
+                                var addResult = StorageService.addProductPhoto(newId, pendingPhotoSource)
+                                if (!addResult.ok) {
+                                    console.warn("[AddProductDialog] addProductPhoto failed for", newId, addResult.error)
+                                    photoSkipped = true
+                                }
+                            } catch (e2) {
+                                console.warn("[AddProductDialog] addProductPhoto threw for", newId, e2)
+                                photoSkipped = true
+                            }
+                        } else {
                             photoSkipped = true
                         }
-                    } else {
-                        photoSkipped = true
                     }
-                }
 
-                Toast.show(InventoryStore.addDoneMessage(status, photoSkipped))
-                productCreated()
-                dlg.close()
-            })
+                    try { Toast.show(InventoryStore.addDoneMessage(status, photoSkipped)) } finally { dlg.close() }
+                })
+        } catch (e) {
+            console.warn("[AddProductDialog] submit failed:", e)
+            // Already answered: the callback has shown its own message. Not answered: the add may or may not have been
+            // queued, so do not claim either.
+            if (!settled) {
+                busy = false
+                Toast.show("Something went wrong. Check the product list before adding again")
+            }
+        }
     }
 }
