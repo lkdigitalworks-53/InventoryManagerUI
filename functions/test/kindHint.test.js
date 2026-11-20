@@ -8,6 +8,7 @@
 //   KH-1..2  the hint list and its validator     KH-3..6  recordDelta request validation
 //   KH-7..14 applyDelta rows                     KH-15..17 other endpoints refuse a hint (no silent no-op)
 //   KH-18..19 handler pass-through               KH-20 monkey, 4000 random calls against the strict fake
+//   KH-21..22 review sweep 1 of PR #205 (negative stock under a clamp; `kindHint: null`)
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -274,4 +275,27 @@ test("KH-20 monkey: 4000 random clamped / floored / hinted deltas keep the ledge
         const fits = M.KIND_DIRECTION[wanted] === 0 || Math.sign(applied) === M.KIND_DIRECTION[wanted];
         assert.equal(rows[0].kind, fits ? wanted : "adjustment");
     }
+});
+
+// ── review sweep 1 of PR #205 ───────────────────────────────────────────────
+test("KH-21 sweep: a clamp on a NEGATIVE stock RAISES it to 0; a `sale` hint must not label that increase (row is `adjustment` +2)", async () => {
+    // Legacy or hand-edited data can hold stock below 0. A clamped deduction of 3 from -2 lands on 0: the applied change is +2.
+    const db = strictDb({ [T + "inventory/p1"]: { stock: -2, name: "A", price: 40 } });
+    const r = await G.applyDelta(db, dParams());             // deltas -3, clamps stock>=0, kindHint sale
+    assert.equal(r.ok, true, "the deduction is never refused");
+    assert.equal(db.store[T + "inventory/p1"].stock, 0);
+    const rows = rowList(db);
+    assert.equal(rows.length, 1);
+    assert.deepEqual([rows[0].kind, rows[0].qty, rows[0].derived, rows[0].valueAtCost], ["adjustment", 2, true, 0],
+        "a `sale` of +2 would put a negative supply in the statutory register");
+    assert.deepEqual(db.store[T + "audit_log/req-1"].before, { stock: -2 });
+});
+
+test("KH-22 sweep: `kindHint: null` means NO hint on a delta call and on a delta op (accepted); the mutation endpoints refuse it (KH-15)", () => {
+    const v = G.validateDeltaRequest(deltaBody({ kindHint: null }));
+    assert.equal(v.ok, true);
+    assert.equal(v.kindHint, undefined);
+    const op = { kind: "delta", entity: "inventory", entityId: "p1", deltas: { stock: -1 }, floors: { stock: 0 }, kindHint: null };
+    const o = O.validateOperationRequest({ requestId: "completeOrder:o1:1", opType: "completeOrder", clientTimestamp: "c", ops: [op] });
+    assert.equal(o.ok, true, "a null hint is not a hint: the op must not be lost over it");
 });
