@@ -54,4 +54,4 @@ Prerequisites: at least one category, one supplier named "Acme Farms", the Inven
 21. For two minutes: paste junk into every field, rotate, switch apps mid-Save, toggle airplane mode, tap Save repeatedly. Expect no stuck overlay, no duplicate product, no crash, every message readable.
 
 ## 5. CI result
-See CHECKPOINT.md (read after push).
+Head `ffe3a28` (rebased onto main@6951b1d): QML, Functions, Rules, E2E and PR Test Summary all green; the QML twin `tst_AddProductForm.qml` ran in CI. The dialog itself is device-only (steps above).
