@@ -54,6 +54,9 @@ function validateBatchMutationRequest(body) {
     if (body.movements !== undefined) {
         return { ok: false, status: 400, error: "movements-not-supported" };
     }
+    if (body.kindHint !== undefined) {
+        return { ok: false, status: 400, error: "kind-hint-not-supported" };
+    }
     if (items.length === 0) {
         return { ok: false, status: 400, error: "empty-batch" };
     }

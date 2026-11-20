@@ -252,4 +252,32 @@ TestCase {
         OutboxStore.enqueueDelta(_call("d1", 10, [_mv("receipt", 10)]))
         compare(OutboxStore.hasPendingForEntity("inventory", "p1"), true)
     }
+
+    // ── P1 S2d-2: kindHint on a derived call ─────────────────────────────
+    function test_a_derived_call_with_a_hint_stores_it() {
+        var item = OutboxStore.enqueueDelta(_call("d1", -2, undefined, { kindHint: "sale", clamps: { stock: 0 } }))
+        compare(item.kindHint, "sale")
+    }
+    function test_a_call_without_a_hint_has_no_kindHint_key() {
+        var item = OutboxStore.enqueueDelta(_call("d1", -2, undefined))
+        compare("kindHint" in item, false)
+    }
+    function test_two_derived_calls_with_an_equal_hint_coalesce_and_keep_it() {
+        OutboxStore.enqueueDelta(_call("d1", -2, undefined, { kindHint: "sale" }))
+        var merged = OutboxStore.enqueueDelta(_call("d2", -3, undefined, { kindHint: "sale" }))
+        compare(OutboxStore.pendingCount, 1)
+        compare(merged.deltas.stock, -5)
+        compare(merged.kindHint, "sale")
+    }
+    function test_derived_calls_with_unequal_hints_queue_separately() {
+        OutboxStore.enqueueDelta(_call("d1", -2, undefined, { kindHint: "sale" }))
+        OutboxStore.enqueueDelta(_call("d2", -3, undefined))
+        OutboxStore.enqueueDelta(_call("d3", 4, undefined, { kindHint: "receipt" }))
+        compare(OutboxStore.pendingCount, 3)
+    }
+    function test_the_hint_survives_the_outbox_json_round_trip() {
+        OutboxStore.enqueueDelta(_call("d1", -2, undefined, { kindHint: "sale" }))
+        var copy = JSON.parse(JSON.stringify(OutboxStore.items))
+        compare(copy[0].kindHint, "sale")
+    }
 }

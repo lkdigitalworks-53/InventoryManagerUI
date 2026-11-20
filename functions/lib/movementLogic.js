@@ -56,6 +56,13 @@ function visibleLength(text) {
 // product's cost (`price`, as stored when the row is written), never a client-sent number.
 const VALUE_KINDS = ["loss", "theft", "destroyed", "write_off", "free_sample", "gift"];
 
+// P1 S2d-2 kind hint (design docs/superpowers/specs/2026-11-18-p1-s2d2-derived-kind-hint-design.md). A client that cannot
+// send explicit movements (a CLAMPED deduction: the applied quantity is only known here) may still say what KIND
+// the server-derived row should have. A derived row carries no reason and no value, so only kinds that need neither
+// may be named: a hint of `loss` or `gift` would record a reasonless, unvalued loss and bypass the S2e-1 policy.
+// Today that leaves receipt, sales_return, sale, adjustment. Mirrored in qml/helper/StockMovements.js.
+const HINT_KINDS = MOVEMENT_KINDS.filter(function (k) { return REASON_REQUIRED.indexOf(k) < 0 && VALUE_KINDS.indexOf(k) < 0; });
+
 // Default kind for a stock change the client did not describe, by operation.
 // Anything else defaults to "adjustment".
 const DEFAULT_KIND_BY_OPTYPE = { completeOrder: "sale" };
@@ -102,6 +109,15 @@ function validateMovements(raw) {
         movements.push({ kind: m.kind, qty: m.qty, reason: trimmed, valueAtCost: value, derived: false });
     }
     return { ok: true, movements: movements };
+}
+
+// raw: undefined/null (no hint) or a kind name from HINT_KINDS. Returns { ok: true, kindHint } (kindHint undefined
+// when none) or { ok: false, status, error }. Only the NAME is checked here; whether it fits the direction of the
+// applied change is decided by deriveMovement, which falls back to "adjustment" (the label may degrade, never the stock).
+function validateKindHint(raw) {
+    if (raw === undefined || raw === null) return { ok: true, kindHint: undefined };
+    if (typeof raw !== "string" || HINT_KINDS.indexOf(raw) < 0) return _fail("invalid-kind-hint");
+    return { ok: true, kindHint: raw };
 }
 
 // The ledger must agree with the stock change it explains: the movements'
@@ -213,6 +229,6 @@ function buildRows(movements, ctx) {
 }
 
 module.exports = {
-    KIND_DIRECTION, MOVEMENT_KINDS, REASON_REQUIRED, MIN_REASON_LENGTH, visibleLength, VALUE_KINDS, unitCostOf, valueFor, DEFAULT_KIND_BY_OPTYPE, MAX_MOVEMENTS, MAX_REASON, MAX_TXN_WRITES, MAX_PRODUCT_NAME,
+    KIND_DIRECTION, MOVEMENT_KINDS, REASON_REQUIRED, MIN_REASON_LENGTH, visibleLength, VALUE_KINDS, HINT_KINDS, validateKindHint, unitCostOf, valueFor, DEFAULT_KIND_BY_OPTYPE, MAX_MOVEMENTS, MAX_REASON, MAX_TXN_WRITES, MAX_PRODUCT_NAME,
     cleanProductName, nameFor, validateMovements, totalsMatch, deriveMovement, stockOf, deriveForMutation, buildRows
 };

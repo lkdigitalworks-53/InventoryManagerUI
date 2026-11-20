@@ -266,7 +266,11 @@ QtObject {
     // because the server's rejection is terminal): `deltas.stock` must be present, no
     // `clamps`, the signed qtys must sum to `deltas.stock`, each qty must match its kind's
     // direction. A bad call answers { ok: false, error: "bad-request", detail: <code> }.
-    function recordDelta(entity, entityId, deltas, floors, clamps, callback, movements) {
+    //
+    // `kindHint` (optional, after `movements`; P1 S2d-2): the default KIND of the server-derived row, for a
+    // call that cannot carry explicit movements (a clamped deduction). One of StockMovements.HINT_KINDS, never
+    // together with `movements`, inventory stock deltas only; a bad hint is refused here like a bad `movements`.
+    function recordDelta(entity, entityId, deltas, floors, clamps, callback, movements, kindHint) {
         var collection = _collectionFor(entity)
         if (!collection || !entityId) {
             console.warn("[Gateway] recordDelta: bad entity/id", entity, entityId)
@@ -279,6 +283,12 @@ QtObject {
             if (callback) callback({ ok: false, error: "bad-request", detail: movementsError })
             return ""
         }
+        var hintError = StockMovements.validateKindHint(entity, deltas, movements, kindHint)
+        if (hintError !== "") {
+            console.warn("[Gateway] recordDelta: bad kind hint", hintError, entity, entityId)
+            if (callback) callback({ ok: false, error: "bad-request", detail: hintError })
+            return ""
+        }
         var requestId = _nextRequestId()
         var item = OutboxStore.enqueueDelta({
             requestId: requestId,
@@ -288,6 +298,7 @@ QtObject {
             floors: floors || {},
             clamps: clamps || {},
             movements: movements,
+            kindHint: kindHint,
             clientTimestamp: new Date().toISOString()
         })
         // item.requestId is the SURVIVING requestId — may belong to an
@@ -1032,6 +1043,7 @@ QtObject {
             floors: item.floors,
             clamps: item.clamps,
             movements: item.movements,
+            kindHint: item.kindHint,
             requestId: item.requestId,
             clientTimestamp: item.clientTimestamp
         }))

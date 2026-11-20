@@ -35,7 +35,9 @@ var _BUG_CODES = {
     "unsupported-entity": true, "unsupported-action": true, "missing-deltas": true, "invalid-delta-value": true,
     "invalid-movements": true, "too-many-movements": true, "invalid-movement-kind": true,
     "invalid-movement-qty": true, "invalid-movement-value": true, "invalid-movement-reason": true, "movement-reason-required": true,
-    "movements-not-supported": true, "movements-require-inventory": true, "movements-require-stock-delta": true
+    "movements-not-supported": true, "movements-require-inventory": true, "movements-require-stock-delta": true,
+    // P1 S2d-2: the kind hint of a derived row
+    "invalid-kind-hint": true, "kind-hint-with-movements": true, "kind-hint-not-supported": true
 }
 function _isBugCode(code) { return Object.prototype.hasOwnProperty.call(_BUG_CODES, code) }
 function _bug(code) {

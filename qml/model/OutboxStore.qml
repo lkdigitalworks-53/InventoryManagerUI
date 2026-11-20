@@ -248,7 +248,8 @@ QtObject {
     // taken from the LATEST call (they're a property of the call site, not
     // something that accumulates). Optional `movements` (P1 S2d, inventory
     // stock only) are explicit ledger kinds: see StockMovements.canCoalesce
-    // for when two such calls may share one item. Only a queued item that was never
+    // for when two such calls may share one item (a P1 S2d-2 `kindHint`, the default kind of the derived row,
+    // joins only an equal hint, same place). Only a queued item that was never
     // sent and is not parked is a merge target (see the guard in the loop).
     function enqueueDelta(call) {
         var nowMs = Date.now()
@@ -303,6 +304,7 @@ QtObject {
             nextAttemptAt: nowMs
         }
         if (StockMovements.hasMovements(call.movements)) item.movements = call.movements
+        if (call.kindHint) item.kindHint = call.kindHint
         arr.push(item)
         items = arr
         _save()

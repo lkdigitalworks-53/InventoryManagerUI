@@ -158,11 +158,50 @@ TestCase {
         InventoryStore.deductStock("SKU-1", 2, function() {}, false)
         compare(_inv("SKU-1")[0].movements, undefined)
     }
-    function test_deductStock_in_clamp_mode_ignores_a_kind() {
+    // P1 S2d-2: clamp mode never carries explicit movements (the server cannot match a row to a clamped
+    // quantity) but the kind now travels as a HINT for the row the server derives.
+    function test_deductStock_in_clamp_mode_sends_the_kind_as_a_hint_not_as_movements() {
         InventoryStore.deductStock("SKU-1", 2, function() {}, true, "sale", "x")
         var it = _inv("SKU-1")[0]
         compare(it.clamps.stock, 0)
         compare(it.movements, undefined, "an explicit row next to a clamp would be rejected by the server")
+        compare(it.kindHint, "sale")
+    }
+    function test_deductStock_in_clamp_mode_without_a_kind_sends_no_hint() {
+        InventoryStore.deductStock("SKU-1", 2, function() {}, true)
+        var it = _inv("SKU-1")[0]
+        compare(it.kindHint, undefined)
+        compare("kindHint" in it, false)
+    }
+    function test_deductStock_in_clamp_mode_drops_a_kind_the_server_would_refuse_and_keeps_the_stock_change() {
+        InventoryStore.deductStock("SKU-1", 2, function() {}, true, "loss", "broken")
+        var items = _inv("SKU-1")
+        compare(items.length, 1, "the stock change is still queued")
+        compare(items[0].deltas.stock, -2)
+        compare(items[0].kindHint, undefined, "loss needs a reason and a value: never sent as a hint")
+        compare(items[0].movements, undefined)
+    }
+    function test_deductStock_in_exact_mode_sends_movements_and_no_hint() {
+        InventoryStore.deductStock("SKU-1", 2, function() {}, false, "sale", "o")
+        var it = _inv("SKU-1")[0]
+        compare(it.movements.length, 1)
+        compare(it.kindHint, undefined, "a hint never travels with explicit movements")
+    }
+    function test_two_clamped_sale_deductions_coalesce_and_keep_the_hint() {
+        InventoryStore.deductStock("SKU-1", 1, function() {}, true, "sale")
+        InventoryStore.deductStock("SKU-1", 2, function() {}, true, "sale")
+        var items = _inv("SKU-1")
+        compare(items.length, 1)
+        compare(items[0].deltas.stock, -3)
+        compare(items[0].kindHint, "sale")
+    }
+    function test_a_clamped_sale_and_a_clamped_unlabelled_deduction_stay_separate_items() {
+        InventoryStore.deductStock("SKU-1", 1, function() {}, true, "sale")
+        InventoryStore.deductStock("SKU-1", 2, function() {}, true)
+        var items = _inv("SKU-1")
+        compare(items.length, 2, "a hint labels the whole merged delta, so unequal hints never merge")
+        compare(items[0].kindHint, "sale")
+        compare(items[1].kindHint, undefined)
     }
     function test_deductStock_with_a_zero_or_non_finite_qty_never_builds_movements() {
         InventoryStore.deductStock("SKU-1", 0, function() {}, false, "sale", "x")

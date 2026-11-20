@@ -406,6 +406,7 @@ exports.recordDelta = functions.onRequest(
                 floors: validated.floors,
                 clamps: validated.clamps,
                 movements: validated.movements,
+                kindHint: validated.kindHint,
                 clientTimestamp: validated.clientTimestamp,
                 collection: validated.collection,
                 serverTimestamp: FieldValue.serverTimestamp()
