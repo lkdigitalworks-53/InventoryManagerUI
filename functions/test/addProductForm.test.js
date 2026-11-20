@@ -88,13 +88,13 @@ test("FM-4 each field has its own refusal text (negative and hostile input)", ()
         [{ name: undefined }, "Enter a valid product name"], [{ sku: "" }, "SKU required (tap Gen)"], [{ sku: "  " }, "SKU required (tap Gen)"],
         [{ categoryIndex: -1 }, "Select a category"], [{ categoryIndex: undefined }, "Select a category"], [{ categoryIndex: "0" }, "Select a category"],
         [{ costText: "" }, "Enter a valid cost"], [{ costText: "-5" }, "Enter a valid cost"], [{ costText: "12abc" }, "Enter a valid cost"],
-        [{ costText: "1e3" }, "Enter a valid cost"], [{ costText: "1,5" }, "Enter a valid cost"], [{ costText: "2000000000" }, "Enter a valid cost"],
+        [{ costText: "1e3" }, "Enter a valid cost"], [{ costText: "1,5" }, "Enter a valid cost"], [{ costText: "2000000000" }, "Cost is too large. Use at most 1000000000"], [{ costText: "9".repeat(400) }, "Cost is too large. Use at most 1000000000"],
         [{ priceText: "" }, "Enter a valid price"], [{ priceText: "0" }, "Enter a valid price"], [{ priceText: "-1" }, "Enter a valid price"],
-        [{ priceText: "x" }, "Enter a valid price"], [{ priceText: "2000000000" }, "Enter a valid price"], [{ priceText: "10" }, "Price < cost"],
+        [{ priceText: "x" }, "Enter a valid price"], [{ priceText: "2000000000" }, "Price is too large. Use at most 1000000000"], [{ priceText: "10" }, "Price < cost"],
         [{ stockText: "" }, "Enter the opening stock as a whole number (0 if none)"], [{ stockText: "2.5" }, "Enter the opening stock as a whole number (0 if none)"],
-        [{ stockText: "-1" }, "Enter the opening stock as a whole number (0 if none)"], [{ stockText: "1000001" }, "Enter the opening stock as a whole number (0 if none)"],
+        [{ stockText: "-1" }, "Enter the opening stock as a whole number (0 if none)"], [{ stockText: "1000001" }, "Opening stock is too large. Use at most 1000000"], [{ stockText: "9".repeat(400) }, "Opening stock is too large. Use at most 1000000"],
         [{ minStockText: "abc" }, "Reorder level must be a whole number"], [{ minStockText: "-1" }, "Reorder level must be a whole number"],
-        [{ minStockText: "1.5" }, "Reorder level must be a whole number"],
+        [{ minStockText: "1.5" }, "Reorder level must be a whole number"], [{ minStockText: "1000001" }, "Reorder level is too large. Use at most 1000000"],
         [{ taxable: true, taxPercentText: "" }, "Enter a valid tax % (0\u2013100)"], [{ taxable: true, taxPercentText: "100.01" }, "Enter a valid tax % (0\u2013100)"],
         [{ taxable: true, taxPercentText: "-1" }, "Enter a valid tax % (0\u2013100)"], [{ taxable: true, taxPercentText: "5%" }, "Enter a valid tax % (0\u2013100)"]
     ];
@@ -119,8 +119,9 @@ test("FM-6 markup mode: price = cost + markup %, to a whole rupee, same as the p
     assert.equal(m("20", "0").args.sellingPrice, 20, "0% markup = cost, allowed");
     assert.deepEqual(plain(AF.fromForm(form({ markup: true, costText: "x", priceText: "50" }))).errors, ["Enter a valid cost", "Enter a valid price"]);
     assert.deepEqual(errorsOf({ markup: true, costText: "20", priceText: "-5" }), ["Enter a valid price"]);
-    assert.deepEqual(errorsOf({ markup: true, costText: "0.4", priceText: "0" }), ["Enter a valid price"], "0.4 rounds to a price of 0");
-    assert.deepEqual(errorsOf({ markup: true, costText: "1000000000", priceText: "100" }), ["Enter a valid price"], "2e9 is over the limit");
+    assert.equal(m("0.4", "0").args.sellingPrice, 0.4, "0% on a fractional cost is the cost itself, not a refusal (review sweep 1 of PR 207; it used to round to 0)");
+    assert.deepEqual(errorsOf({ markup: true, costText: "1000000000", priceText: "100" }), ["Markup is too high. The selling price must be at most 1000000000"], "2e9 is over the limit, and the text says why");
+    assert.deepEqual(errorsOf({ markup: true, costText: "0", priceText: "20" }), ["A markup needs a cost above 0"]);
 });
 
 test("FM-7 flat mode: price below cost is refused, equal is allowed", () => {
@@ -186,6 +187,60 @@ test("FM-12 priceSummary: the pill uses the same parsing as Save, and its price 
         const sp = run({ markup: true, costText: c, priceText: m }).args.sellingPrice;
         assert.equal(AF.priceSummary(c, m, true).split("\u20b9")[1].split(" ")[0], String(sp), "pill price = Save price for " + c + "/" + m);
     }
+});
+
+test("FM-12b sweep 1 of PR 207: the pill and Save read the cost and price fields the same way (grid of nasty input)", () => {
+    const costs = ["", "x", "0", "0.4", "10.40", "20", "33", "999999999", "1000000000", "2000000000", "9".repeat(400)];
+    const prices = ["", "x", "-1", "0", "0.2", "10", "30", "100", "100000000", "1000000000", "2000000000", "9".repeat(400)];
+    const priceBad = (e) => e === "Enter a valid price" || e.startsWith("Price is too large") || e.startsWith("Markup is too high") || e.startsWith("A markup needs");
+    const costBad = (e) => e === "Enter a valid cost" || e.startsWith("Cost is too large");
+    let shown = 0, dashed = 0;
+    for (const markup of [false, true]) for (const c of costs) for (const v of prices) {
+        const tag = JSON.stringify([c.slice(0, 12), v.slice(0, 12), markup]);
+        const dash = markup ? "Selling price \u2014" : "Markup \u2014";
+        const pill = AF.priceSummary(c, v, markup);
+        const r = run({ markup, costText: c, priceText: v });
+        const errs = r.ok ? [] : r.errors;
+        const accepted = !errs.some(costBad) && !errs.some(priceBad);
+        if (pill !== dash) { shown++; assert.ok(accepted, "the pill shows a price Save refuses: " + tag + " " + pill + " " + JSON.stringify(errs)); }
+        else dashed++;
+        if (accepted && Number(c) > 0) assert.notEqual(pill, dash, "Save accepts it but the pill is blank: " + tag);
+        if (r.ok && r.args.price > 0) assert.ok(pill.includes("profit \u20b9" + (r.args.sellingPrice - r.args.price).toFixed(2)), "pill profit = Save profit: " + tag);
+    }
+    assert.ok(shown > 10 && dashed > 10, "the grid covers both outcomes");
+    assert.equal(AF.priceSummary("1000", "100000000", true), "Selling price \u2014", "a markup whose price is over the limit shows no price");
+    assert.equal(AF.priceSummary("10", "0", false), "Markup \u2014", "a price of 0 is refused by Save, so the pill shows no markup");
+});
+
+test("FM-12c sweep 1 of PR 207: a markup price is never below the cost; it is the old whole rupee whenever that was not below the cost", () => {
+    const costs = ["0.01", "0.4", "0.5", "1", "7.5", "10.40", "33", "99.99", "100.4", "1234.56"];
+    const marks = ["0", "0.1", "0.2", "1", "5", "12.5", "50", "100", "300"];
+    for (const c of costs) for (const m of marks) {
+        const r = run({ markup: true, costText: c, priceText: m });
+        assert.equal(r.ok, true, c + "/" + m + " " + JSON.stringify(r));
+        const cost = Number(c), old = Math.round((Number(m) * cost) / 100 + cost);
+        assert.ok(r.args.sellingPrice >= cost, "never below cost: " + c + "/" + m);
+        assert.equal(r.args.sellingPrice, old >= cost ? old : cost, "only a below-cost result changes: " + c + "/" + m);
+    }
+    assert.equal(run({ markup: true, costText: "10.40", priceText: "0" }).args.sellingPrice, 10.4);
+    assert.equal(run({ markup: true, costText: "100.4", priceText: "0.05" }).args.sellingPrice, 100.4, "100.4 + 0.05% = 100.45 rounds to 100, below the cost");
+    assert.equal(AF.priceSummary("10.40", "0", true), "Selling price \u20b910.4   \u00b7   profit \u20b90.00");
+});
+
+test("FM-12d sweep 1 of PR 207: too large and not valid are different messages, for every amount field", () => {
+    const pairs = [["costText", "Enter a valid cost", "Cost is too large. Use at most 1000000000"],
+        ["priceText", "Enter a valid price", "Price is too large. Use at most 1000000000"],
+        ["stockText", "Enter the opening stock as a whole number (0 if none)", "Opening stock is too large. Use at most 1000000"],
+        ["minStockText", "Reorder level must be a whole number", "Reorder level is too large. Use at most 1000000"]];
+    for (const [field, invalid, large] of pairs) {
+        const big = field === "stockText" || field === "minStockText" ? "1000001" : "1000000001";
+        const e1 = errorsOf({ [field]: "12abc" }), e2 = errorsOf({ [field]: big });
+        assert.ok(e1.includes(invalid), field + " junk: " + JSON.stringify(e1));
+        assert.ok(e2.includes(large), field + " too large: " + JSON.stringify(e2));
+        assert.ok(!e2.includes(invalid), field + " too large must not also say invalid");
+    }
+    assert.equal(run({ costText: "1000000000", priceText: "1000000000" }).ok, true, "the limit itself is allowed");
+    assert.equal(run({ stockText: "1000000", minStockText: "1000000" }).ok, true);
 });
 
 // ---------------------------------------------------------------------------- planner and server
@@ -277,4 +332,12 @@ test("FM-15 the helper reads no control, store, clock or random source, and neve
     for (const bad of ["parseFloat", "parseInt", "Date", "Math.random", "Store.", "AuthStore", "console."])
         assert.equal(part.includes(bad), false, "AP3b helper must not use " + bad);
     assert.equal(/\bparseFloat\(|\bparseInt\(/.test(src.replace(/\/\/[^\n]*/g, "")), false, "no lenient parser anywhere in the file");
+});
+
+test("FM-13b sweep 1 of PR 207: the floor price (cost 10.40 at 0% markup) goes through the real planner and server", async () => {
+    const r = run({ markup: true, costText: "10.40", priceText: "0" });
+    assert.equal(r.ok, true);
+    assert.equal(r.args.sellingPrice, 10.4);
+    const out = await serve(r.args);
+    assert.equal(out.ok, true, JSON.stringify(out));
 });

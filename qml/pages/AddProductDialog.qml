@@ -417,7 +417,7 @@ BottomSheet {
                             model: dlg._supplierLabels
                             font.pixelSize: sp(Constants.fsBody)
                             displayText: dlg._newSupplierName.length > 0
-                                    ? qsTr("New: ") + dlg._newSupplierName
+                                    ? qsTr("New: %1").arg(dlg._newSupplierName)
                                     : (currentIndex > 0 ? currentText : qsTr("Select or add a supplier"))
                             // A user pick replaces a typed new name (one supplier per product). Programmatic currentIndex
                             // changes do not emit `activated`, so _useTypedParty / _refreshSuppliers never clear it by accident.
@@ -524,7 +524,10 @@ BottomSheet {
                         errorLabel.text = refusal ? refusal : "Could not add product — try again"
                         return
                     }
-                    CategoryStore.setLastUsed(a.category)
+                    // Review sweep 1 of PR 207: the product exists from here on. This part runs from the Gateway's callback, NOT inside
+                    // the try/catch around the call, so a throw in a side effect (last-used category, photo queue) or in the toast must not
+                    // skip the toast and the close: the sheet would stay open with the form filled and a second tap would add a SECOND product.
+                    try { CategoryStore.setLastUsed(a.category) } catch (e1) { console.warn("[AddProductDialog] setLastUsed failed:", e1) }
 
                     // AP3a: the photo is attached from the LIVE answer only (design D-AP-8). A queued answer (slow link) has no id
                     // yet, so the photo is not attached and the toast says where to add it; an unconfirmed answer (the server
@@ -535,9 +538,14 @@ BottomSheet {
                             // addProductPhoto queues the upload and returns immediately (design spec) --
                             // no callback needed. PhotoQueue.photoUploaded (wired in EditProductDialog's
                             // gallery, Main.qml) reports the outcome once the upload itself completes.
-                            var addResult = StorageService.addProductPhoto(newId, pendingPhotoSource)
-                            if (!addResult.ok) {
-                                console.warn("[AddProductDialog] addProductPhoto failed for", newId, addResult.error)
+                            try {
+                                var addResult = StorageService.addProductPhoto(newId, pendingPhotoSource)
+                                if (!addResult.ok) {
+                                    console.warn("[AddProductDialog] addProductPhoto failed for", newId, addResult.error)
+                                    photoSkipped = true
+                                }
+                            } catch (e2) {
+                                console.warn("[AddProductDialog] addProductPhoto threw for", newId, e2)
                                 photoSkipped = true
                             }
                         } else {
@@ -545,8 +553,7 @@ BottomSheet {
                         }
                     }
 
-                    Toast.show(InventoryStore.addDoneMessage(status, photoSkipped))
-                    dlg.close()
+                    try { Toast.show(InventoryStore.addDoneMessage(status, photoSkipped)) } finally { dlg.close() }
                 })
         } catch (e) {
             console.warn("[AddProductDialog] submit failed:", e)

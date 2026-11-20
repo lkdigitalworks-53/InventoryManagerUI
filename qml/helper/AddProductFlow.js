@@ -117,40 +117,72 @@ var MAX_STOCK = 1000000
 var _MONEY = /^(\d+\.?\d*|\.\d+)$/
 var _WHOLE = /^\d+$/
 
-// -> a number in 0..MAX_MONEY, or NaN (blank, junk, negative, an exponent, too large).
-function moneyFromText(text) {
+// What a typed amount is: { n, state } with state "ok" (n is a number in range), "large" (plain digits, above the limit: a typo the
+// person can fix, so the message says so) or "invalid" (blank, junk, negative, an exponent, a comma). Review sweep 1 of PR 207:
+// a too-large number used to be reported as "not a number", which sent the person looking for a typo that was not there.
+function _moneyState(text) {
     var t = (typeof text === "string") ? text.trim() : ""
-    if (!_MONEY.test(t)) return NaN
+    if (!_MONEY.test(t)) return { n: NaN, state: "invalid" }
     var n = Number(t)
-    return (isFinite(n) && n <= MAX_MONEY) ? n : NaN
+    return (n <= MAX_MONEY) ? { n: n, state: "ok" } : { n: NaN, state: "large" }   // Infinity (a 400-digit paste) is "large" too
 }
+function _wholeState(text) {
+    var t = (typeof text === "string") ? text.trim() : ""
+    if (!_WHOLE.test(t)) return { n: NaN, state: "invalid" }
+    var n = Number(t)
+    return (n <= MAX_STOCK) ? { n: n, state: "ok" } : { n: NaN, state: "large" }
+}
+
+// -> a number in 0..MAX_MONEY, or NaN (blank, junk, negative, an exponent, too large).
+function moneyFromText(text) { return _moneyState(text).n }
 
 // -> a whole number in 0..MAX_STOCK, or NaN. "2.5" is NaN, not 2: parseInt cut it silently (D-AP3b-2).
-function wholeFromText(text) {
-    var t = (typeof text === "string") ? text.trim() : ""
-    if (!_WHOLE.test(t)) return NaN
-    var n = Number(t)
-    return (isFinite(n) && n <= MAX_STOCK) ? n : NaN
+function wholeFromText(text) { return _wholeState(text).n }
+
+// The markup mode's price: cost plus markup %, to a whole rupee (what the sheet has always shown and stored), but never below the
+// cost. Review sweep 1 of PR 207: Math.round alone put 0% on a cost of 10.40 at 10, BELOW the cost, and Save then refused
+// "Price < cost" for a markup the person had set to zero. Only results that were refused before change: cost 10.40 at 0% is now
+// 10.40. Every other result is the same whole rupee as before.
+function _markupPrice(markupPercent, cost) { return Math.max(Math.round(((markupPercent * cost) / 100) + cost), cost) }
+
+// ONE reading of the cost and price fields, used by Save (fromForm) and by the pill (priceSummary), so they cannot disagree about
+// what the person typed. markup === true: the price field holds a markup %.
+// -> { cost, price, costError, priceError }   cost / price are NaN when their error is not "". An error is "" or the text to show.
+// A price BELOW the cost is not an error here (the pill shows it as a negative markup; Save refuses it with "Price < cost").
+function _resolvePrices(costText, priceText, markup) {
+    var c = _moneyState(costText)
+    var costError = c.state === "ok" ? "" : (c.state === "large" ? _tooBig("Cost", MAX_MONEY) : "Enter a valid cost")
+    var v = _moneyState(priceText)
+    var price = NaN
+    var priceError = ""
+    if (v.state === "invalid") priceError = "Enter a valid price"
+    else if (v.state === "large") priceError = markup === true ? "Markup is too high. The selling price must be at most " + MAX_MONEY : _tooBig("Price", MAX_MONEY)
+    else if (markup === true) {
+        if (c.state !== "ok") priceError = "Enter a valid price"                  // no cost, no markup price
+        else if (c.n <= 0) priceError = "A markup needs a cost above 0"
+        else {
+            price = _markupPrice(v.n, c.n)
+            if (price > MAX_MONEY) { price = NaN; priceError = "Markup is too high. The selling price must be at most " + MAX_MONEY }
+        }
+    } else {
+        price = v.n
+        if (price <= 0) { price = NaN; priceError = "Enter a valid price" }
+    }
+    return { cost: c.n, price: price, costError: costError, priceError: priceError }
 }
 
-// The markup mode's price: cost plus markup %, to a whole rupee (what the sheet has always shown and stored).
-function _markupPrice(markupPercent, cost) { return Math.round(((markupPercent * cost) / 100) + cost) }
-
-// The live pill under the price row, from the field TEXT, with the same parsing the Save uses, so the pill never shows a number
-// that Save would then refuse or read differently. markup === true: the price field holds a markup %.
+// The live pill under the price row, from the field TEXT, through the same reading Save uses, so the pill never shows a price that
+// Save would then refuse as invalid or too large, or read differently. markup === true: the price field holds a markup %.
 function priceSummary(costText, priceText, markup) {
-    var c = moneyFromText(costText)
-    var v = moneyFromText(priceText)
-    if (isNaN(c) || isNaN(v) || c <= 0) return markup === true ? "Selling price \u2014" : "Markup \u2014"
-    if (markup === true) {
-        var sp = _markupPrice(v, c)
-        return "Selling price \u20b9" + sp + "   \u00b7   profit \u20b9" + (sp - c).toFixed(2)
-    }
-    return "Markup " + Math.round(((v - c) / c) * 100) + "%   \u00b7   profit \u20b9" + (v - c).toFixed(2)
+    var r = _resolvePrices(costText, priceText, markup)
+    if (isNaN(r.cost) || isNaN(r.price) || r.cost <= 0) return markup === true ? "Selling price \u2014" : "Markup \u2014"
+    if (markup === true) return "Selling price \u20b9" + r.price + "   \u00b7   profit \u20b9" + (r.price - r.cost).toFixed(2)
+    return "Markup " + Math.round(((r.price - r.cost) / r.cost) * 100) + "%   \u00b7   profit \u20b9" + (r.price - r.cost).toFixed(2)
 }
 
 function _trim(v) { return typeof v === "string" ? v.trim() : "" }
 function _tooLong(label, n) { return label + " is too long. Use at most " + n + " characters" }
+function _tooBig(label, n) { return label + " is too large. Use at most " + n }
 
 // f = { name, sku, size, description, category, categoryIndex, unit, costText, priceText, markup, stockText, minStockText, taxable,
 //       taxPercentText, pendingPartyText (the new-supplier field's text still sitting there), newSupplierName (what "Use" held),
@@ -170,19 +202,21 @@ function fromForm(f) {
     else if (sku.length > MAX_SKU) errs.push(_tooLong("SKU", MAX_SKU))
     if (!(typeof x.categoryIndex === "number" && x.categoryIndex >= 0)) errs.push("Select a category")
 
-    var cost = moneyFromText(x.costText)
-    if (isNaN(cost)) errs.push("Enter a valid cost")
-    var typed = moneyFromText(x.priceText)
-    var price = NaN
-    if (!isNaN(typed)) price = x.markup === true ? (isNaN(cost) ? NaN : _markupPrice(typed, cost)) : typed
-    if (isNaN(price) || !isFinite(price) || price <= 0 || price > MAX_MONEY) errs.push("Enter a valid price")
-    else if (!isNaN(cost) && price < cost) errs.push("Price < cost")
+    var rp = _resolvePrices(x.costText, x.priceText, x.markup === true)
+    if (rp.costError !== "") errs.push(rp.costError)
+    if (rp.priceError !== "") errs.push(rp.priceError)
+    else if (!isNaN(rp.cost) && rp.price < rp.cost) errs.push("Price < cost")
+    var cost = rp.cost, price = rp.price
 
-    var stock = wholeFromText(x.stockText)
-    if (isNaN(stock)) errs.push("Enter the opening stock as a whole number (0 if none)")
+    var st = _wholeState(x.stockText)
+    var stock = st.n
+    if (st.state === "large") errs.push(_tooBig("Opening stock", MAX_STOCK))
+    else if (st.state === "invalid") errs.push("Enter the opening stock as a whole number (0 if none)")
     // Blank reorder level = 0 (the old behaviour); anything else must be a whole number, not silently turned into 0.
-    var minStock = _trim(x.minStockText) === "" ? 0 : wholeFromText(x.minStockText)
-    if (isNaN(minStock)) errs.push("Reorder level must be a whole number")
+    var ms = _trim(x.minStockText) === "" ? { n: 0, state: "ok" } : _wholeState(x.minStockText)
+    var minStock = ms.n
+    if (ms.state === "large") errs.push(_tooBig("Reorder level", MAX_STOCK))
+    else if (ms.state === "invalid") errs.push("Reorder level must be a whole number")
 
     var taxable = x.taxable === true
     var taxPercent = 0

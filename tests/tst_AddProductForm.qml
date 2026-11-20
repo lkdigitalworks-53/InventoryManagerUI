@@ -80,7 +80,9 @@ TestCase {
         compare(_run({ markup: true, costText: "33", priceText: "10" }).args.sellingPrice, 36)
         compare(_run({ markup: true, costText: "33", priceText: "10" }).args.price, 33)
         compare(_errs({ markup: true, costText: "x", priceText: "50" }), "Enter a valid cost|Enter a valid price")
-        compare(_errs({ markup: true, costText: "1000000000", priceText: "100" }), "Enter a valid price")
+        compare(_errs({ markup: true, costText: "1000000000", priceText: "100" }), "Markup is too high. The selling price must be at most 1000000000")
+        compare(_errs({ markup: true, costText: "0", priceText: "20" }), "A markup needs a cost above 0")
+        compare(_run({ markup: true, costText: "0.4", priceText: "0" }).args.sellingPrice, 0.4)
     }
     function test_fromForm_limits_are_on_trimmed_text_at_the_edge() {
         verify(_run({ name: _rep("x", 100) }).ok)
@@ -119,5 +121,22 @@ TestCase {
         compare(AF.priceSummary("0", "30", false), "Markup \u2014")
         compare(AF.priceSummary("20", "1e3", true), "Selling price \u2014")
         compare(AF.priceSummary("12abc", "30", false), "Markup \u2014")
+        // review sweep 1 of PR 207: the pill never shows a price Save refuses
+        compare(AF.priceSummary("1000", "100000000", true), "Selling price \u2014")
+        compare(AF.priceSummary("10", "0", false), "Markup \u2014")
+        compare(AF.priceSummary("10.40", "0", true), "Selling price \u20b910.4   \u00b7   profit \u20b90.00")
+    }
+    function test_too_large_is_not_reported_as_invalid() {
+        compare(_errs({ costText: "2000000000" }), "Cost is too large. Use at most 1000000000")
+        compare(_errs({ priceText: "2000000000" }), "Price is too large. Use at most 1000000000")
+        compare(_errs({ stockText: "1000001" }), "Opening stock is too large. Use at most 1000000")
+        compare(_errs({ minStockText: "1000001" }), "Reorder level is too large. Use at most 1000000")
+        compare(_errs({ costText: _rep("9", 400) }), "Cost is too large. Use at most 1000000000")
+        verify(_run({ costText: "1000000000", priceText: "1000000000", stockText: "1000000", minStockText: "1000000" }).ok)
+    }
+    function test_markup_price_is_never_below_the_cost() {
+        compare(_run({ markup: true, costText: "10.40", priceText: "0" }).args.sellingPrice, 10.4)
+        compare(_run({ markup: true, costText: "100.4", priceText: "0.05" }).args.sellingPrice, 100.4)
+        compare(_run({ markup: true, costText: "33", priceText: "10" }).args.sellingPrice, 36)
     }
 }

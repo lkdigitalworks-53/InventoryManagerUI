@@ -1,3 +1,27 @@
+# REVIEW SWEEP 1 of PR #207 (AP3b Add Product sheet; session 2026-11-20; commit rule: `tsadmin@gmail.com` line in every message) - resume here
+**Rules in force:** no build/run; no Qt in the sandbox (CI is the oracle); fixes go on THIS branch `feat/2026-11-20-ap3b-add-product-dialog` (same PR); no parallel agents; push without asking; tests + test plan for every change; scope kept small per turn. PAT per command via `git -c http.extraheader`, never in `.git/config` or a doc.
+**Skills used:** requesting-code-review, qt-qml-review (3 phases, single-threaded), ponytail-audit.
+**Baseline:** PR head `ad23cb4`, base `main@6951b1d`, 4 commits, 18 files +1152 -163, `mergeable_state: clean`.
+
+## Sweep steps
+- [x] S0 clone, PR branch checked out, identity set, skills + PR + conventions read.
+- [x] S1 Phase 1 lint on the 2 touched QML files, ADDED lines only: 31 hits = 25 JS-1 `var` (house style) + 3 BND-2 on `.text =` (plain controls, no `text:` binding: false positive) + 2 ORD-1 (house layout) + STY-1 root id (`id: dlg`, house style). No change.
+- [x] S2 deep read (single-threaded, all 6 qt-qml-review focus areas): `AddProductFlow.js`, the dialog diff, `InventoryStore.addProduct`, `RestockFlow` supplier helpers, `AuthTextField` aliases (`maximumLength`, `inputMethodHints` exist). Findings confirmed by running the real code in Node, then fixed (below).
+- [x] S3 baseline: functions 2059/2059 (before), scripts 1061/1061.
+- [x] S4 fixes + tests, 10 hand mutants all killed: functions now 2065/2065 (+6: FM-12b, FM-12c, FM-12d, FM-13b, SB-17, SB-18), 2 new QML twin functions (CI only).
+- [x] S5 docs: KNOWN-ISSUES 65 amended, 67 (fixed), 68 (OPEN decimals), 69 (not checked); design D-AP3b-10; Skill 178 rules 11-15 (index still current); test plan rows + device steps 22-28; STATUS evidence line; AGENTS line.
+- [ ] S6 push (this commit), read CI on the new head, fix anything red.
+- [ ] S7 final report in chat.
+- [ ] S8 Taher: answer D-AP3b-2/9 (fractional stock, below-cost), D-AP3b-10 (markup floor), item 68 (decimals); review and merge. Not reviewed: see below.
+
+## Fixed in this sweep (KNOWN-ISSUES 67)
+1. Markup pill showed a price Save refuses (over the limit). 2. Markup could round BELOW cost (10.40 at 0% -> 10, "Price < cost"). 3. Over-limit values said "not a whole number" / "not valid". 4. Answer handler (outside the try/catch) could skip toast + close -> duplicate add. 5. `qsTr("New: ") + name`.
+Code: `qml/helper/AddProductFlow.js` (`_moneyState`, `_wholeState`, `_resolvePrices`, `_markupPrice` floor, `_tooBig`), `qml/pages/AddProductDialog.qml` (callback guards, `finally` close, `qsTr("New: %1")`).
+
+## Not reviewed in depth (be honest)
+QML twin `tests/tst_AddProductForm.qml` is unproven until CI (no Qt here); the real dialog on a device; unit/category fields have no length limit (they come from combos, not typed); cost/price fields have no `maximumLength` (item 69); money with more than 2 decimals is OPEN (item 68).
+
+---
 # CHECKPOINT: 2026-11-20 AP3b (Add Product sheet: strict form, limits, "Use" supplier, safe submit) - resume here
 
 **Branch:** `feat/2026-11-20-ap3b-add-product-dialog` (cut from `main` @ `0ce6534`; #202, #203, #204 merged).

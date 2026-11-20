@@ -5231,5 +5231,11 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 9. When a refactor makes an old source-pin test fail, restate the invariant in the new shape (callback drops busy before any other effect) and say so in the commit; do not delete the pin.
 10. Hand mutants: a "mutant" that survives may be equivalent (`taxable ? taxPercent : 0` when the variable is already 0); prove it and delete the redundant line.
 
+11. (Sweep 1 of PR 207.) A pill and Save must share ONE resolver, not just one parser: the parser agreed, the price rule (markup, limit) did not, and the pill showed a price Save refused. Prove it with a grid sweep of nasty cost and price texts: "the pill shows a price" implies "Save accepts it", and the reverse.
+12. Classify a bad number (`ok`, `large`, `invalid`) instead of collapsing it to NaN, so the message can name the limit. "Not a whole number" for 5000000 sends the person looking for a typo that is not there.
+13. A rounding step that feeds a validation must not be able to cross it: `Math.round` took a 0% markup on 10.40 to 10, below the cost. Floor the result at the boundary (change only what was refused before), and sweep cost times markup against an independent oracle.
+14. The answer handler runs from the Gateway, outside the `try/catch` around the call. Guard each side effect (last-used category, photo queue) on its own and close the sheet in a `finally`; otherwise one throw leaves the form filled and a second tap adds a second product. Test the async case (answer after the tap), not only the sync one.
+15. `qsTr("Label: ") + value` cannot be translated as one string; use `qsTr("Label: %1").arg(value)`.
+
 **The check:** grep the dialog for `parseFloat(`, `parseInt(` and any store call that creates something before the main operation; type `2.5`, `1e3`, `12abc` and a pasted 600-character text on a device.
 

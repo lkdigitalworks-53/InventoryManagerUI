@@ -257,3 +257,34 @@ test("SB-16 the sheet shows what Save will read: the stock fields take digits on
     assert.match(DLG, /id: minStockField[\s\S]{0,420}placeholderText: "0"/);
     assert.doesNotMatch(DLG, /id: minStockField[\s\S]{0,420}placeholderText: "2"/);
 });
+
+// ---------------------------------------------------------------------------- SB-17, SB-18 review sweep 1 of PR 207
+
+test("SB-17 a throw in a side effect after the answer never skips the toast or the close (a second tap would add a SECOND product)", () => {
+    const cat = rig({ CategoryStore: { setLastUsed() { throw new Error("cat"); } } });
+    cat.tap(); cat.answer(true, "PRD-1", undefined, "applied");
+    assert.deepEqual(cat.log.toasts, ["Product added"]);
+    assert.equal(cat.log.closed, 1);
+    assert.equal(cat.ctx.busy, false);
+    assert.equal(cat.log.warns.length, 1);
+
+    const photo = rig({ pendingPhotoSource: "file:///p.jpg", StorageService: { addProductPhoto() { throw new Error("queue"); } } });
+    photo.tap(); photo.answer(true, "PRD-1", undefined, "applied");
+    assert.deepEqual(photo.log.toasts, [AF.doneText("applied", true)], "the toast says the photo was not added");
+    assert.equal(photo.log.closed, 1);
+    assert.equal(photo.log.warns.length, 1);
+
+    const late = rig();
+    late.tap();
+    late.ctx._toastThrows = true;
+    assert.throws(() => late.answer(true, "PRD-1", undefined, "applied"), /toast/, "the throw still surfaces (nothing is swallowed)");
+    assert.equal(late.log.closed, 1, "but the sheet is closed");
+    assert.equal(late.ctx.busy, false);
+});
+
+test("SB-18 source shape: the new-supplier label is translatable as ONE string, and the close is in a finally", () => {
+    assert.match(DLG, /qsTr\("New: %1"\)\.arg\(dlg\._newSupplierName\)/);
+    assert.doesNotMatch(DLG, /qsTr\("New: "\)\s*\+/);
+    assert.match(SUBMIT, /finally\s*\{\s*dlg\.close\(\)\s*\}/);
+});
+
