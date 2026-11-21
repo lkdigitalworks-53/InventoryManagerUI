@@ -23,8 +23,8 @@
 - [x] R3. Found F1 (KNOWN-ISSUES 90): an index was trusted for any rows or key. Fixed: `qtyIndex` keeps `rows` and `field`, `NewOrderPicker.indexFits`, `cartQty` and `heldAtCompletion` use it, array `sums` refused. Tests NOP-41 rewritten, NOP-43 new, EOP-45 and EOP-46 updated, twins regenerated (`node functions/test/testSupport/pickerTwin.js --write`), 7 of 7 hand mutants killed. Functions 2172/2172, scripts 1061/1061.
 - [x] R4. Ponytail audit (KNOWN-ISSUES 92): nothing deleted, net 0.
 - [x] R5. Docs: KNOWN-ISSUES 90 to 93, Skill 181 rules 5 and 7, AGENTS, test plan row and check 134, plan, this file. PR body made current (Skill 181, KNOWN-ISSUES 83 to 89, email).
-- [ ] R6. Push the sweep commit, read CI on the new tip (QML twins only run there). If red: read the junit of the failing job first.
-- [ ] R7. Report to Taher: done / next.
+- [x] R6. Pushed `2d7733b`; CI green: QML 3320, Functions 2172, Rules 129, E2E 124 = 5745/5745 (the regenerated twins ran). PR body made current via the API.
+- [x] R7. Report to Taher: done / next (next = human review in the PR, decide KNOWN-ISSUES 93, device checks 134 to 140, then S5e).
 
 ## If this session is cut off
 Resume at the first unticked step. Re-measure counts before claiming any: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`.
