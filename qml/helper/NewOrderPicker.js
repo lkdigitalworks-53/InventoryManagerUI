@@ -55,6 +55,9 @@ function _productOf(lookup, id) {
 // scan's, line for line: a row that is not an object, a blank id, or a quantity that is not a positive finite number
 // holds nothing; ids match as String(id); sums run in row order, so even a fractional total equals the scan's.
 // Keys carry a "k:" prefix: a product id of "__proto__" must not reach the prototype.
+// The index remembers WHICH rows and WHICH field it was made from (`rows`, `field`): indexFits trusts it only for those,
+// so an index of another list or of the other quantity key (cart `qty` versus original `quantity`) can never answer for
+// this one. A mismatch is not an error: the caller scans, as before S5d (PR #210 sweep, F1).
 function qtyIndex(rows, field) {
     var sums = {}
     if (Array.isArray(rows))
@@ -66,24 +69,35 @@ function qtyIndex(rows, field) {
             var k = "k:" + String(l.productId)
             sums[k] = (_has(sums, k) ? sums[k] : 0) + q
         }
-    return { qtyIndex: true, sums: sums }
+    return { qtyIndex: true, field: field, rows: rows, sums: sums }
+}
+
+// True only for an index made by qtyIndex from exactly THESE rows (the same array, not an equal one) and this quantity
+// key. The rows are compared by identity, so a stale index (the order changed since), an index of another list and an
+// index of the other key are all refused, and the caller scans. Without this, a wrong index answered with a wrong number
+// and the sheet offered MORE stock than there is (PR #210 sweep, F1).
+function indexFits(index, rows, field) {
+    return !!index && typeof index === "object" && index.qtyIndex === true && index.rows === rows && index.field === field
 }
 
 // The units the index holds for this product, or null when `index` is not an index made by qtyIndex (the caller then
-// scans). Junk is never trusted: a string, {} or an array as the third argument of cartQty falls back to the scan.
+// scans). Junk is never trusted: a string, {}, an array, or an index whose `sums` is an array, as the third argument of
+// cartQty falls back to the scan. Callers check indexFits first (cartQty and heldAtCompletion do).
 function qtyFromIndex(index, productId) {
-    if (!index || typeof index !== "object" || index.qtyIndex !== true || !index.sums || typeof index.sums !== "object") return null
+    if (!index || typeof index !== "object" || index.qtyIndex !== true) return null
+    if (!index.sums || typeof index.sums !== "object" || Array.isArray(index.sums)) return null
     if (_blankId(productId)) return 0
     var k = "k:" + String(productId)
     return _has(index.sums, k) ? index.sums[k] : 0
 }
 
 // Units of a product already in the cart (all lines of that product). `index` (optional, qtyIndex(lines, "qty")) answers
-// without walking the cart; it must have been made from the same `lines`, and a value that is not an index is ignored.
+// without walking the cart; it is used only when it was made from these very `lines` (indexFits), any other value is
+// ignored and the cart is scanned.
 function cartQty(lines, productId, index) {
     var used = 0
     if (_blankId(productId)) return used
-    var fast = qtyFromIndex(index, productId)
+    var fast = indexFits(index, lines, "qty") ? qtyFromIndex(index, productId) : null
     if (fast !== null) return fast
     if (!Array.isArray(lines)) return used
     var id = String(productId)
