@@ -14,8 +14,8 @@
 - [x] 3. Server: `counterRegistry.js` `order` entry; `operationLogic.js` `createOrder` in `OP_TYPES`.
 - [x] 4. Tests: new `operationLogic.createOrder.test.js` (35), guard rows +5 / mutants +5, handler +2, owner-only grid +1 row +1 test, three pins flipped, three emulator cases (CI only). Functions 2147/2147 RUN, scripts 1061/1061 RUN, 100% line/branch/function on both changed files, 8/8 hand mutants killed.
 - [x] 5. Docs: test plan, KNOWN-ISSUES 74-78, Skill 180 + index (`skills-index.js --check` clean), AGENTS, README, ATOMIC-OPERATIONS-STATUS section 18.
-- [x] 6. Committed and pushed `d721d66`; PR #208 opened. CI result NOT read yet in this session: read it first (Skill 175, REST `check-runs` on the head SHA) and record it in test plan section 5.
-- [ ] 7. Final report to the owner: done / open questions Q-NO-1..4 / device steps / next = NO2.
+- [x] 6. Committed and pushed `d721d66`; PR #208 opened. CI read: all green (Functions, Rules, E2E incl. the 3 NO1 cases, QML), recorded in test plan section 5.
+- [x] 7. Final report to the owner: done / open questions Q-NO-1..4 / device steps / next = NO2.
 
 ## Next slice (NO2, not started)
 Client pure layer, dormant: `OperationKeys.createOrderNonce/createOrderKey/isCreateOrderKey`, `qml/helper/OrderPlan.js` (`build`, `reflect`, typed-brace neutralising per KNOWN-ISSUES 75), `FailureCause.forCreateOrder`, `DescribeItem` label, QML twins, the planner running through the REAL server validator and apply in Node (pattern: `addProductPlan.test.js`). Read `qml/helper/AddProductPlan.js`, `OperationKeys.js`, `FailureCause.js` first and copy their shape.

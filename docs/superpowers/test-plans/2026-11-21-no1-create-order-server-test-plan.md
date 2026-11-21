@@ -63,5 +63,5 @@ Create orders from the app (old path) on one device while a second device sends 
 ### Not testable on device until NO3
 The app's use of the operation (id from the answer, offline refusal, auto-approve after the answer).
 
-## 5. CI result (fill after push)
-Pending.
+## 5. CI result
+PR #208, head `d721d66` plus the checkpoint commit (read 2026-11-21): Functions Tests success, Firestore + Storage Rules Tests success, E2E Tests success (the three NO1 emulator cases ran), QML Tests success (no QML changed; the order-counter guard reads `OrdersStore.qml` in the Node job). Deploy steps skipped on the PR, as for every PR.
