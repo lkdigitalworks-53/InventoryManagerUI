@@ -429,6 +429,8 @@ App {
             StockBatchStore.clear()
             // A register answer is a whole ledger in memory (P1 S4b-2): never keep it for the next account.
             StockRegisterService.clear()
+            // A forced sign-out can land while the register is open: its overlay (z 200) would cover the login page (z 100).
+            stockRegisterOverlay.close()
             // PartyStore is QSettings-backed (device-local, not tenant-
             // scoped). Without this, the next account inherits the previous
             // user's supplier names.
@@ -1256,10 +1258,11 @@ App {
         anchors.fill: parent
         z: 200
         visible: false
-        function open() { visible = true }
+        function open() { stockRegisterPage.refreshPeriod(); visible = true }
         function close() { visible = false }
 
         StockRegisterPage {
+            id: stockRegisterPage
             anchors.fill: parent
             isOnline: app.isOnline
             onBackRequested: stockRegisterOverlay.close()

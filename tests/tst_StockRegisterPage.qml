@@ -78,6 +78,9 @@ TestCase {
     function test_texts() {
         compare(P.asOfText(now), "as of 20 Nov 2026, 3:42 pm (IST)")
         compare(P.asOfText(0), "")
+        // A finite time past the Date range is an Invalid Date: no line, never "as of NaN undefined NaN".
+        compare(P.asOfText(1e20), "")
+        compare(P.summaryAsOf({ readAt: 1e20 }), "")
         compare(P.summaryText({ shown: 1, hiddenQuiet: 0 }), "1 product shown")
         compare(P.summaryText({ shown: 12, hiddenQuiet: 3 }), "12 products shown, 3 with no stock history hidden")
         compare(P.warningLines({ mismatches: 0, skippedLedgerRows: 0, droppedBad: 0 }).length, 0)

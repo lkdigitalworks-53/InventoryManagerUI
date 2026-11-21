@@ -128,9 +128,33 @@ test('SRW-13 dormancy REPLACED by the real callers (Skill 155 rule 8): exactly t
   assert.deepEqual(naming(/StockRegisterPage/), ['qml/Main.qml', 'qml/components/StockRegisterRow.qml', 'qml/pages/StockRegisterPage.qml']);
 });
 
+test('SRW-14 review #209 F-A/F-B: the overlay refreshes the page clock when it opens; a forced sign-out closes it', () => {
+  // The page is built at app start and kept, so its clock can be days old when it is shown. No onVisibleChanged hook
+  // (SRW-04 bans one): Main calls an explicit function, which only moves the clock and never reads the ledger.
+  assert.match(MAIN, /id: stockRegisterOverlay[\s\S]*?function open\(\) \{ stockRegisterPage\.refreshPeriod\(\); visible = true \}/);
+  assert.match(MAIN, /StockRegisterPage \{\s*\n\s*id: stockRegisterPage\s*\n\s*anchors\.fill: parent/);
+  assert.match(noComments(PAGE), /function refreshPeriod\(\) \{ _refreshNow\(\) \}/);
+  assert.ok(!/load\(/.test(extractFunction('pages/StockRegisterPage.qml', 'refreshPeriod')), 'refreshing the clock never reads the ledger');
+  // Overlays sit at z 200 and the login page at z 100: a forced sign-out with the register open would leave it on top.
+  const out = extractFunction('Main.qml', 'onSignedOut');
+  assert.ok(out.includes('StockRegisterService.clear()') && out.indexOf('stockRegisterOverlay.close()') > out.indexOf('StockRegisterService.clear()'), 'sign-out clears the memory, then closes the overlay');
+  assert.match(MAIN, /id: loginPage[\s\S]{0,200}z: 100/);
+  assert.match(MAIN, /id: stockRegisterOverlay\s*\n\s*anchors\.fill: parent\s*\n\s*z: 200/);
+});
+
+test('SRW-15 review #209 F-C: the four figures of a row shrink to fit, they are never only cut off', () => {
+  const code = noComments(ROW);
+  const i = code.indexOf('text: modelData.value');
+  assert.ok(i > 0, 'the figure Text is found');
+  const block = code.slice(i, code.indexOf('}', i));
+  assert.match(block, /fontSizeMode: Text\.HorizontalFit/);
+  assert.match(block, /minimumPixelSize: sp\(9\)/);
+  assert.match(block, /elide: Text\.ElideRight/, 'elide stays as the last resort below the minimum size');
+});
+
 // ---- the page's real function bodies in a sandbox ----------------------------------------------------------------
 
-const FN = ['_applyState', '_refreshNow', '_periodChanged', '_chipPicked', '_showAllToggled', '_toggleRow', '_loadTapped', '_answered', '_cancelTapped', '_resetAll'];
+const FN = ['_applyState', '_refreshNow', 'refreshPeriod', '_periodChanged', '_chipPicked', '_showAllToggled', '_toggleRow', '_loadTapped', '_answered', '_cancelTapped', '_resetAll'];
 
 function makeSvc() {
   const s = { loading: false, calls: [], attempts: 0, cancels: 0, clears: 0, order: [], cache: {}, throwOnLoad: false, pending: null };
@@ -396,6 +420,10 @@ function pageBattery(mutate) {
   run('reset', () => { const t = mk(); t.page._loadTapped(); t.svc.answer(okResult(monthWin, [product()])); t.page.chipIndex = 2; t.page.showAll = true; t.page.fromText = 'x'; t.page.toText = 'y'; t.page._loadTapped(); t.page._resetAll(); assert.deepEqual(t.svc.order, ['cancel', 'clear']); assert.equal(t.svc.loading, false); assert.equal(t.page.status, 'idle'); assert.equal(t.regModel.count, 0); assert.equal(t.page.summary, null); assert.equal(t.page.chipIndex, 0); assert.equal(t.page.showAll, false); assert.equal(t.page.fromText, ''); assert.equal(t.page.toText, ''); });
   run('reset drops a shown answer', () => { const t = mk(); t.page._loadTapped(); t.svc.answer(okResult(monthWin, [product()])); t.page._resetAll(); assert.equal(t.page.status, 'idle'); assert.equal(t.regModel.count, 0); assert.equal(t.page.shownWin, null); });
   run('warnings', () => { const t = mk(); t.page._loadTapped(); t.svc.answer(okResult(monthWin, [product({ reconciles: false })])); assert.equal(t.page._warnings.length, 1); });
+  // Review #209 F-A: the clock moves on open; nothing else does.
+  run('refresh period moves the clock', () => { const t = mk(); const LATER = at(2026, 11, 3, 9, 0); t.page.Date.now = () => LATER; t.page.refreshPeriod(); assert.equal(t.page._nowMs, LATER); });
+  run('refresh period keeps a shown answer and asks for nothing', () => { const t = mk(); t.page._loadTapped(); t.svc.answer(okResult(monthWin, [product()])); t.page.Date.now = () => at(2026, 11, 3, 9, 0); t.page.refreshPeriod(); assert.equal(t.svc.attempts, 1); assert.equal(t.page.status, 'ok'); assert.equal(t.regModel.count, 1); assert.equal(t.svc.clears, 0); });
+  run('refresh period keeps a running load', () => { const t = mk(); t.page._loadTapped(); t.page.Date.now = () => at(2026, 11, 3, 9, 0); t.page.refreshPeriod(); assert.equal(t.svc.loading, true); assert.equal(t.svc.cancels, 0); assert.equal(t.svc.attempts, 1); });
   return bad;
 }
 
@@ -433,6 +461,9 @@ const PAGE_MUTANTS = [
   ['reset keeps showAll', '        showAll = false\n        _refreshNow()', '        _refreshNow()'],
   ['reset keeps texts', '        fromText = ""\n        toText = ""\n', ''],
   ['reset keeps state', '_applyState(Glue.initialState())\n    }\n\n    Connections', '    }\n\n    Connections'],
+  ['refresh period does nothing', 'function refreshPeriod() { _refreshNow() }', 'function refreshPeriod() { }'],
+  ['refresh period reads the ledger', 'function refreshPeriod() { _refreshNow() }', 'function refreshPeriod() { _refreshNow(); _loadTapped() }'],
+  ['refresh period resets the page', 'function refreshPeriod() { _refreshNow() }', 'function refreshPeriod() { _refreshNow(); _resetAll() }'],
   ['cancel does nothing', 'function _cancelTapped() { StockRegisterService.cancel() }', 'function _cancelTapped() { }']
 ];
 

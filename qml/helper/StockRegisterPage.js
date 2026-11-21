@@ -172,6 +172,7 @@ function emptyText(summary) {
 function asOfText(readAtMs) {
     if (typeof readAtMs !== "number" || !isFinite(readAtMs) || readAtMs <= 0) return ""
     var d = new Date(readAtMs + Model.IST_OFFSET_MS)
+    if (isNaN(d.getTime())) return ""   // a finite number past the Date range (about 8.64e15 ms) gives an Invalid Date
     var h = d.getUTCHours(), m = d.getUTCMinutes()
     var h12 = h % 12 === 0 ? 12 : h % 12
     return "as of " + d.getUTCDate() + " " + Model.MONTHS[d.getUTCMonth()] + " " + d.getUTCFullYear() + ", " +

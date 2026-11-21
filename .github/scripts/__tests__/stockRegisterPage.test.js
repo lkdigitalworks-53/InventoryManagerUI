@@ -198,6 +198,14 @@ function battery(P) {
   eq('as of is IST not UTC', P.asOfText(Date.UTC(2026, 10, 19, 19, 0)), 'as of 20 Nov 2026, 12:30 am (IST)');
   eq('as of one ms', P.asOfText(1).startsWith('as of 1 Jan 1970'), true);
   for (const j of [0, -5, NaN, Infinity, null, undefined, '5', {}]) eq('as of junk ' + String(j), P.asOfText(j), '');
+  // Review #209 F-E: a finite readAt past the Date range (8.64e15 ms; the IST offset is added first) is an Invalid Date.
+  // It must give no line, never "as of NaN undefined NaN, NaN:NaN pm (IST)".
+  const DATE_MAX = 8.64e15;
+  eq('as of at the Date limit', P.asOfText(DATE_MAX), '');
+  eq('as of far past the Date range', P.asOfText(1e20), '');
+  eq('as of Number.MAX_VALUE', P.asOfText(Number.MAX_VALUE), '');
+  eq('as of last instant that still fits is real text', P.asOfText(DATE_MAX - 19800000 - 1).startsWith('as of ') && !P.asOfText(DATE_MAX - 19800000 - 1).includes('NaN'), true);
+  eq('summary as of past the Date range', P.summaryAsOf({ readAt: 1e20 }), '');
   eq('summary as of', P.summaryAsOf({ readAt: NOW }), 'as of 20 Nov 2026, 3:42 pm (IST)');
   eq('summary as of missing read time', P.summaryAsOf({ readAt: 0 }), '');
   for (const j of [null, undefined, 5, 'x']) eq('summary as of junk ' + String(j), P.summaryAsOf(j), '');
@@ -275,6 +283,7 @@ const MUTANTS = [
   ['productId wrong', 'productId: r.id,', 'productId: r.title,'],
   ['reconciles dropped', 'reconciles: r.reconciles === true,', 'reconciles: true,'],
   ['reconciles loose', 'reconciles: r.reconciles === true,', 'reconciles: !!r.reconciles,'],
+  ['as of Invalid Date guard gone', 'if (isNaN(d.getTime())) return ""', ''],
   ['as of summary unguarded', 'return summary && typeof summary === "object" ? asOfText(summary.readAt) : ""', 'return asOfText(summary.readAt)'],
   ['note not in name', 'r.note !== "" ? name', 'false ? name'],
   ['note always in name', 'r.note !== "" ? name', 'true ? name'],

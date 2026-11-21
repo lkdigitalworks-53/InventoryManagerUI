@@ -70,6 +70,11 @@ Item {
 
     function _refreshNow() { _nowMs = Date.now() }
 
+    // Main calls this when the overlay opens. The page is built at app start and kept, so `_nowMs` can be days old: a
+    // preset chip would show last month's range until the next tap. Only the clock moves: a shown answer and a running
+    // load stay as they are, and nothing is requested (on demand only, D9).
+    function refreshPeriod() { _refreshNow() }
+
     // The period the chips point at changed (chip or custom text): show the remembered answer for it, or nothing.
     function _periodChanged() {
         _refreshNow()

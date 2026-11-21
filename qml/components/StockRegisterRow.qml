@@ -98,6 +98,10 @@ Rectangle {
                         color: Constants.textPrimary
                         font.pixelSize: sp(Constants.fsBody)
                         font.bold: true
+                        // A quantity is never cut: 4 columns are about 70 dp each on a 360 dp phone, so an 8 digit figure
+                        // ("12,34,567.5") shrinks to fit. Elide is only the last resort below the minimum size.
+                        fontSizeMode: Text.HorizontalFit
+                        minimumPixelSize: sp(9)
                         elide: Text.ElideRight
                     }
                 }
