@@ -70,13 +70,21 @@ BottomSheet {
         productOf: function(id) { return InventoryStore.getById(id) },
         batchesOf: function(id) { return StockBatchStore.forProduct(id) }
     })
+    // Scope of ONE sheet build (S5d, plan S5d-D1): beginBuild snapshots the cart and indexes it once, endBuild drops both,
+    // and the two hooks below read the index in between instead of walking the cart for every product (N x L). Outside a
+    // build, or when beginBuild threw before the index was made, they scan the live cart as before. The index is set LAST
+    // and cleared FIRST: it is the gate. Plain properties, not an object mutated in place.
+    property var _buildLines: null
+    property var _buildIndex: null
     readonly property var _pickerHooks: ({
         hasPendingMint: function(id) { return StockBatchStore.hasPendingMint(id) },
         hasQueuedRestock: function(id) { return InventoryStore.hasQueuedRestock(id) },
         unsyncedState: function(id) { return InventoryStore.syncStateOf(id) },
         hasPrice: function(p) { return Picker.priceOf(p) !== null },
-        inOrderQty: function(id) { return Picker.cartQty(dlg.selectedProducts, id) },
-        availableFor: function(p) { return Picker.availableFor(p, dlg.selectedProducts) },
+        beginBuild: function() { dlg._buildLines = dlg.selectedProducts; dlg._buildIndex = Picker.qtyIndex(dlg._buildLines, "qty") },
+        endBuild: function() { dlg._buildIndex = null; dlg._buildLines = null },
+        inOrderQty: function(id) { return dlg._buildIndex ? Picker.cartQty(dlg._buildLines, id, dlg._buildIndex) : Picker.cartQty(dlg.selectedProducts, id) },
+        availableFor: function(p) { return dlg._buildIndex ? Picker.availableFor(p, dlg._buildLines, dlg._buildIndex) : Picker.availableFor(p, dlg.selectedProducts) },
         commitCheck: function(plan) { return Picker.opsCheck(dlg.selectedProducts, plan, dlg._pickerLookup) }
     })
     // Every counter the hooks read. Each only grows, so the sum changes whenever any of them does and the open sheet

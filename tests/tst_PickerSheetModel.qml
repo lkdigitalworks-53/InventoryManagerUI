@@ -637,4 +637,47 @@ TestCase {
         eq(PM.priceOf(null), 0);
         eq(PM.priceOf({ sellingPrice: null, price: 3 }), 3);
     }
+
+    function test_SHEET_45_beginbuild_runs_once_before_every_other_hook_and_endbuild_on() {
+        let log = [];
+        const h = hooks({
+            beginBuild: function() { log.push("begin"); },
+            endBuild: function() { log.push("end"); },
+            hasPendingMint: function() { log.push("m"); return false; },
+            availableFor: function(p) { log.push("a"); return p.stock; }
+        });
+        mk([prod("A", 3), prod("B", 4), prod("C", 0)], { hooks: h, draft: { A: 1, B: 2 } });
+        eq(log[0], "begin");
+        eq(log[log.length - 1], "end");
+        eq(log.filter(function(x) { return x === "begin"; }).length, 1);
+        eq(log.filter(function(x) { return x === "end"; }).length, 1);
+        ok(log.length > 6);
+        log = [];
+        mk([], { hooks: h });
+        eq(log, ["begin", "end"]);
+        log = [];
+        PM.build(undefined);
+        PM.build({ hooks: h });
+        eq(log, ["begin", "end"]);
+    }
+
+    function test_SHEET_46_a_scope_hook_that_is_missing_not_a_function_or_throwing_neve() {
+        const products = [prod("A", 3), prod("B", 0), prod("C", 5)];
+        const base = mk(products, { draft: { A: 1 } });
+        const throwing = function() { throw new Error("scope"); };
+        const cases = [{ beginBuild: 5 }, { endBuild: "x" }, { beginBuild: null, endBuild: undefined }, { beginBuild: {}, endBuild: [] },
+                       { beginBuild: throwing }, { endBuild: throwing }, { beginBuild: throwing, endBuild: throwing }];
+        for (let i = 0; i < cases.length; ++i) {
+            noThrow(() => mk(products, { draft: { A: 1 }, hooks: hooks(cases[i]) }));
+            eq(mk(products, { draft: { A: 1 }, hooks: hooks(cases[i]) }), base);
+        }
+    }
+
+    function test_SHEET_47_endbuild_runs_even_when_the_build_itself_throws_a_hostile_pr() {
+        let ends = 0;
+        const bad = prod("A", 3);
+        Object.defineProperty(bad, "unit", { get: function() { throw new Error("hostile"); } });
+        try { mk([bad], { hooks: hooks({ endBuild: function() { ends++; } }) }); } catch (err) { /* the build may throw: only the scope matters here */ }
+        eq(ends, 1);
+    }
 }

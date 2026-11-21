@@ -49,19 +49,21 @@ test("EOW-02 the dialog declares one ProductPickerSheet and binds all four input
         assert.ok(body.includes(line), "missing: " + line);
 });
 
-test("EOW-03 the hooks are the seven the helpers expect, each wired to the store or helper that owns the rule, and no isDeleting", () => {
+test("EOW-03 the hooks are the seven the helpers expect plus the two build-scope hooks of S5d, each wired to the store or helper that owns the rule, and no isDeleting", () => {
     const hooks = literal(CODE, "readonly property var _pickerHooks", "{", "}");
     const expected = {
         hasPendingMint: "StockBatchStore.hasPendingMint(id)",
         hasQueuedRestock: "InventoryStore.hasQueuedRestock(id)",
         hasPrice: "NP.priceOf(p) !== null",
         unsyncedState: "InventoryStore.syncStateOf(id)",
-        inOrderQty: "NP.cartQty(dlg._pickerLinesNow(), id)",
-        availableFor: "Edit.availableFor(p, dlg._pickerLinesNow(), dlg._pickerCtx())",
+        // S5d, ON PURPOSE: while a build runs the two read the scope made in beginBuild (the rows are read from the ListModel
+        // once); outside a build they read the live rows as before
+        inOrderQty: "dlg._buildScope ? NP.cartQty(dlg._buildLines, id, dlg._buildScope.cart) : NP.cartQty(dlg._pickerLinesNow(), id)",
+        availableFor: "dlg._buildScope ? Edit.availableFor(p, dlg._buildLines, dlg._buildCtx, dlg._buildScope) : Edit.availableFor(p, dlg._pickerLinesNow(), dlg._pickerCtx())",
         commitCheck: "Edit.commitCheck(dlg._pickerLinesNow(), plan, dlg._pickerCtx(), dlg._pickerLookup)"
     };
-    for (const k of Object.keys(expected)) assert.ok(new RegExp(k + ":\\s*function\\([a-z]+\\)\\s*\\{\\s*return " + expected[k].replace(/[().]/g, "\\$&") + "\\s*\\}").test(hooks), k);
-    assert.equal((hooks.match(/\w+:\s*function/g) || []).length, 7);
+    for (const k of Object.keys(expected)) assert.ok(new RegExp(k + ":\\s*function\\([a-z]+\\)\\s*\\{\\s*return " + expected[k].replace(/[().?]/g, "\\$&") + "\\s*\\}").test(hooks), k);
+    assert.equal((hooks.match(/\w+:\s*function/g) || []).length, 9);
     assert.ok(!/isDeleting/.test(hooks));
     const lookup = literal(CODE, "readonly property var _pickerLookup", "{", "}");
     assert.ok(/productOf:\s*function\(id\)\s*\{\s*return InventoryStore\.getById\(id\)\s*\}/.test(lookup));
@@ -140,7 +142,7 @@ test("EOW-11 the guards that belong to the order stay in the dialog: lock, busy,
         assert.ok(save.includes(needle), "_save lost: " + needle);
     assert.ok(!/needFromStock|inv\.stock|InventoryStore\.getById/.test(save), "_save has its own stock formula again");
     // the completed order's ceiling is on-hand plus the units it held at completion, written once, in the helper
-    assert.ok(/NP\.ceilingOf\(product\)[\s\S]*?stock \+ heldAtCompletion\(ctx\.original, productId\)/.test(read("qml/helper/EditOrderPicker.js")));
+    assert.ok(/NP\.ceilingOf\(product\)[\s\S]*?stock \+ heldAtCompletion\(ctx\.original, productId, scope \? scope\.held : null\)/.test(read("qml/helper/EditOrderPicker.js")));
 });
 
 test("EOW-12 the changed QML and JS files are balanced: braces, parentheses and brackets", () => {

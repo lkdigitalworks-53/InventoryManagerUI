@@ -54,8 +54,11 @@ function _originalOf(ctx, productId) { return originalOf(ctx && ctx.original, pr
 // (a legacy order may hold two lines of one product), a line of 2.5 counts 2.5. A quantity that is not a positive finite
 // number holds nothing. (originalOf, the first match, stays for the booked TAX; units must not be read from it: PR #202
 // sweep, F1.)
-function heldAtCompletion(original, productId) {
-    if (_blankId(productId) || !Array.isArray(original)) return 0
+function heldAtCompletion(original, productId, index) {
+    if (_blankId(productId)) return 0
+    var fast = NP.indexFits(index, original, "quantity") ? NP.qtyFromIndex(index, productId) : null    // an index of THIS `original` (scopeOf), when the sheet is building
+    if (fast !== null) return fast
+    if (!Array.isArray(original)) return 0
     var id = String(productId)
     var total = 0
     for (var i = 0; i < original.length; ++i) {
@@ -75,20 +78,28 @@ function heldAtCompletion(original, productId) {
 // other status uses the stricter first formula (fail closed). Never negative. The picker (availableFor), the + stepper
 // (stepUp) and the save check (stockShortfalls) all read THIS, so they cannot disagree (picker v2, S5b; KNOWN-ISSUES
 // 28a, 37a, 39a).
-function ceilingFor(productId, product, ctx) {
+function ceilingFor(productId, product, ctx, scope) {
     if (_blankId(productId)) return 0
     var stock = NP.ceilingOf(product)
     if (!_completed(ctx)) return stock
-    return stock + heldAtCompletion(ctx.original, productId)
+    return stock + heldAtCompletion(ctx.original, productId, scope ? scope.held : null)
 }
 
 // Units NEW quantity may still use: the ceiling minus what the order holds now (a removed line frees its units for a
 // re-add, a bigger line uses them). Whole units, never negative.
-function availableFor(product, lines, ctx) {
+function availableFor(product, lines, ctx, scope) {
     if (!product || typeof product !== "object" || _blankId(product.productId)) return 0
-    if (!_completed(ctx)) return NP.availableFor(product, lines)
-    var n = ceilingFor(product.productId, product, ctx) - NP.cartQty(lines, product.productId)
+    var cart = scope ? scope.cart : null
+    if (!_completed(ctx)) return NP.availableFor(product, lines, cart)
+    var n = ceilingFor(product.productId, product, ctx, scope) - NP.cartQty(lines, product.productId, cart)
     return n > 0 ? Math.floor(n) : 0
+}
+
+// The indexes the sheet's hooks read while ONE build runs (picker v2, S5d; NP.qtyIndex says why): `cart` holds the units
+// per product on the order now, `held` (a completed order only, else null) what it held at completion. The dialog makes
+// it in beginBuild from the same `lines` and `ctx` it then passes to availableFor, and drops it in endBuild.
+function scopeOf(lines, ctx) {
+    return { cart: NP.qtyIndex(lines, "qty"), held: _completed(ctx) ? NP.qtyIndex(ctx.original, "quantity") : null }
 }
 
 // One tap of + on a cart row -> the row's new quantity: one more, never above what the stock leaves THIS row (the
