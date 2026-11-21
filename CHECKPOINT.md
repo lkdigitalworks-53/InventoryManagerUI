@@ -10,9 +10,9 @@
 - [x] 0. Clone, memory read, roadmap read: S1-S5c merged; S5d = measure then tune (KI 14, 19c, 25); S5e open.
 - [x] 1. Measured with `scripts/bench/pickerBench.cjs` (real helpers in Node): cart scan = 83% of a 60-line rebuild; Edit Order re-reads the ListModel per product; dry run <= 4.3 ms; categories 6 ms at 20k. Details in the plan.
 - [x] 2. Plan written (decisions S5d-D1..D7).
-- [ ] 3. Code: `qtyIndex`/`cartQty`/`availableFor` (NP), `scopeOf`/`heldAtCompletion`/`ceilingFor`/`availableFor` (Edit), `build` scope (PM), both dialogs.
-- [ ] 4. Tests: NOP/EOP/SHEET cases (+ twins regenerated), `pickerS5dWiring.test.js`, NOW-03/EOW-03 updated on purpose, bench smoke, mutants.
-- [ ] 5. Docs: test plan (checks 134 to 140, status row), KNOWN-ISSUES (14, 19c, 25 amended; 74+ new), Skill 180 + index, AGENTS, README.
+- [x] 3. Code pushed `73ae111`: `qtyIndex`/`cartQty`/`availableFor` (NP), `scopeOf`/`heldAtCompletion`/`ceilingFor`/`availableFor` (Edit), `build` scope (PM), both dialogs, `scripts/bench/pickerBench.cjs`.
+- [x] 4. Tests: 22 new (NOP 5, EOP 4, SHEET 3, S5D 10), twins regenerated, NOW-03/EOW-03/EOW-11 updated on purpose. Functions 2130/2130 (main 2108), scripts 1061/1061. 32 hand mutants: 30 killed, 2 equivalent, 1 real gap closed.
+- [x] 5. Docs: test plan (checks 134 to 140, status rows), KNOWN-ISSUES (14, 19c, 25, 42 amended; 74 to 80 new), Skill 180 + index, AGENTS, README, plan Result section.
 - [ ] 6. Push, open PR, read CI.
 - [ ] 7. Final report: done / open decisions / device checks 134 to 140 / next = S5e.
 
