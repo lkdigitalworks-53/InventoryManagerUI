@@ -529,4 +529,77 @@ TestCase {
         eq(NP.stepQty(2, NaN, p(5)), 2);
         eq(NP.stepQty(2, "1", p(5)), 2);
     }
+
+    function test_NOP_38_qtyindex_a_tagged_index_rows_that_are_not_objects_blank_ids_() {
+        const rows = [line("A", 2), line("A", 3), line(7, 4), line("7", 1), null, "x", 5, line("", 5), line(null, 5), line(undefined, 5),
+                      line("B", 0), line("B", -2), line("B", NaN), line("B", Infinity), line("B", "3"), line("__proto__", 6),
+                      line("C", 2.5), line("C", 0.25)];
+        const idx = NP.qtyIndex(rows, "qty");
+        eq(idx.qtyIndex, true);
+        eq(NP.qtyFromIndex(idx, "A"), 5);
+        eq(NP.qtyFromIndex(idx, 7), 5);
+        eq(NP.qtyFromIndex(idx, "7"), 5);
+        eq(NP.qtyFromIndex(idx, "B"), 0);
+        eq(NP.qtyFromIndex(idx, "__proto__"), 6);
+        eq(NP.qtyFromIndex(idx, "C"), 2.75);
+        eq(NP.qtyFromIndex(idx, "Z"), 0);
+        eq(NP.qtyFromIndex(idx, "constructor"), 0);
+        eq(NP.qtyFromIndex(idx, ""), 0);
+        eq(NP.qtyFromIndex(idx, null), 0);
+        // a line with a blank id holds nothing, so it must not count for a product whose id merely READS like the blank
+        eq(NP.qtyFromIndex(idx, "null"), 0);
+        eq(NP.qtyFromIndex(idx, "undefined"), 0);
+        // another quantity key: an Edit Order's original lines say quantity
+        eq(NP.qtyFromIndex(NP.qtyIndex([{ productId: "A", quantity: 4 }, { productId: "A", quantity: 1 }, { productId: "A", qty: 9 }], "quantity"), "A"), 5);
+        // not a list: an empty index, never a throw
+        for (const junk of [undefined, null, "x", 5, {}]) {
+            noThrow(() => NP.qtyIndex(junk, "qty"));
+            eq(NP.qtyFromIndex(NP.qtyIndex(junk, "qty"), "A"), 0);
+        }
+    }
+
+    function test_NOP_39_cartqty_and_availablefor_answer_the_same_with_and_without_th() {
+        const rows = [line("A", 2), line("A", 3), line(7, 4), line("7", 1), null, "x", line("", 5), line("B", -2), line("B", NaN),
+                      line("F", 0.1), line("F", 0.2), line("F", 0.3), line("C", 2.5), line("C", 0.25), line("__proto__", 6)];
+        const idx = NP.qtyIndex(rows, "qty");
+        const ids = ["A", "B", "C", "F", "7", 7, "Z", "__proto__", "constructor", "", null, undefined];
+        for (let i = 0; i < ids.length; ++i) {
+            eq(NP.cartQty(rows, ids[i], idx), NP.cartQty(rows, ids[i]));
+            for (const stock of [0, 1, 2.5, 5, 40, -3, undefined]) {
+                const p = ids[i] === null || ids[i] === undefined ? null : prod(ids[i], stock);
+                eq(NP.availableFor(p, rows, idx), NP.availableFor(p, rows));
+            }
+        }
+        eq(NP.availableFor(prod("A", 9), rows, idx), 4);
+        eq(NP.availableFor(prod("A", 4), rows, idx), 0);
+    }
+
+    function test_NOP_40_a_third_argument_that_is_not_an_index_made_by_qtyindex_is_ig() {
+        const rows = [line("A", 2), line("A", 3)];
+        const junk = [undefined, null, "idx", 0, 7, true, [], {}, { qtyIndex: false, sums: {} }, { qtyIndex: "true", sums: {} },
+                      { qtyIndex: true }, { qtyIndex: true, sums: null }, { qtyIndex: true, sums: "x" }, { sums: { "k:A": 99 } }];
+        for (let i = 0; i < junk.length; ++i) {
+            eq(NP.cartQty(rows, "A", junk[i]), 5);
+            eq(NP.availableFor(prod("A", 9), rows, junk[i]), 4);
+            eq(NP.qtyFromIndex(junk[i], "A"), null);
+        }
+    }
+
+    function test_NOP_41_a_valid_index_is_trusted_over_the_lines_it_is_given_it_was_m() {
+        const idx = NP.qtyIndex([line("A", 2), line("A", 3)], "qty");
+        eq(NP.cartQty([], "A", idx), 5);
+        eq(NP.cartQty(null, "A", idx), 5);
+        eq(NP.cartQty("x", "A", idx), 5);
+        eq(NP.cartQty([line("A", 100)], "A", idx), 5);
+        eq(NP.cartQty([line("A", 1)], "", idx), 0);
+        eq(NP.cartQty([line("A", 1)], null, idx), 0);
+        eq(NP.cartQty([line("A", 1)], "Z", idx), 0);
+        // trusted for zero too: an index that says "none" is not a reason to scan the lines
+        const none = NP.qtyIndex([], "qty");
+        eq(NP.cartQty([line("A", 9)], "A", none), 0);
+        // availableFor reads the index it is given, not the lines
+        eq(NP.availableFor(prod("A", 9), [], idx), 4);
+        eq(NP.availableFor(prod("A", 9), [line("A", 100)], idx), 4);
+        eq(NP.availableFor(prod("A", 9), [line("A", 9)], none), 9);
+    }
 }

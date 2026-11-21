@@ -183,13 +183,22 @@ BottomSheet {
         productOf: function(id) { return InventoryStore.getById(id) },
         batchesOf: function(id) { return StockBatchStore.forProduct(id) }
     })
+    // Scope of ONE sheet build (S5d, plan S5d-D1/D4): the rows of the order are read from the ListModel ONCE (they were read
+    // twice per product), indexed, and the two hooks below read the index in between. Outside a build, or when beginBuild
+    // threw before the scope was made, they read the live rows as before. The scope is set LAST and cleared FIRST: it is
+    // the gate. Plain properties, not an object mutated in place.
+    property var _buildLines: null
+    property var _buildCtx: null
+    property var _buildScope: null
     readonly property var _pickerHooks: ({
         hasPendingMint: function(id) { return StockBatchStore.hasPendingMint(id) },
         hasQueuedRestock: function(id) { return InventoryStore.hasQueuedRestock(id) },
         unsyncedState: function(id) { return InventoryStore.syncStateOf(id) },
         hasPrice: function(p) { return NP.priceOf(p) !== null },
-        inOrderQty: function(id) { return NP.cartQty(dlg._pickerLinesNow(), id) },
-        availableFor: function(p) { return Edit.availableFor(p, dlg._pickerLinesNow(), dlg._pickerCtx()) },
+        beginBuild: function() { const lines = dlg._pickerLinesNow(), ctx = dlg._pickerCtx(); dlg._buildLines = lines; dlg._buildCtx = ctx; dlg._buildScope = Edit.scopeOf(lines, ctx) },
+        endBuild: function() { dlg._buildScope = null; dlg._buildCtx = null; dlg._buildLines = null },
+        inOrderQty: function(id) { return dlg._buildScope ? NP.cartQty(dlg._buildLines, id, dlg._buildScope.cart) : NP.cartQty(dlg._pickerLinesNow(), id) },
+        availableFor: function(p) { return dlg._buildScope ? Edit.availableFor(p, dlg._buildLines, dlg._buildCtx, dlg._buildScope) : Edit.availableFor(p, dlg._pickerLinesNow(), dlg._pickerCtx()) },
         commitCheck: function(plan) { return Edit.commitCheck(dlg._pickerLinesNow(), plan, dlg._pickerCtx(), dlg._pickerLookup) }
     })
     // Every counter the hooks read; each only grows, so the sum changes whenever one does and the open sheet re-reads

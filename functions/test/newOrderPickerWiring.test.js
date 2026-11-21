@@ -46,19 +46,20 @@ test("NOW-02 the dialog declares one ProductPickerSheet and binds all five input
         assert.ok(body.includes(line), "missing: " + line);
 });
 
-test("NOW-03 the hooks are the seven the helpers expect, each wired to the store that owns the guard, and no isDeleting", () => {
+test("NOW-03 the hooks are the seven the helpers expect plus the two build-scope hooks of S5d, each wired to the store that owns the guard, and no isDeleting", () => {
     const hooks = literal(CODE, "readonly property var _pickerHooks", "{", "}");
     const expected = {
         hasPendingMint: "StockBatchStore.hasPendingMint(id)",
         hasQueuedRestock: "InventoryStore.hasQueuedRestock(id)",
         hasPrice: "Picker.priceOf(p) !== null",
         unsyncedState: "InventoryStore.syncStateOf(id)",
-        inOrderQty: "Picker.cartQty(dlg.selectedProducts, id)",
-        availableFor: "Picker.availableFor(p, dlg.selectedProducts)",
+        // S5d, ON PURPOSE: while a build runs the two read the index made in beginBuild; outside a build they scan as before
+        inOrderQty: "dlg._buildIndex ? Picker.cartQty(dlg._buildLines, id, dlg._buildIndex) : Picker.cartQty(dlg.selectedProducts, id)",
+        availableFor: "dlg._buildIndex ? Picker.availableFor(p, dlg._buildLines, dlg._buildIndex) : Picker.availableFor(p, dlg.selectedProducts)",
         commitCheck: "Picker.opsCheck(dlg.selectedProducts, plan, dlg._pickerLookup)"
     };
-    for (const k of Object.keys(expected)) assert.ok(new RegExp(k + ":\\s*function\\([a-z]+\\)\\s*\\{\\s*return " + expected[k].replace(/[().]/g, "\\$&") + "\\s*\\}").test(hooks), k);
-    assert.equal((hooks.match(/\w+:\s*function/g) || []).length, 7);
+    for (const k of Object.keys(expected)) assert.ok(new RegExp(k + ":\\s*function\\([a-z]+\\)\\s*\\{\\s*return " + expected[k].replace(/[().?]/g, "\\$&") + "\\s*\\}").test(hooks), k);
+    assert.equal((hooks.match(/\w+:\s*function/g) || []).length, 9);
     assert.ok(!/isDeleting/.test(hooks));
     const lookup = literal(CODE, "readonly property var _pickerLookup", "{", "}");
     assert.ok(/productOf:\s*function\(id\)\s*\{\s*return InventoryStore\.getById\(id\)\s*\}/.test(lookup));
