@@ -600,3 +600,45 @@ test("SHEET-44 the row price and the draft total use the legacy price when selli
     eq(PM.priceOf(null), 0);
     eq(PM.priceOf({ sellingPrice: null, price: 3 }), 3);
 });
+
+// ---- S5d (plan 2026-11-21-product-picker-v2-s5d-measure-and-cart-index.md): the per-build scope hooks ----
+test("SHEET-45 beginBuild runs once before every other hook and endBuild once after the last, however many products and draft ids there are", () => {
+    let log = [];
+    const h = hooks({
+        beginBuild: function() { log.push("begin"); },
+        endBuild: function() { log.push("end"); },
+        hasPendingMint: function() { log.push("m"); return false; },
+        availableFor: function(p) { log.push("a"); return p.stock; }
+    });
+    mk([prod("A", 3), prod("B", 4), prod("C", 0)], { hooks: h, draft: { A: 1, B: 2 } });
+    eq(log[0], "begin");
+    eq(log[log.length - 1], "end");
+    eq(log.filter(function(x) { return x === "begin"; }).length, 1);
+    eq(log.filter(function(x) { return x === "end"; }).length, 1);
+    ok(log.length > 6);
+    log = [];
+    mk([], { hooks: h });
+    eq(log, ["begin", "end"]);
+    log = [];
+    PM.build(undefined);
+    PM.build({ hooks: h });
+    eq(log, ["begin", "end"]);
+});
+test("SHEET-46 a scope hook that is missing, not a function or throwing never changes the view and never stops the build", () => {
+    const products = [prod("A", 3), prod("B", 0), prod("C", 5)];
+    const base = mk(products, { draft: { A: 1 } });
+    const throwing = function() { throw new Error("scope"); };
+    const cases = [{ beginBuild: 5 }, { endBuild: "x" }, { beginBuild: null, endBuild: undefined }, { beginBuild: {}, endBuild: [] },
+                   { beginBuild: throwing }, { endBuild: throwing }, { beginBuild: throwing, endBuild: throwing }];
+    for (let i = 0; i < cases.length; ++i) {
+        noThrow(() => mk(products, { draft: { A: 1 }, hooks: hooks(cases[i]) }));
+        eq(mk(products, { draft: { A: 1 }, hooks: hooks(cases[i]) }), base);
+    }
+});
+test("SHEET-47 endBuild runs even when the build itself throws (a hostile product), so a scope can never outlive its build", () => {
+    let ends = 0;
+    const bad = prod("A", 3);
+    Object.defineProperty(bad, "unit", { get: function() { throw new Error("hostile"); } });
+    try { mk([bad], { hooks: hooks({ endBuild: function() { ends++; } }) }); } catch (err) { /* the build may throw: only the scope matters here */ }
+    eq(ends, 1);
+});

@@ -47,10 +47,45 @@ function _productOf(lookup, id) {
     }
 }
 
-// Units of a product already in the cart (all lines of that product).
-function cartQty(lines, productId) {
+// A per-build index of how many units each product holds across `rows` (picker v2, S5d, plan S5d-D1/D3). The sheet
+// asks "how much of this product is already in the order" for EVERY product of the catalog on every rebuild; walking
+// the whole cart each time is N x L work (83% of a 60-line rebuild, measured by scripts/bench/pickerBench.cjs). The
+// dialog builds ONE index when a build starts (the sheet's beginBuild hook) and drops it when the build ends.
+// `field` is the quantity key: "qty" for cart lines, "quantity" for an Edit Order's original lines. The rules are the
+// scan's, line for line: a row that is not an object, a blank id, or a quantity that is not a positive finite number
+// holds nothing; ids match as String(id); sums run in row order, so even a fractional total equals the scan's.
+// Keys carry a "k:" prefix: a product id of "__proto__" must not reach the prototype.
+function qtyIndex(rows, field) {
+    var sums = {}
+    if (Array.isArray(rows))
+        for (var i = 0; i < rows.length; ++i) {
+            var l = rows[i]
+            if (!l || typeof l !== "object" || _blankId(l.productId)) continue
+            var q = l[field]
+            if (typeof q !== "number" || !isFinite(q) || !(q > 0)) continue
+            var k = "k:" + String(l.productId)
+            sums[k] = (_has(sums, k) ? sums[k] : 0) + q
+        }
+    return { qtyIndex: true, sums: sums }
+}
+
+// The units the index holds for this product, or null when `index` is not an index made by qtyIndex (the caller then
+// scans). Junk is never trusted: a string, {} or an array as the third argument of cartQty falls back to the scan.
+function qtyFromIndex(index, productId) {
+    if (!index || typeof index !== "object" || index.qtyIndex !== true || !index.sums || typeof index.sums !== "object") return null
+    if (_blankId(productId)) return 0
+    var k = "k:" + String(productId)
+    return _has(index.sums, k) ? index.sums[k] : 0
+}
+
+// Units of a product already in the cart (all lines of that product). `index` (optional, qtyIndex(lines, "qty")) answers
+// without walking the cart; it must have been made from the same `lines`, and a value that is not an index is ignored.
+function cartQty(lines, productId, index) {
     var used = 0
-    if (_blankId(productId) || !Array.isArray(lines)) return used
+    if (_blankId(productId)) return used
+    var fast = qtyFromIndex(index, productId)
+    if (fast !== null) return fast
+    if (!Array.isArray(lines)) return used
     var id = String(productId)
     for (var i = 0; i < lines.length; ++i) {
         var l = lines[i]
@@ -69,9 +104,9 @@ function ceilingOf(product) { return (product && typeof product === "object") ? 
 
 // What NEW lines may still use: the ceiling minus what the cart already holds (units are not deducted until the
 // order completes). Never negative, whole units, 0 for a product that is not a product.
-function availableFor(product, lines) {
+function availableFor(product, lines, index) {
     if (!product || typeof product !== "object" || _blankId(product.productId)) return 0
-    return Math.max(0, ceilingOf(product) - cartQty(lines, product.productId))
+    return Math.max(0, ceilingOf(product) - cartQty(lines, product.productId, index))
 }
 
 // The quantity of a New Order cart row after a tap of + (delta above 0) or - (delta below 0), the same contract as

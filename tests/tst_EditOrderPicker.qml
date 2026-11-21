@@ -72,6 +72,8 @@ TestCase {
         if (s <= 0) s += 2147483646;
         return function() { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
     }
+    // Reads a scope index through the public Edit API (an index answers before `original` is looked at).
+    function idxQty(index, id) { return EP.heldAtCompletion([], id, index); }
 
     function test_EOP_01_linesof_one_picker_line_per_row_in_the_same_order_quantity_r() {
         const rows = [row("A", 2, { discountType: "percent", discountValue: 12 }), null, row("B", 5, { discountType: "weird", discountValue: undefined }), 7];
@@ -632,5 +634,65 @@ TestCase {
         for (const junk of [undefined, null, 0, "", "true", 1]) eq(EP.lineFields(junk, 0, 0, []), { items: 0, products: [] });
         // a row count that is not a real 0 means there are rows
         for (const n of [undefined, NaN, -1, "0", 3]) eq(EP.lineFields(true, n, 0, []), { items: 0, products: [] });
+    }
+
+    function test_EOP_45_scopeof_the_cart_index_always_the_held_index_only_for_a_comp() {
+        const lines = [line("A", 2), line("A", 1), line("B", 4)];
+        const original = [orig("A", 3, false, 0), orig("A", 1, false, 0), orig("C", 2.5, false, 0)];
+        const done = EP.scopeOf(lines, ctx("completed", original));
+        eq(idxQty(done.cart, "A"), 3);
+        eq(idxQty(done.cart, "B"), 4);
+        eq(idxQty(done.held, "A"), 4);
+        eq(idxQty(done.held, "C"), 2.5);
+        eq(idxQty(done.held, "B"), 0);
+        for (const status of ["pending", "processing", "cancelled", "", undefined]) eq(EP.scopeOf(lines, ctx(status, original)).held, null);
+        eq(idxQty(EP.scopeOf(lines, ctx("pending")).cart, "A"), 3);
+        for (const junk of [undefined, null, 5, "x", {}, { status: "completed" }, { status: "completed", original: "x" }]) {
+            noThrow(() => EP.scopeOf(undefined, junk));
+            noThrow(() => EP.scopeOf("x", junk));
+        }
+        eq(idxQty(EP.scopeOf(lines, { status: "completed" }).held, "A"), 0);
+    }
+
+    function test_EOP_46_availablefor_ceilingfor_and_heldatcompletion_answer_the_same() {
+        const original = [orig("A", 3, false, 0), orig("A", 1, false, 0), orig("C", 2.5, false, 0), orig("D", 2, false, 0)];
+        const lines = [line("A", 2), line("A", 1), line("C", 0.5), line("E", 4), line("B", 0), line("B", -1)];
+        const products = [prod("A", 5), prod("B", 0), prod("C", 1.5), prod("D", 3), prod("E", 4), prod("F", 7), null];
+        for (const status of ["pending", "processing", "completed", "cancelled", "", undefined]) {
+            const c = ctx(status, original);
+            const scope = EP.scopeOf(lines, c);
+            for (let i = 0; i < products.length; ++i) {
+                const p = products[i];
+                const id = p ? p.productId : "GONE";
+                eq(EP.availableFor(p, lines, c, scope), EP.availableFor(p, lines, c));
+                eq(EP.ceilingFor(id, p, c, scope), EP.ceilingFor(id, p, c));
+                eq(EP.heldAtCompletion(original, id, scope.held), EP.heldAtCompletion(original, id));
+            }
+        }
+        const c = ctx("completed", original);
+        const scope = EP.scopeOf(lines, c);
+        eq(EP.availableFor(prod("A", 5), lines, c, scope), 6);
+        eq(EP.availableFor(prod("D", 3), lines, c, scope), 5);
+        eq(EP.heldAtCompletion([], "A", scope.held), 4);
+        // the scope is read, not the lines or the original it was made from: it answers when they are empty or different
+        eq(EP.ceilingFor("A", prod("A", 5), ctx("completed", []), scope), 9);
+        eq(EP.ceilingFor("A", prod("A", 5), ctx("completed", [orig("A", 100, false, 0)]), scope), 9);
+        eq(EP.availableFor(prod("A", 5), [], ctx("pending"), scope), 2);
+        eq(EP.availableFor(prod("A", 5), [], ctx("pending")), 5);
+        eq(EP.availableFor(prod("A", 5), [], ctx("completed", []), scope), 6);
+        eq(EP.availableFor(prod("A", 5), [], ctx("completed", []), { cart: EP.scopeOf([], ctx("pending")).cart, held: scope.held }), 9);
+    }
+
+    function test_EOP_47_a_scope_with_no_held_index_on_a_completed_order_falls_back_t() {
+        const original = [orig("A", 3, false, 0)];
+        const c = ctx("completed", original);
+        const lines = [line("A", 1)];
+        const half = { cart: EP.scopeOf(lines, ctx("pending")).cart, held: null };
+        eq(EP.availableFor(prod("A", 5), lines, c, half), EP.availableFor(prod("A", 5), lines, c));
+        eq(EP.ceilingFor("A", prod("A", 5), c, half), 8);
+        for (const junk of [undefined, null, 5, "x", {}, { cart: "x", held: "y" }, { cart: [], held: [] }]) {
+            eq(EP.availableFor(prod("A", 5), lines, c, junk), EP.availableFor(prod("A", 5), lines, c));
+            eq(EP.ceilingFor("A", prod("A", 5), c, junk), 8);
+        }
     }
 }

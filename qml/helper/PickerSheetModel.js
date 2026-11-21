@@ -206,6 +206,15 @@ function _check(hooks, draft, orderLines) {
     }
 }
 
+// Optional hooks (slice S5d): beginBuild() and endBuild(), called once each around every build() (begin first, end last,
+// end also when the build throws). The dialog snapshots the order's lines and makes the quantity index there, drops it in
+// endBuild, and its inOrderQty / availableFor hooks read the index in between (NewOrderPicker.qtyIndex says why: the
+// per-product scan of the cart was N x L). Either one missing or throwing is ignored: the hooks then scan, as before.
+function _scope(hooks, name) {
+    if (!hooks || typeof hooks !== "object" || typeof hooks[name] !== "function") return
+    try { hooks[name]() } catch (e) { /* a scope hook must never stop the sheet: without the index the hooks scan */ }
+}
+
 // input: { products, hooks, orderLines, draft, query, category, inStockOnly }
 // -> { draft, draftChanged, rows, hiddenCount, hiddenNote, empty: {kind, text}, totals: {items, lines, amount},
 //      canCommit: {ok, reason}, commitNote }   reason: "" | "empty" | "too-many-lines" | "check-failed"
@@ -213,6 +222,15 @@ function _check(hooks, draft, orderLines) {
 // became unavailable or left the catalog is dropped. The sheet writes it back when draftChanged. Never throws on junk.
 function build(input) {
     var inp = input || {}
+    _scope(inp.hooks, "beginBuild")
+    try {
+        return _build(inp)
+    } finally {
+        _scope(inp.hooks, "endBuild")
+    }
+}
+
+function _build(inp) {
     var products = Array.isArray(inp.products) ? inp.products : []
     var orderLines = Array.isArray(inp.orderLines) ? inp.orderLines : []
     var draft0 = (inp.draft && typeof inp.draft === "object") ? inp.draft : {}
