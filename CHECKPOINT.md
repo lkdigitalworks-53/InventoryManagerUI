@@ -20,14 +20,16 @@ Out (documented in KNOWN-ISSUES): emulator e2e QML-to-endpoint case, date-picker
 - [x] 2. Page QML + ProfilePage row + Main wiring + sign-out clear.
 - [x] 3. Wiring tests (63, incl. page function bodies run in a vm + 31 page mutants) + QML twin tests/tst_StockRegisterPage.qml; SRS-04 dormancy replaced by SRW-13; sessionRecheckWiring pin extended for the new overlay. Whole .github suite 1193 green.
 - [x] 4. Test plan `test-plans/2026-11-20-p1-s4b2-register-page-test-plan.md` + README row (device steps 1..22).
-- [x] 5. Docs: design section 8, KNOWN-ISSUES (S4b-2 section), ATOMIC-OPERATIONS-STATUS 13, README, AGENTS, Skill 180 + SKILLS-INDEX (was written as 178 here; 178 is AP3b); row extracted to `qml/components/StockRegisterRow.qml` per qt-qml skill.
+- [x] 5. Docs: design section 8, KNOWN-ISSUES (S4b-2 section), ATOMIC-OPERATIONS-STATUS 13, README, AGENTS, Skill 181 + SKILLS-INDEX (written as 178, then 180; main took 178 to 180, so it is 181 now); row extracted to `qml/components/StockRegisterRow.qml` per qt-qml skill.
 - [x] 6. Pushed, PR #209 opened, CI on be60ef5: QML, Functions, Rules, E2E all green (summary comment job last checked in progress).
+
+**Rebase note (2026-11-21, same review session):** branch rebased onto `origin/main` `a3227e7` (#208 NO1 createOrder, which took Skill 180). The rebase dropped the old merge commit and the review commit that only undid its wrong renumber (`897cab8`, moot). Conflicts: `CHECKPOINT.md` (kept this branch's version), the `Main.qml` import line (kept both imports), SKILLS, SKILLS-INDEX, ATOMIC-OPERATIONS-STATUS, KNOWN-ISSUES, AGENTS (kept both sides). The register skill is now **Skill 181** (main has 178 to 180). A backup of the pre-rebase branch tip `f27797d` was local only (`backup/pr209-pre-rebase`, gone with the sandbox); the old PR commits are still reachable on GitHub by hash. The branch was force-pushed with `--force-with-lease`; do not force-push again.
 
 ## Review sweep of PR #209 (2026-11-21, separate session; commits carry `tsadmin@gmail.com`)
 Reviewed on the PR branch itself (fixes go in the same PR). PAT only via `git -c http.extraHeader`, never stored. Run the script suite with a glob: `node --test .github/scripts/__tests__/*.test.js` (the directory form fails on Node 22).
 - [x] `897cab8` docs: AP3b references restored to Skill 178 (AGENTS x2, README, ATOMIC-OPERATIONS-STATUS); Skill 180 moved to the end of SKILLS.md; index regenerated.
 - [x] `66b4d3f` code: F-A page clock refreshed when the overlay opens (`refreshPeriod()`, no `onVisibleChanged`); F-B overlay closes in `onSignedOut`; F-C figures `HorizontalFit` (never elided first); F-E `asOfText` Invalid Date guard; F-G stray import blank line. CI green (QML, Functions, E2E, Rules).
-- [x] docs: test plan steps 23 to 27, KNOWN-ISSUES S4b-2 items 14 to 18, Skill 180 rules 9 to 12, README and AGENTS clause.
+- [x] docs: test plan steps 23 to 27, KNOWN-ISSUES S4b-2 items 14 to 18, Skill 181 rules 9 to 12, README and AGENTS clause.
 - Checked and dismissed: error replacing the old answer is a pinned decision (SRW-24/25); Back button 40 dp copies ActivityPage; every component, property and token exists; service drops answers after a tenant or role change.
 - Not run (no Qt here): qmllint, QML tests, `HorizontalFit` inside a Layout, the Android `-` key. Device steps 23 to 26 cover them.
 - Script suite: 1199/1199.

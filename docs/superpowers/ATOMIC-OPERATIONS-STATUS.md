@@ -177,5 +177,5 @@ grep -rn "ActivityLog.record(" qml --include=*.qml | grep -v ActivityLog.qml | w
 
 
 ## 13. Update 2026-11-20 (P1 S4b-2: register page on the phone)
-- Not an atomic-operations change; P1 anchor. P1 standing: S1a, S1b, S2a-c, S2d-1, S2d-2, S2f-1..7, S4a, S4b-1 merged (#205 S2d-2 client merged); S4b-2 built on `feat/2026-11-20-p1-s4b2-register-page` (page, Profile row, Main overlay; design section 8; Skill 178). Open: S2e-2 pickers and S4c export (wait for the CA answers, `CA-QUESTIONS.md`), S3 `batchRef` per FIFO portion (behind C-3 Phase 3), S4b-3 emulator e2e + date picker.
+- Not an atomic-operations change; P1 anchor. P1 standing: S1a, S1b, S2a-c, S2d-1, S2d-2, S2f-1..7, S4a, S4b-1 merged (#205 S2d-2 client merged); S4b-2 built on `feat/2026-11-20-p1-s4b2-register-page` (page, Profile row, Main overlay; design section 8; Skill 181). Open: S2e-2 pickers and S4c export (wait for the CA answers, `CA-QUESTIONS.md`), S3 `batchRef` per FIFO portion (behind C-3 Phase 3), S4b-3 emulator e2e + date picker.
 - NEXT after human review and a device pass of the test plan: S4b-3 (first emulator case QML to `computeStockRegister`, date picker for the custom range), then S3 or whatever the CA answers unblock.
