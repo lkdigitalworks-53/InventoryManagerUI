@@ -14,7 +14,7 @@
 - [x] 3. Server: `counterRegistry.js` `order` entry; `operationLogic.js` `createOrder` in `OP_TYPES`.
 - [x] 4. Tests: new `operationLogic.createOrder.test.js` (35), guard rows +5 / mutants +5, handler +2, owner-only grid +1 row +1 test, three pins flipped, three emulator cases (CI only). Functions 2147/2147 RUN, scripts 1061/1061 RUN, 100% line/branch/function on both changed files, 8/8 hand mutants killed.
 - [x] 5. Docs: test plan, KNOWN-ISSUES 74-78, Skill 180 + index (`skills-index.js --check` clean), AGENTS, README, ATOMIC-OPERATIONS-STATUS section 18.
-- [ ] 6. Commit + push (check `git log origin/feat/2026-11-21-no1-create-order-server-op`), open the PR, read CI. If this line is unticked the push did not happen: run `git status`, commit, push.
+- [x] 6. Committed and pushed `d721d66`; PR #208 opened. CI result NOT read yet in this session: read it first (Skill 175, REST `check-runs` on the head SHA) and record it in test plan section 5.
 - [ ] 7. Final report to the owner: done / open questions Q-NO-1..4 / device steps / next = NO2.
 
 ## Next slice (NO2, not started)
