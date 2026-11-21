@@ -6,13 +6,13 @@ Branch `feat/2026-11-20-p1-s4b2-register-page`. Design: `specs/2026-11-12-p1-s4b
 
 | File | Cases | Run? | Covers |
 |---|---|---|---|
-| `.github/scripts/__tests__/stockRegisterPage.test.js` | SRP-01..05 + 52 mutants (69 tests) | RUN | Chips and labels; `resolveWindow` (six presets equal the engine, custom trimmed, bad day, reversed, out of range, junk index, bad clock); `tapDecision` order (busy, window, role, offline) and junk input; `stateFromResult` (ok, wrong window, each error kind, retry flag, busy/cancelled leave the page, junk); `stateFromCache`, `stateFromBody`, `stateFromRefusal`; flat row keys (no `id`); `loadLabel`, `nextExpanded`, `summaryText`, `warningLines` (agrees with the engine's `hasWarning`), `emptyText`, `asOfText` (IST, midnight, noon, year end), `inlineError`, `captionText`, `detailRows`; seeded monkey 600 rounds; battery repeated in four time zones; no local-time getter or clock in the file; every mutant run under a non-UTC zone |
-| `.github/scripts/__tests__/stockRegisterPageWiring.test.js` | SRW-01..13, 20..35, 40, 41 + 31 mutants (63 tests) | RUN | Imports by name; every `Glue.*` used is exported; delegate roles equal the row keys in order; ON DEMAND ONLY (one `load(` call, no timer or auto-load hook); service flag is the only latch; chips and custom fields off while loading; reset on workspace/role change, cancel before clear; Profile row and gate; Main overlay (Back order, workspace change, role loss, tab change, tabbar hidden, sign-out clear, z-order, still four tabs); dormancy replaced by an exact caller allow-list; the page's real function bodies in a vm: send once, refusals send nothing, cancel keeps the view, error clears rows, wrong-window refused, throw survived, chips use the remembered answer, show-all makes no request, row toggle, reset, warnings, empty answer, monkey 400 actions |
+| `.github/scripts/__tests__/stockRegisterPage.test.js` | SRP-01..05 + 53 mutants (70 tests) | RUN | Chips and labels; `resolveWindow` (six presets equal the engine, custom trimmed, bad day, reversed, out of range, junk index, bad clock); `tapDecision` order (busy, window, role, offline) and junk input; `stateFromResult` (ok, wrong window, each error kind, retry flag, busy/cancelled leave the page, junk); `stateFromCache`, `stateFromBody`, `stateFromRefusal`; flat row keys (no `id`); `loadLabel`, `nextExpanded`, `summaryText`, `warningLines` (agrees with the engine's `hasWarning`), `emptyText`, `asOfText` (IST, midnight, noon, year end), `inlineError`, `captionText`, `detailRows`; seeded monkey 600 rounds; battery repeated in four time zones; no local-time getter or clock in the file; every mutant run under a non-UTC zone |
+| `.github/scripts/__tests__/stockRegisterPageWiring.test.js` | SRW-01..15, 20..35, 40, 41 + 34 mutants (68 tests) | RUN | Imports by name; every `Glue.*` used is exported; delegate roles equal the row keys in order; ON DEMAND ONLY (one `load(` call, no timer or auto-load hook); service flag is the only latch; chips and custom fields off while loading; reset on workspace/role change, cancel before clear; Profile row and gate; Main overlay (Back order, workspace change, role loss, tab change, tabbar hidden, sign-out clear, z-order, still four tabs); dormancy replaced by an exact caller allow-list; the page's real function bodies in a vm: send once, refusals send nothing, cancel keeps the view, error clears rows, wrong-window refused, throw survived, chips use the remembered answer, show-all makes no request, row toggle, reset, warnings, empty answer, monkey 400 actions |
 | `.github/scripts/__tests__/stockRegisterService.test.js` | SRS-04 changed | RUN | Old "nothing names the service" pin replaced by a pointer to SRW-13 |
 | `.github/scripts/__tests__/sessionRecheckWiring.test.js` | pin extended | RUN | `_closeAllForWorkspaceChange` must close the new overlay (list and mutant text updated) |
 | `tests/tst_StockRegisterPage.qml` | 7 functions | CI only | Main contract in the real Qt JS engine |
 
-Whole script suite after the change: 1193/1193 (ran in the sandbox).
+Whole script suite after the review sweep (2026-11-21): 1199/1199 (ran in the sandbox). CI on `66b4d3f`: QML, Functions, E2E, Rules all green. Review sweep additions: `asOfText` past the Date range (no "NaN"), SRW-14 (overlay refreshes the page clock on open; forced sign-out closes it), SRW-15 (figures shrink, never only elide), three vm checks and three mutants for `refreshPeriod`.
 
 ## 2. Functional / rules / e2e
 - Functional: the vm tests above run the page's real function bodies against the real helpers.
@@ -20,7 +20,7 @@ Whole script suite after the change: 1193/1193 (ran in the sandbox).
 - E2E (emulator): none (KNOWN-ISSUES, S4b-2 item 1).
 
 ## 3. Regression
-- `Main.qml` gained an overlay, one Back branch, one close line, one `clear()`; `ProfilePage.qml` one row and one signal. Existing QML tests must stay green in CI; the Back order test (SRW-11) and the four-tab test (SRW-12) guard Main.
+- `Main.qml` gained an overlay, one Back branch, one close line, one `clear()`; `ProfilePage.qml` one row and one signal. Review sweep: `open()` now calls `refreshPeriod()` and `onSignedOut` closes the overlay. Existing QML tests must stay green in CI; the Back order test (SRW-11) and the four-tab test (SRW-12) guard Main.
 
 ## On-device test plan (Taher; build needed; dev tenant with some stock history)
 
@@ -57,3 +57,10 @@ Whole script suite after the change: 1193/1193 (ran in the sandbox).
 ### Affected areas
 21. Profile: other rows (Team members, Notifications, Sign out) unchanged. Floating tab bar hides while the register is open and returns on Back.
 22. Android Back: closes the register first, then Profile is not reopened.
+
+### Review sweep additions (2026-11-21, PR #209)
+23. Clock on open (F-A): load "This month", leave the app running, move the phone date to the 1st of the next month, reopen Profile, Stock register WITHOUT restarting the app. The caption above the numbers still shows the answer that was loaded (its own period). Tap Reload: the request is for the NEW month and the caption changes. With no answer loaded the caption shows the new month before any tap.
+24. Forced sign-out (F-B): open the register, then force a sign-out (disable the user in Firebase Auth and wait for the session re-check, or any other forced route you have). The login page must show, not the register. The same gap exists for Profile, Staff and Activity overlays (KNOWN-ISSUES, S4b-2 item 14): check them in the same pass.
+25. Long figures (F-C): on a dev tenant set one product's stock to 1234567.5 (and one to 12345678). Load: the figure shrinks to fit its column and never ends with "...". Repeat with the phone font size at the largest setting and on a 360 dp phone.
+26. Typing a date (review note): Chip "Custom": on Android AND iOS the keyboard must let you type "-" (the field uses a numbers-preferred hint). If it cannot, open a follow-up for the date picker (KNOWN-ISSUES, S4b-2 item 2).
+27. Out-of-range read time (F-E) is not device-testable (the server never sends it); it is covered by the unit tests and the QML twin.
