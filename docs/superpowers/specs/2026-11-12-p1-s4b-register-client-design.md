@@ -67,3 +67,23 @@ Cost: nothing user-visible after this PR. Said plainly in the PR and the test pl
 2. **Then S2d-2** (small): imported-order sales count as `sale`; today the register understates supplies for them (S4a KNOWN-ISSUES 7).
 3. **Ask the CA now**, in parallel: P1 design section 8 (which kinds are receipts, supplies, returns) blocks S4c and S2e. Building either first risks throwing it away.
 4. Do **not** add auto-refresh to the page, and do **not** raise the client timeout without raising the server's.
+
+
+## 8. S4b-2 as built (2026-11-20)
+
+Branch `feat/2026-11-20-p1-s4b2-register-page`. What section 5 left open, decided here (reviewable in the PR; none needed a CA answer):
+
+| Call | Chosen | Alternative and why not |
+|---|---|---|
+| Entry | Row in Profile, role-gated by `StockRegisterModel.canView(AuthStore.role)` | A fifth tab: `sessionRecheckWiring` pins four tabs and the register is an occasional compliance view |
+| Surface | Full-screen overlay like the staff page (Back, tab change, workspace change, role loss close it) | A route: no router in the app |
+| Load | Only on tap (D9); a chip shows the remembered answer or nothing | Auto-load on open: a whole-ledger scan per open, billed |
+| Latch | `StockRegisterService.loading` only | A page flag: two sources of truth |
+| Close while loading | Keeps running, answer remembered | Cancel on close: wasted scan, same bill |
+| Custom range | Two typed days | Date picker: not provable headless (KNOWN-ISSUES 2) |
+| Chips while loading | Disabled | Allowing: the answer would sit under a different chip |
+| Errors | Replace the numbers (no stale rows) | Keep old rows under an error: shows numbers for a period that is not the one asked |
+| Quiet rows | Hidden, with a count and a "Show all products" switch | Always show: the register becomes a stock list |
+| Row detail | Tap opens per-kind lines of that row only (one at a time) | Always expanded: long list |
+
+Files: `qml/helper/StockRegisterPage.js` (pure glue), `qml/pages/StockRegisterPage.qml` (painting) and `qml/components/StockRegisterRow.qml` (one row, split out per the qt-qml rule "a delegate is its own file"), `ProfilePage.qml` (row), `Main.qml` (overlay, Back, close on workspace/role/tab, sign-out `clear()`). Tests: `stockRegisterPage.test.js` (69), `stockRegisterPageWiring.test.js` (63, page bodies in a vm, 31 mutants), `tests/tst_StockRegisterPage.qml` (CI). Skill 178.
