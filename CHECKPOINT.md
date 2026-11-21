@@ -13,8 +13,8 @@
 - [x] 3. Code pushed `73ae111`: `qtyIndex`/`cartQty`/`availableFor` (NP), `scopeOf`/`heldAtCompletion`/`ceilingFor`/`availableFor` (Edit), `build` scope (PM), both dialogs, `scripts/bench/pickerBench.cjs`.
 - [x] 4. Tests: 22 new (NOP 5, EOP 4, SHEET 3, S5D 10), twins regenerated, NOW-03/EOW-03/EOW-11 updated on purpose. Functions 2130/2130 (main 2108), scripts 1061/1061. 32 hand mutants: 30 killed, 2 equivalent, 1 real gap closed.
 - [x] 5. Docs: test plan (checks 134 to 140, status rows), KNOWN-ISSUES (14, 19c, 25, 42 amended; 74 to 80 new), Skill 181 + index, AGENTS, README, plan Result section.
-- [x] 6. Pushed; PR #210 opened (was `dirty`: main took #208, Skill 180 and KI 74-82). Merged main in (no rebase, no force), my Skill 180 -> 181, my KI 74-80 -> 83-89, main's checkpoint archived as `specs/2026-11-21-no1-merged-prev-CHECKPOINT.md`. Functions 2171/2171, scripts 1061/1061 on the merged tree. CI NOT read yet on the merge head.
-- [ ] 7. Final report: done / open decisions / device checks 134 to 140 / next = S5e.
+- [x] 6. Pushed; PR #210 opened (was `dirty`: main took #208, Skill 180 and KI 74-82). Merged main in (no rebase, no force), my Skill 180 -> 181, my KI 74-80 -> 83-89, main's checkpoint archived as `specs/2026-11-21-no1-merged-prev-CHECKPOINT.md`. Functions 2171/2171, scripts 1061/1061 on the merged tree. CI GREEN on the merge head `7b5cc60`: QML 3319, Functions 2171, Rules 129, E2E 124 = 5743/5743.
+- [x] 7. Final report given to Taher: done / open decisions / device checks 134 to 140 / next = S5e.
 
 ## If this session is cut off
 Resume at the first unticked step. Re-measure counts before claiming any: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`.
