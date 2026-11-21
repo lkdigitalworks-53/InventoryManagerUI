@@ -40,7 +40,9 @@ const MAX_OPS = 200;
 // `receipt` movement explicitly, otherwise the server derives `adjustment`.
 // "addProduct" (AP1, design 2026-11-13-add-product-atomic-operation-design.md D-AP-2) likewise: no per-opType shape
 // check (D-AP-6); the opening-stock `receipt` row is derived from the inventory create like any other create.
-const OP_TYPES = ["completeOrder", "restock", "addProduct"];
+// "createOrder" (NO1, design 2026-11-21-create-order-atomic-operation-design.md D-NO-2) likewise: no per-opType shape check
+// (D-NO-5), no feed row (a new order writes none today, D-NO-4): a `mint` of the order id and ONE create of the order doc.
+const OP_TYPES = ["completeOrder", "restock", "addProduct", "createOrder"];
 
 // R5b (design 2026-11-12-r5b-activity-in-operation-design.md): the feed row of a restock is written INSIDE the
 // operation. The entity is named here and NOT in gatewayLogic's ENTITY_COLLECTIONS: lockLogic, batchMutationLogic

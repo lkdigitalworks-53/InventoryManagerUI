@@ -54,7 +54,8 @@ const ENDPOINTS = [
     { label: "recordMutation", make: sendMutation },
     { label: "recordMutationsBatch", make: sendBatch },
     { label: "recordOperation (completeOrder)", make: sendOperation("completeOrder") },
-    { label: "recordOperation (restock)", make: sendOperation("restock") }
+    { label: "recordOperation (restock)", make: sendOperation("restock") },
+    { label: "recordOperation (createOrder)", make: sendOperation("createOrder") }
 ];
 
 async function call(req) {
@@ -129,6 +130,17 @@ test("REGRESSION: the real operations a staff-role phone sends today (an order c
             ops: [{ kind: "delta", entity: "inventory", entityId: "p1", deltas: { stock: opType === "restock" ? 3 : -1 }, floors: { stock: 0 } }] } });
         assert.equal(res.statusCode, 200, opType + " " + JSON.stringify(jsonBody(res)));
         assert.equal(calls.operation, 1);
+    }
+});
+
+test("REGRESSION (NO1): a staff-role phone can create an order through createOrder (a mint plus one order create is not owner-only)", async () => {
+    for (const role of ROLES) {
+        reset(role);
+        const res = await call({ handler: "recordOperation", counter: "operation", body: { env: "test", requestId: "createOrder:real1", opType: "createOrder", clientTimestamp: 1,
+            ops: [{ kind: "mint", counter: "order", bind: "o" },
+                  { kind: "mutation", entity: "order", entityId: "{{o}}", action: "create", before: null, after: { orderId: "{{o}}" } }] } });
+        assert.equal(res.statusCode, 200, role + " " + JSON.stringify(jsonBody(res)));
+        assert.equal(calls.operation, 1, role);
     }
 });
 

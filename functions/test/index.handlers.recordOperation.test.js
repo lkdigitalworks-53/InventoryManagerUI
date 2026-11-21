@@ -213,7 +213,7 @@ test("recordOperation: a restock operation with mint ops passes validation and i
 
 test("recordOperation: invalid mint requests are 400 with the op index (0 survives) and never reach applyOperation", async () => {
     for (const c of [
-        { ops: [mintOp("order", "p")], error: "unknown-counter", opIndex: 0 },
+        { ops: [mintOp("staff", "p")], error: "unknown-counter", opIndex: 0 },
         { ops: [mintOp("supplier", "a"), mintOp("supplier", "a")], error: "duplicate-bind-name", opIndex: 1 },
         { ops: [mintOp("supplier", "a")], error: "unused-mint", opIndex: 0 },
         { ops: [mintOp("supplier", "a"), { kind: "mutation", entity: "stock_batch", entityId: "{{a}}", action: "create", before: null, after: {} }],
@@ -273,5 +273,39 @@ test("recordOperation: an addProduct with a restock-kind feed row, or a row abou
         assert.equal(res.statusCode, 400, JSON.stringify(over));
         assert.equal(jsonBody(res).error, "invalid-activity");
         assert.equal(jsonBody(res).opIndex, 2);
+    }
+});
+
+// ---- createOrder (NO1): the real validator in front of the mocked applyOperation ----
+
+const createOrderBody = (ops) => ({ env: "test", requestId: "createOrder:dev1-1", opType: "createOrder", clientTimestamp: 1, ops: ops });
+const createOrderOps = () => [
+    mintOp("order", "o"),
+    { kind: "mutation", entity: "order", entityId: "{{o}}", action: "create", before: null, after: { orderId: "{{o}}", customer: "Asha", status: "pending" } }
+];
+
+test("recordOperation: a createOrder operation passes validation and its order mint result is forwarded", async () => {
+    seedHappyPathAuth(mockState);
+    const results = [{ kind: "mint", counter: "order", bind: "o", id: "ORD-013" },
+                     { entity: "order", entityId: "ORD-013", kind: "mutation", after: { orderId: "ORD-013" } }];
+    mockState.applyOperationResult = { ok: true, results: results };
+    const res = mockRes();
+    await handlers.recordOperation(mockReq({ body: createOrderBody(createOrderOps()) }), res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(jsonBody(res), { ok: true, entryId: "createOrder:dev1-1", results: results, idempotentReplay: false });
+});
+
+test("recordOperation: a createOrder whose id token names a non-order entity, or that carries a feed row, is 400 and never reaches applyOperation", async () => {
+    const mismatch = createOrderOps(); mismatch[1].entity = "inventory";
+    const feed = createOrderOps().concat([{ kind: "mutation", entity: "activity", entityId: "act-{{o}}", action: "create", before: null,
+        after: { id: "act-{{o}}", kind: "product_added", title: "t", subtitle: "", entityId: "{{o}}", read: false, dismissed: false } }]);
+    for (const [ops, error] of [[mismatch, "placeholder-entity-mismatch"], [feed, "unsupported-entity"]]) {
+        seedHappyPathAuth(mockState);
+        mockState.applyOperationResult = { ok: true, results: [] };
+        mockState.applyOperationCalls = 0;
+        const res = mockRes();
+        await handlers.recordOperation(mockReq({ body: createOrderBody(ops) }), res);
+        assert.equal(res.statusCode, 400, error);
+        assert.equal(jsonBody(res).error, error);
     }
 });
