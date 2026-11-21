@@ -5293,3 +5293,20 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 12. **After a merge renumbers YOUR skill, replace only your own references.** A blind replace of the old number (178 to 180 in this PR) also rewrote the AP3b line that really is Skill 178. Replace by the exact phrase, then `grep -rn "Skill 17[89]\|Skill 18[01]" AGENTS.md README.md docs` and read every hit. Keep the headings in order (move the block, then `node .github/scripts/skills-index.js --write`).
 
 **The check:** with the page text mutated so the tap skips the decision, or reset clears before it cancels, or a custom range equal to a remembered window stops showing that answer, does a test fail for each?
+
+## Skill 182: Measure a slow path with the real code before tuning it; replace an N x L scan with a per-build index behind a scope that always has the slow answer as fallback
+
+**Why:** S5d was planned as "measure on a device, then tune". No device was reachable, and the plan's guesses (debounce, `categories`, the dry run) were all small. Running the REAL helper files in Node with hooks that copy the cost shape of the store lookups showed the real cost nobody had named: the sheet asks "how much of this product is in the order" for every product, and each answer walked the whole cart (N x L, 83% of a 60-line rebuild). Edit Order was worse (it rebuilt its rows from the `ListModel` on every call).
+
+**Rules:**
+1. A speed question gets a number before a fix. Put the real helpers behind a throwaway script, copy only the SHAPE of the lookups (a scan per product stays a scan per product), vary the catalog size AND the second dimension (cart size, outbox size); the cost that scales with the second dimension is the one nobody guessed. Say what the number is (V8 floors, ratios carry over) and what it leaves out.
+2. When a hook is called once per catalog row, a scan inside it is N x L. Build ONE index when the build starts, not a cache keyed on an array's identity (an in-place change makes that stale) and not an index inside the model (the model's `orderLines` may be a notifier copy while the live rows decide).
+3. Give the build an explicit scope: optional `beginBuild` / `endBuild` hooks, begin first, end in a `finally`, a missing or throwing hook ignored. The hooks read the index while it is open and scan the live data when it is not. The slow answer is always still there, so a scope that cannot be made costs time, never correctness.
+4. The gate of the scope is one property: set it LAST on begin, clear it FIRST on end (a half-made scope is never read). Plain properties, not an object mutated in place. Pin the order in the source test.
+5. An index is a tagged object (`{ qtyIndex: true, sums }`), keys prefixed (`"k:"`, so `__proto__` is an id), junk in the optional argument ignored. Its rules are the scan's, line for line (same id match, same quantity rule, same summing order so fractional sums are equal); prove it with a matrix and a seeded monkey comparing both answers.
+6. A speed regression gate must not read a clock. Count what the change removed (cart reads, `ListModel.get` calls) and assert it does not grow with the catalog (40 vs 800 products), against the scan's count as the oracle. Keep the timing tool in `scripts/bench` as a tool; make it cross-check that both ways return the same view and exit 1 if not.
+7. Run the dialogs' real hook literals and real row-snapshot functions in a `vm` sandbox with a counting `ListModel` double. A value-equal change (the index instead of the scan) cannot be seen by comparing answers: add assertions where the index and the lines DISAGREE (empty lines with a full index, zero in the index and a number in the lines) so a mutant that ignores the index dies.
+8. Name what you measured and did NOT fix (the floor that still grows with the catalog, the `ListModel` appends, the outbox scan) in KNOWN-ISSUES with the number that decides when to build it.
+
+**The check:** `node --test functions/test/pickerS5dWiring.test.js`: green. `node scripts/bench/pickerBench.cjs --quick`: exits 0. On a device: checks 134 to 136 (cart of 3 and of 20 lines feel the same).
+

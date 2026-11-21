@@ -46,3 +46,26 @@ NOT in S5d: a debounce change, a categories cache, a dry run cache, a delta rebu
 - **A stale scope** (an index from an earlier build read in a later one). Closed by `endBuild` in a `finally`, by `beginBuild` always rebuilding, and by S5D-06 (after a build the hooks scan the live lines again).
 - **A hook called with an index and different lines** (the index wins): the dialogs pass the snapshot they indexed, pinned by S5D-02.
 - **QML-only risk:** a `property var` written inside a closure. Plain properties (`_buildLines`, `_buildScope`), not an object literal mutated in place, so QML's own change tracking stays out of it. CI runs the twin tests; the glue is run in a Node sandbox (S5D-02).
+
+## Result (2026-11-21, quiet machine, best of 3; `node scripts/bench/pickerBench.cjs`)
+One rebuild, ms, Node. "Before" = the scan hooks as they were at `main` @ `68afa5c`; "after" = this slice. Edit Order "before" copies the per-call row snapshot from a JS array, so on a phone (real `ListModel.get`) it was worse.
+
+| Catalog x cart lines | New Order before | New Order after | Edit Order before (pending) | Edit Order after (pending) | Edit Order after (completed) |
+|---|---|---|---|---|---|
+| 500 x 3 | 3.6 | 3.1 | 4.0 | 3.2 | 3.5 |
+| 500 x 60 | 12.6 | 3.4 | 15.4 | 3.5 | 3.8 |
+| 2 000 x 20 | 26.8 | 12.7 | 29.7 | 12.8 | 13.9 |
+| 2 000 x 60 | 54.4 | 13.8 | 64.5 | 13.5 | 19.1 |
+| 5 000 x 20 | 61.6 | 35.8 | 77.6 | 33.1 | 36.3 |
+| 5 000 x 60 | 127.1 | 34.6 | 158.2 | 34.7 | 38.2 |
+| 20 000 x 60 | 514.0 | 135.5 | 639.5 | 141.4 | 149.8 |
+
+Read it as: the part that grew with the cart is gone (after is flat across 3, 20, 60 lines). What is left is the floor that grows with the catalog (about 6 to 7 ms per 1 000 products): KNOWN-ISSUES 74. Dry run 0.1 to 7 ms and `categories` 0.7 to 6 ms confirmed small (items 25 and 19c).
+A second cost found while measuring and NOT fixed: the per-product scan of the outbox (`hasQueuedRestock`), 85 ms at 5 000 products with 3 000 queued items: KNOWN-ISSUES 78.
+
+## Built
+Code `73ae111`: `NewOrderPicker.qtyIndex` / `qtyFromIndex` / `cartQty` / `availableFor`, `EditOrderPicker.scopeOf` / `heldAtCompletion` / `ceilingFor` / `availableFor`, `PickerSheetModel.build` scope, both dialogs, `scripts/bench/pickerBench.cjs`. 22 new Node tests (NOP-38..42, EOP-45..48, SHEET-45..47, S5D-01..10), three twins regenerated, NOW-03, EOW-03, EOW-11 updated on purpose. Functions suite 2130/2130 (main 2108), scripts 1061/1061. 32 hand mutants: 30 killed, 2 equivalent (NP-10, PM-5), 1 real gap found and closed (NP-3). CI NOT read yet.
+
+## Open for Taher (defaults taken)
+S5d-D1 (scope with fallback, not an identity cache), S5d-D5 (no delta rebuild until a device asks), the 150 ms debounce kept, `categories` not cached. Veto any of them in the PR.
+

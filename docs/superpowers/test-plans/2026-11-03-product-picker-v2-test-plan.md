@@ -17,7 +17,9 @@ Design: `specs/2026-11-03-product-picker-v2-design.md` (approved 2026-11-03). Au
 | S4 | Edit Order wired; `EditOrderPicker.js` (status-aware stock, booked tax on a completed order, dry run for pending and processing only); `NewOrderPicker.applyPlan` optional `availableOf` hook; `catalog` kept for legacy seeding; `catalogNames` and `_availableStock` deleted | Edit Order picker changes | BUILT on `feat/2026-11-12-picker-s4-edit-order` 2026-11-12; Node RUN (picker, New Order and Edit Order files 299/299, functions suite 1531/1531, scripts 1049/1049); QML twin and the Felgo layer CI and device only |
 | S5a | `hasPrice` hook, `no-price` row reason, emulator E2E `test/e2e/pickerOrder.e2e.test.js` | A product with no selling price is shown disabled (was: addable, refused after Add) | BUILT on `feat/2026-11-15-picker-s5a-no-price-and-e2e` 2026-11-15; Node RUN; E2E dry-run offline, then PK-E1..E3 green on the CI emulator (run 43677546922); PR #200 sweep 2026-11-15 fixed the sheet's display price (SHEET-44) |
 | S5b | one stock rule: `ceilingOf`, `ceilingFor`, `stepUp`, `stockShortfalls`; legacy catalog seed deleted | `+` stepper, Save check and sheet agree; fractional stock is whole units; a product that left the catalog cannot be raised | BUILT on `feat/2026-11-16-picker-s5b-one-stock-formula-delete-legacy-seed` 2026-11-16; Node RUN; CI not read yet |
-| S5b to S5e | Stock formula, touch targets and Back key, measure and tune, TalkBack/themes/font scale, final device pass (plan `plans/2026-11-15-product-picker-v2-s5a-no-price-and-e2e.md`, table at the top) | none or fixes | PLANNED |
+| S5c | 48 dp cart steppers on their own row, Back route through the product sheet, in-stock toggle repeat gate | Cart rows, Android Back with the sheet up | MERGED as #206 (2026-11-20); device checks 120 to 133 not run yet |
+| S5d | measured the sheet rebuild with the real helpers (`scripts/bench/pickerBench.cjs`); one cart index per build (`beginBuild` / `endBuild`, `NP.qtyIndex`, `EP.scopeOf`); Edit Order reads its rows once per build | Same rows and numbers; the sheet answers sooner with a big cart | BUILT on `feat/2026-11-21-picker-s5d-cart-index-and-bench` 2026-11-21; Node RUN; CI not read yet; device checks 134 to 140 |
+| S5e | TalkBack of the whole sheet, themes, font scale, ToastHost wrap (KI 26), small touch targets (KI 70), KI 29 cap, final device pass | none or fixes | PLANNED |
 
 ## 1. Unit tests
 
@@ -70,6 +72,14 @@ Was, before CI: the two derived twins; `BottomSheet` with `scrollBody: false` an
 - **Wiring (Node, real function text run in a sandbox):** S5C-01..04 both dialogs use `CartStepper`, own rows, same calls, the real minus and remove handlers; S5C-05..06 `CartStepper` sizes, spoken names, remove hidden unless removable; S5C-07..09 the real `handleBack` (not up, idle, busy, question open, one press on two routes, clock jump); S5C-10 the real `_toggleStockA11y`; S5C-11 BottomSheet's real key handler (4 combinations); S5C-12 only one `guardClose` sheet and both dialogs expose `consumeBack`; S5C-13 the real router with the real `consumeBack` of each dialog (sheet up: dialog stays open; sheet down: closes as before); S5C-14 `Main._handleBack` goes through the router.
 - **Mutation:** 26 hand mutants of the helpers (24 killed, 1 redundant guard deleted, 1 equivalent), 15 of the QML sources (all killed).
 - **Rules, E2E:** none: no server and no rule change.
+
+### S5d unit and wiring tests (2026-11-21)
+- **Unit, helpers (Node and QML twin):** NOP-38..41 `qtyIndex`, `qtyFromIndex`, `cartQty` and `availableFor` with an index (tagged index; junk rows, blank ids, `__proto__`, ids that read like a blank id; same answers as the scan for every id, stock and fractional sum; a junk third argument is ignored; a valid index is trusted over the lines, zero included); NOP-42 seeded monkey, 400 random carts (Node only). EOP-45..47 `scopeOf` (held index only for a completed order), `availableFor` / `ceilingFor` / `heldAtCompletion` with a scope equal to without it for every status, the scope read instead of the lines, a half scope falls back; EOP-48 seeded monkey (Node only). SHEET-45..47 `beginBuild` once first, `endBuild` once last, a missing or throwing hook changes nothing, `endBuild` runs when the build throws.
+- **Wiring (Node, real hook literals and real row-snapshot functions run in a sandbox):** S5D-01 scope properties, the gate set last and cleared first, Edit Order reads its rows once, the fast branch never reads the live cart; S5D-02..03 the hooks inside a build equal the scan (both dialogs, three statuses); S5D-04..05 a whole sheet build equals the scan's view (carts of 0 to 59 lines, drafts, filters, the in-stock toggle); S5D-06 cart reads and ListModel reads per build do NOT grow with the catalog (40 vs 800 products), counted, not timed; S5D-07 the scope holds ONE snapshot for the whole build, never outlives it, two builds in a row see the change; S5D-08 a scope that cannot be made falls back to the scan; S5D-09 the bench runs in `--quick` mode and cross-checks both ways; S5D-10 balanced braces.
+- **Updated on purpose:** NOW-03 and EOW-03 (they pinned the old hook text; nine hooks now), EOW-11 (the `ceilingFor` line gained the scope argument).
+- **Mutation:** 32 hand mutants (10 `NewOrderPicker`, 6 `EditOrderPicker`, 5 `PickerSheetModel`, 11 dialogs). First run: 29 killed, 3 survivors. NP-3 (a blank-id line counted for a product whose id reads "null") was a real gap, fixed by two assertions in NOP-38, now killed. NP-10 (`"k:" + id` without `String()`) and PM-5 (the `typeof` guard in `_scope`) are equivalent: string concatenation converts the same way, and the `try` already catches a non-function. PM-5's guard is kept on purpose: it spares a thrown TypeError per build when a caller has no scope hooks. The script is not in the repo (like S2 to S5c).
+- **Rules, E2E:** none: no server and no rule change.
+- **Bench (a tool, not a gate):** `node scripts/bench/pickerBench.cjs [--json] [--quick]`. Numbers of this slice are in the plan, section "What the numbers say".
 
 ## 2. Functional, rules, e2e
 
@@ -270,6 +280,16 @@ Prerequisites: dev tenant, products A (stock 5, price 10) with a long name (abou
 133. Regression. Steps 104 to 119 of S5a and S5b still behave as written.
 Node only (no device step): the Back decision matrix (BR, PGD), both dialogs' `consumeBack` through the real router (S5C-13), the stepper handlers (S5C-04).
 
+### Slice S5d checks (a big cart in a big shop; need a build, Taher decides)
+Prerequisites: a dev tenant with at least 2000 products (the scale seed) and a few with two lines on an old order if one exists. Note the phone model. No profiler needed: record the screen at 60 fps and count frames, or just say "instant", "a beat", "janky". These checks decide whether the rebuild still needs work (KNOWN-ISSUES 74).
+134. New Order, cart size. Add 3 products, open Add products, tap `+` on a row 10 times, note the feel. Close, add products until the cart holds 20 lines (two rounds), open Add products again and tap `+` 10 times. Expect about the same feel at 3 and at 20 lines (before S5d, 20 lines was clearly slower). Note both.
+135. Edit Order, cart size. Same as 134 on a PENDING order with 20 lines, then on a COMPLETED order with 20 lines. Completed is the heaviest case (cart and held units).
+136. Typing. In the 2000-product shop type "prod" fast into the search. Expect the list to move about 150 ms after the last key, not per key, no stutter. Say whether 150 ms feels slow (KNOWN-ISSUES 14). Tap Clear search and close the sheet while typing: both act at once, nothing rebuilds after close.
+137. Correctness. On the 20-line order check three rows by hand: "In this order: N" equals the order's quantity of that product (add the two lines when a product has two), and "N left" equals stock minus that. Include one product with a fractional stock if you have one. Same numbers as the build before S5d.
+138. Stock changes while the sheet is up. Open the sheet on a 20-line order, sell one of its products on a second device (or restock it), wait for the refresh: that row's "left" changes, other rows do not jump, nothing flickers. Then tap `+` on it: it clamps to the new limit.
+139. Monkey. 20-line order, open the sheet, tick products, press Add, immediately open Add products again, repeat 10 times; also rotate once and press Back with a draft. Expect no crash, no stale "In this order" label (it always shows the order as it is NOW) and no lost line.
+140. Regression. Steps 104 to 119 (S5a and S5b, the stock rule) and 120 to 133 (S5c) behave as written.
+
 ### Affected areas
 | Area | What to check |
 |---|---|
@@ -277,6 +297,7 @@ Node only (no device step): the Back decision matrix (BR, PGD), both dialogs' `c
 | Auto-approve on New Order | Stock is deducted once, never twice. |
 | Edit Order on a completed order | Booked tax and discount are unchanged on existing lines; a removed line re-added returns at its booked tax; the limit is on-hand plus the original units minus the current ones. |
 | Edit Order on a pending or processing order | Limit is on-hand minus the order's units; a picker-built order completes; one over the size is refused in the sheet. |
+| "In this order" and "N left" on a row | Same numbers as before S5d, for two lines of one product, a fractional line, a completed order (S5d, checks 137 to 139). |
 | Cart row stepper in Edit Order and New Order | 48 dp targets on their own row (S5c); the stock formula is the shared one since S5b. |
 | Android Back with any dialog open | Router order unchanged: the first open dialog in `_allDialogs()` closes, a busy one swallows Back. Only a dialog with the product sheet up answers differently (S5c, checks 122 to 126). Spot check: Back on Add Product, Edit Product, order detail, sign-out sheet. |
 | Order approval (completion) | A picker-built order completes; one with too many lines is refused with the "too many changes" cause, not a crash. |
@@ -297,9 +318,11 @@ Run the existing New Order, Edit Order, approve-all and restock checks from the 
 | S5a | functions suite 1793/1793 re-run by hand in the PR #200 sweep (1791 at the PR head, +SHEET-44, +NOP-32; the earlier 1786 in this cell was not the measured number), scripts 1049/1049 per the PR; E2E 3/3 offline dry run, then 3/3 on the CI emulator | PR #200 head `c68b40c`: QML 3073, Functions 1791, Rules 129, E2E 117, all green (5110/5110); the sweep commit regenerates `tst_PickerSheetModel` and `tst_ProductPickability`, its CI result is the next signal | 6 hand mutants on the new branch of `ProductPickability.js` (drop the `inOrder` gate, default false, flipped gate, hide instead of disable, wrong reason, no `typeof` guard): all killed on the first run | n/a (view layer; every branch of the new line is driven by PICK-35..42) | not yet (checks 97 to 101) |
 | S5b | functions suite 1909/1909 after sweep 1 (baseline 1882; S5b +18, sweep +9), scripts 1049/1049 | green on the pre-rebase merged head (QML 3185, Functions 1909, Rules 129, E2E 121 = 5344/5344); read CI again on the rebased head | 16 listed (104 to 119) | 18 hand mutants of the new helper code, all killed after two added assertions | not yet |
 | S5c | new Node tests 43 (CSG 7, PGD 11, BR 11, S5C 14); functions suite 2033/2033, scripts 1061/1061 | pending: read CI on the PR head | 26 helper mutants (24 killed, 1 redundant guard deleted, 1 equivalent), 15 QML-source mutants all killed | n/a | not yet (checks 120 to 133) |
-| S5d to S5e | not yet | not yet | n/a | n/a | not yet |
+| S5d | new Node tests 22 (NOP 5, EOP 4, SHEET 3, S5D 10); functions suite 2130/2130 (main @ `68afa5c` measured 2108, +22), scripts 1061/1061 (unchanged) | pending: read CI on the PR head | 32 hand mutants: 30 killed (1 real gap found and closed), 2 equivalent, named above | n/a | not yet (checks 134 to 140) |
+| S5e | not yet | not yet | n/a | n/a | not yet |
 
 ## Known gaps stated up front
+- The S5d speed numbers are Node (V8) figures on real helper code with store-shaped hooks; a phone runs QML's V4, slower, and Edit Order's `ListModel.get` is not simulated. Only the ratios carry over; the real figures come from checks 134 to 136 (KNOWN-ISSUES 76).
 - No line coverage number exists for the Felgo view layer.
 - The real device scroll performance with images is only observable on a device (step 35).
 - A completed order's edit has no size check and its real limit is unmeasured (KNOWN-ISSUES 29); the emulator E2E exists since S5a for New Order and for Edit Order on a PENDING order only (KNOWN-ISSUES 34); Edit Order on a COMPLETED order has no E2E.
