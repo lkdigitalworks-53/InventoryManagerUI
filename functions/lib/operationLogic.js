@@ -40,7 +40,10 @@ const MAX_OPS = 200;
 // `receipt` movement explicitly, otherwise the server derives `adjustment`.
 // "addProduct" (AP1, design 2026-11-13-add-product-atomic-operation-design.md D-AP-2) likewise: no per-opType shape
 // check (D-AP-6); the opening-stock `receipt` row is derived from the inventory create like any other create.
-const OP_TYPES = ["completeOrder", "restock", "addProduct"];
+// "createOrder" (NO1, design 2026-11-21-create-order-atomic-operation-design.md D-NO-2): no feed row (a new order writes none
+// today, D-NO-4): a `mint` of the order id and ONE create of the order doc. Unlike the two above it IS shape-checked (D-NO-5b, PR #208
+// review): checkCreateOrder pins the STRUCTURE (those two ops, the bare id token, orderId = id); the order's fields stay the planner's.
+const OP_TYPES = ["completeOrder", "restock", "addProduct", "createOrder"];
 
 // R5b (design 2026-11-12-r5b-activity-in-operation-design.md): the feed row of a restock is written INSIDE the
 // operation. The entity is named here and NOT in gatewayLogic's ENTITY_COLLECTIONS: lockLogic, batchMutationLogic
@@ -213,6 +216,10 @@ function validateOperationRequest(body) {
     // nothing (a mint-only operation is the extreme case), so it is refused, not tolerated.
     for (const name in declaredAt)
         if (!has(used, name)) return { ok: false, status: 400, error: "unused-mint", opIndex: declaredAt[name] };
+    if (opType === "createOrder") {
+        const badOrder = checkCreateOrder(ops);
+        if (badOrder) return badOrder;
+    }
 
     // Write budget: one working doc + one audit entry per op, one marker, and
     // (conservatively) at least one movement row per op on inventory. A mint op is ONE write (its
@@ -229,6 +236,24 @@ function validateOperationRequest(body) {
 
     return { ok: true, requestId: requestId, opType: opType, ops: ops,
              clientTimestamp: (body && body.clientTimestamp) || null };
+}
+
+// Structure of a createOrder (NO1, PR #208 review; D-NO-5b): a `mint` of the order counter, then ONE create of `order/{{bind}}`
+// whose doc names itself. Nothing else may ride along: a second order, a stock delta (it would leave an `adjustment` ledger row under
+// a createOrder audit row), a literal or composite id (the id space is the counter's), a missing or non-object doc (an empty
+// `orders/ORD-nnn` that every list then has to survive). The order's own fields are NOT checked here: the planner (NO2) owns them.
+// `ops` = the accepted ops, in order. Runs after every per-op rule, so the older error codes keep their precedence.
+function checkCreateOrder(ops) {
+    const bad = (index) => ({ ok: false, status: 400, error: "invalid-order", opIndex: index });
+    if (ops.length !== 2) return bad(ops.length < 2 ? 0 : 2);
+    const m = ops[0];
+    if (m.kind !== "mint" || m.counter !== "order") return bad(0);
+    const o = ops[1];
+    if (o.kind !== "mutation" || o.entity !== "order" || o.action !== "create" || o.before !== null) return bad(1);
+    const token = "{{" + m.bind + "}}";
+    if (o.entityId !== token) return bad(1);
+    if (!o.after || Object.prototype.toString.call(o.after) !== "[object Object]" || o.after.orderId !== token) return bad(1);
+    return null;
 }
 
 // Shape rules for the one activity row an operation may create (R5b D-R5b-2/5/6; one row, product and title: PR #197

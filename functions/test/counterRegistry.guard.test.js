@@ -30,6 +30,7 @@ function expectations(year) {
     const sup = R.describe("supplier", year);
     const bat = R.describe("stock_batch", year);
     const prd = R.describe("product", year);
+    const ord = R.describe("order", year);
     return [
         { file: "SupplierStore.qml", label: "supplier counter name", re: new RegExp('mintCounterValue\\("counters/' + sup.counterName + '"') },
         { file: "SupplierStore.qml", label: "supplier id format", re: new RegExp("callback\\(ok \\? \\('" + sup.prefix + "' \\+ String\\(value\\)\\.padStart\\(3, '0'\\)\\)") },
@@ -44,19 +45,25 @@ function expectations(year) {
         { file: "InventoryStore.qml", label: "product counter name (single mint)", re: new RegExp('mintCounterValue\\("counters/' + prd.counterName + '"') },
         { file: "InventoryStore.qml", label: "product counter name (import mint)", re: new RegExp('mintCounterBatch\\("counters/' + prd.counterName + '"') },
         { file: "InventoryStore.qml", label: "product id format (single mint)", re: new RegExp("callback\\(ok \\? \\('" + prd.prefix + "' \\+ String\\(value\\)\\.padStart\\(3, '0'\\)\\)") },
-        { file: "InventoryStore.qml", label: "product id format (import mint)", re: new RegExp("return '" + prd.prefix + "' \\+ String\\(prodStart \\+ mintedProductIdx\\)\\.padStart\\(3, '0'\\)") }
+        { file: "InventoryStore.qml", label: "product id format (import mint)", re: new RegExp("return '" + prd.prefix + "' \\+ String\\(prodStart \\+ mintedProductIdx\\)\\.padStart\\(3, '0'\\)") },
+        // NO1: the order id. Two client minters write the SAME counter doc: the single add (until NO3 moves it into the operation) and the bulk import.
+        { file: "OrdersStore.qml", label: "order counter name (single mint)", re: new RegExp('mintCounterValue\\("counters/' + ord.counterName + '"') },
+        { file: "OrdersStore.qml", label: "order counter name (import mint)", re: new RegExp('mintCounterBatch\\("counters/' + ord.counterName + '"') },
+        { file: "OrdersStore.qml", label: "order id format (single mint)", re: new RegExp("callback\\(ok \\? \\('" + ord.prefix + "' \\+ String\\(value\\)\\.padStart\\(3, '0'\\)\\)") },
+        { file: "OrdersStore.qml", label: "order id format (import mint)", re: new RegExp("return '" + ord.prefix + "' \\+ String\\(start \\+ mintedIdx\\)\\.padStart\\(3, '0'\\)") },
+        { file: "OrdersStore.qml", label: "order doc id = orderId", test: (src) => /Gateway\.recordMutation\("order", changedOrder\.orderId, action \|\| "update"/.test(src) }
     ];
 }
 function failures(sources, year) {
     return expectations(year).filter((e) => !(e.test ? e.test(sources[e.file]) : e.re.test(sources[e.file]))).map((e) => e.file + ": " + e.label);
 }
-const sources = () => ({ "SupplierStore.qml": read("SupplierStore.qml"), "StockBatchStore.qml": read("StockBatchStore.qml"), "InventoryStore.qml": read("InventoryStore.qml") });
+const sources = () => ({ "SupplierStore.qml": read("SupplierStore.qml"), "StockBatchStore.qml": read("StockBatchStore.qml"), "InventoryStore.qml": read("InventoryStore.qml"), "OrdersStore.qml": read("OrdersStore.qml") });
 
-test("guard: the QML stores still mint supplier, batch and product ids exactly as the server registry does", () => {
+test("guard: the QML stores still mint supplier, batch, product and order ids exactly as the server registry does", () => {
     assert.deepEqual(failures(sources(), "2026"), []);
 });
 
-test("guard: a changed counter name, prefix, padding or doc id in QML is caught (the guard itself is mutation-tested: 11 source mutants)", () => {
+test("guard: a changed counter name, prefix, padding or doc id in QML is caught (the guard itself is mutation-tested: 16 source mutants)", () => {
     const base = sources();
     const mutants = [
         ["SupplierStore.qml", "counters/suppliers", "counters/supplier"],
@@ -69,7 +76,12 @@ test("guard: a changed counter name, prefix, padding or doc id in QML is caught 
         ["InventoryStore.qml", "mintCounterValue(\"counters/products\"", "mintCounterValue(\"counters/product\""],
         ["InventoryStore.qml", "mintCounterBatch(\"counters/products\"", "mintCounterBatch(\"counters/items\""],
         ["InventoryStore.qml", "callback(ok ? ('PRD-' + String(value).padStart(3, '0'))", "callback(ok ? ('PROD-' + String(value).padStart(3, '0'))"],
-        ["InventoryStore.qml", "return 'PRD-' + String(prodStart + mintedProductIdx).padStart(3, '0')", "return 'PRD-' + String(prodStart + mintedProductIdx).padStart(4, '0')"]
+        ["InventoryStore.qml", "return 'PRD-' + String(prodStart + mintedProductIdx).padStart(3, '0')", "return 'PRD-' + String(prodStart + mintedProductIdx).padStart(4, '0')"],
+        ["OrdersStore.qml", "mintCounterValue(\"counters/orders\"", "mintCounterValue(\"counters/order\""],
+        ["OrdersStore.qml", "mintCounterBatch(\"counters/orders\"", "mintCounterBatch(\"counters/sales\""],
+        ["OrdersStore.qml", "callback(ok ? ('ORD-' + String(value).padStart(3, '0'))", "callback(ok ? ('ORDER-' + String(value).padStart(3, '0'))"],
+        ["OrdersStore.qml", "return 'ORD-' + String(start + mintedIdx).padStart(3, '0')", "return 'ORD-' + String(start + mintedIdx).padStart(5, '0')"],
+        ["OrdersStore.qml", "Gateway.recordMutation(\"order\", changedOrder.orderId, action || \"update\"", "Gateway.recordMutation(\"order\", changedOrder.customer, action || \"update\""]
     ];
     for (const [file, from, to] of mutants) {
         assert.ok(base[file].indexOf(from) >= 0, "mutant target not found: " + from);
@@ -83,9 +95,11 @@ test("guard: registry facts the client relies on", () => {
     assert.equal(R.describe("supplier", "2026").collection, "suppliers");
     assert.equal(R.describe("stock_batch", "2026").collection, "stock_batches");
     assert.equal(R.describe("product", "2026").collection, "inventory");
+    assert.equal(R.describe("order", "2026").collection, "orders");
     // gatewayLogic's entity map is where the client's Gateway.recordMutation("supplier"/"stock_batch") lands
     const { ENTITY_COLLECTIONS } = require("../lib/gatewayLogic");
     assert.equal(ENTITY_COLLECTIONS.supplier, R.describe("supplier", "2026").collection);
     assert.equal(ENTITY_COLLECTIONS.stock_batch, R.describe("stock_batch", "2026").collection);
     assert.equal(ENTITY_COLLECTIONS.inventory, R.describe("product", "2026").collection);
+    assert.equal(ENTITY_COLLECTIONS.order, R.describe("order", "2026").collection);
 });

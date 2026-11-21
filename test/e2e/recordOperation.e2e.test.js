@@ -583,8 +583,8 @@ function trackResult(r) {
 }
 
 test.after(async () => {
-    for (const ref of await db.collection(T + "stock_movements").listDocuments()) if (ref.id.startsWith("restock:opE2E") || ref.id.startsWith("addProduct:opE2E")) await ref.delete();
-    for (const ref of await db.collection(T + "audit_log").listDocuments()) if (ref.id.startsWith("restock:opE2E") || ref.id.startsWith("addProduct:opE2E")) await ref.delete();
+    for (const ref of await db.collection(T + "stock_movements").listDocuments()) if (ref.id.startsWith("restock:opE2E") || ref.id.startsWith("addProduct:opE2E") || ref.id.startsWith("createOrder:opE2E")) await ref.delete();
+    for (const ref of await db.collection(T + "audit_log").listDocuments()) if (ref.id.startsWith("restock:opE2E") || ref.id.startsWith("addProduct:opE2E") || ref.id.startsWith("createOrder:opE2E")) await ref.delete();
 });
 
 test("mint: a restock operation takes its batch id from the server counter, lands every doc, and a replay burns nothing", async () => {
@@ -1014,5 +1014,97 @@ test("AP1: the feed row is tied to the op type and to a product the operation cr
         }
     } finally {
         await wipeAddProduct(null, productBefore, batchBefore);
+    }
+});
+
+// ---- NO1: a new order as ONE operation, against real Firestore (design 2026-11-21-create-order-atomic-operation-design.md) ----
+// Server half only: nothing in the app sends this yet. Each case records the order counter doc and restores it, and deletes the order it minted.
+
+const ORDER_COUNTER = "counters/orders";
+function createOrderOp(requestId) {
+    return { requestId: requestId, opType: "createOrder", clientTimestamp: "2026-11-21T10:00:00.000Z", ops: [
+        { kind: "mint", counter: "order", bind: "o" },
+        { kind: "mutation", entity: "order", entityId: "{{o}}", action: "create", before: null,
+          after: { orderId: "{{o}}", customer: "opE2E Buyer", items: 1, subtotal: 10, discount: 0, tax: 0, taxBreakdown: [], total: 10,
+                   status: "pending", date: "2026-11-21", notes: "", email: "", phone: "", orderChannel: "", staffId: "",
+                   updatedAt: "2026-11-21T10:00:00.000Z", adjustments: [], products: [] } }
+    ] };
+}
+async function wipeCreateOrder(res, counterBefore) {
+    if (res && res.body && Array.isArray(res.body.results)) {
+        for (const e of res.body.results) if (e && e.kind === "mint" && e.counter === "order") await db.doc(T + "orders/" + e.id).delete();
+    }
+    if (counterBefore === null) await db.doc(T + ORDER_COUNTER).delete(); else await db.doc(T + ORDER_COUNTER).set(counterBefore);
+}
+
+test("NO1: a createOrder operation takes its order id from the server, lands the order and ONE audit row, writes no ledger or feed row; a replay adds nothing", async () => {
+    const before = await read(ORDER_COUNTER);
+    let r = null;
+    try {
+        r = await post(createOrderOp("createOrder:opE2E-no1"));
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        const mint = r.body.results[0];
+        assert.deepEqual([mint.kind, mint.counter, mint.bind], ["mint", "order", "o"]);
+        assert.match(mint.id, /^ORD-\d{3,}$/);
+        const id = mint.id;
+        const stored = await read("orders/" + id);
+        assert.deepEqual([stored.orderId, stored.customer, stored.status], [id, "opE2E Buyer", "pending"]);
+        const audit = await read("audit_log/createOrder:opE2E-no1~1");
+        assert.deepEqual([audit.action, audit.entity, audit.entityId, audit.opType], ["create", "order", id, "createOrder"]);
+        assert.equal(await read("stock_movements/createOrder:opE2E-no1~1~m0"), null, "an order moves no stock");
+        assert.equal(await read("activity_log/act-" + id), null, "and writes no feed row");
+        const after = await read(ORDER_COUNTER);
+        assert.equal(after.value, Number(id.substring(4)));
+
+        const again = await post(createOrderOp("createOrder:opE2E-no1"));
+        assert.equal(again.status, 200);
+        assert.equal(again.body.idempotentReplay, true);
+        assert.equal(again.body.results[0].id, id, "a replay answers the first id");
+        assert.deepEqual(await read(ORDER_COUNTER), after, "a replay burns no number");
+    } finally {
+        await wipeCreateOrder(r, before);
+    }
+});
+
+test("NO1: a createOrder with anything riding along (an extra row, a stock delta) is 400 invalid-order at the first extra op, burns no number and writes nothing; the valid request after it succeeds (PR #208 review: the structure is checked)", async () => {
+    const before = await read(ORDER_COUNTER);
+    let ok = null;
+    try {
+        const extras = [
+            { kind: "mutation", entity: "transaction", entityId: "opE2E-no-extra", action: "create", before: null, after: { txId: "opE2E-no-extra", kind: "created" } },
+            { kind: "delta", entity: "inventory", entityId: "opE2E-no-extra", deltas: { stock: -1 }, floors: { stock: 0 } }
+        ];
+        for (const extra of extras) {
+            const body = createOrderOp("createOrder:opE2E-no2");
+            body.ops.push(extra);
+            const r = await post(body);
+            assert.equal(r.status, 400, JSON.stringify(r.body));
+            assert.equal(r.body.error, "invalid-order");
+            assert.equal(r.body.opIndex, 2);
+            assert.deepEqual(await read(ORDER_COUNTER), before, "no order number was burned");
+            assert.equal(await read("audit_log/createOrder:opE2E-no2"), null, "no marker");
+            assert.equal(await read("transactions/opE2E-no-extra"), null, "the extra row was not written");
+        }
+        ok = await post(createOrderOp("createOrder:opE2E-no2"));
+        assert.equal(ok.status, 200, JSON.stringify(ok.body));
+        assert.equal((await read(ORDER_COUNTER)).value, Number(ok.body.results[0].id.substring(4)));
+    } finally {
+        await wipeCreateOrder(ok, before);
+    }
+});
+
+test("NO1: the minted id is bound to the ORDER space: an inventory create named {{o}} is 400 placeholder-entity-mismatch, nothing written, no number burned", async () => {
+    const before = await read(ORDER_COUNTER);
+    try {
+        const body = createOrderOp("createOrder:opE2E-no3");
+        body.ops[1].entity = "inventory";
+        const r = await post(body);
+        assert.equal(r.status, 400, JSON.stringify(r.body));
+        assert.equal(r.body.error, "placeholder-entity-mismatch");
+        assert.equal(r.body.opIndex, 1);
+        assert.equal(await read("audit_log/createOrder:opE2E-no3"), null);
+        assert.deepEqual(await read(ORDER_COUNTER), before);
+    } finally {
+        await wipeCreateOrder(null, before);
     }
 });
