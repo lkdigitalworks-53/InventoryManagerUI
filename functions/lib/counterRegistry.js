@@ -8,7 +8,7 @@
 // (FirebaseService.mintCounterValue), so the formats below must match the stores byte for byte;
 // test/counterRegistry.guard.test.js reads the QML sources and fails on drift.
 //
-// Only the counters a consumer needs are registered (M1): restock (supplier, stock_batch), add product (product).
+// Only the counters a consumer needs are registered (M1): restock (supplier, stock_batch), add product (product), new order (order).
 // A later consumer adds one entry here and one row in the guard test. Pure: no Firebase dependency.
 
 // M3: the app is INR / en-IN throughout, so the year in a batch id is the calendar year in India.
@@ -42,6 +42,14 @@ const REGISTRY = {
         collection: "inventory",
         counterName: function () { return "products"; },
         prefix: function () { return "PRD-"; }
+    },
+    // NO1 (design 2026-11-21-create-order-atomic-operation-design.md D-NO-3): OrdersStore.nextOrderId (and the bulk import's
+    // mintCounterBatch) mint `counters/orders` and write 'ORD-' + the number padded to 3 digits. The id is the orders doc id.
+    order: {
+        entity: "order",
+        collection: "orders",
+        counterName: function () { return "orders"; },
+        prefix: function () { return "ORD-"; }
     }
 };
 

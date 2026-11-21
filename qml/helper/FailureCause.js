@@ -29,6 +29,8 @@ var _BUG_CODES = {
     "placeholder-entity-mismatch": true, "movement-qty-mismatch": true,
     // R5b: the activity row of a restock (operationLogic.js checkActivityOp)
     "invalid-activity": true, "activity-stock-missing": true,
+    // NO1: the structure of the new-order operation (operationLogic.js checkCreateOrder)
+    "invalid-order": true,
     // delta / movement / mutation validators (functions/lib/gatewayLogic.js, movementLogic.js): a request
     // the client built wrongly. functions/test/failureCauseCodes.test.js fails when the server gains a
     // code that is neither a person-facing cause below nor listed here.
