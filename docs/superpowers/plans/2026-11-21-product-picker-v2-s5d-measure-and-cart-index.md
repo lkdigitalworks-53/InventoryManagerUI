@@ -66,6 +66,8 @@ A second cost found while measuring and NOT fixed: the per-product scan of the o
 ## Built
 Code `73ae111`: `NewOrderPicker.qtyIndex` / `qtyFromIndex` / `cartQty` / `availableFor`, `EditOrderPicker.scopeOf` / `heldAtCompletion` / `ceilingFor` / `availableFor`, `PickerSheetModel.build` scope, both dialogs, `scripts/bench/pickerBench.cjs`. 22 new Node tests (NOP-38..42, EOP-45..48, SHEET-45..47, S5D-01..10), three twins regenerated, NOW-03, EOW-03, EOW-11 updated on purpose. Functions suite 2130/2130 (main 2108), scripts 1061/1061. 32 hand mutants: 30 killed, 2 equivalent (NP-10, PM-5), 1 real gap found and closed (NP-3). CI NOT read yet.
 
+PR #210 sweep (2026-11-21): one fix, F1 (KNOWN-ISSUES 90). `qtyIndex` now also keeps `rows` and `field`, and `NewOrderPicker.indexFits` makes `cartQty` and `heldAtCompletion` trust an index only for those very rows and that key; any other index scans. This is a guard on a per-build index, not the identity cache D1 rejected: nothing is kept between builds. NOP-43 new, NOP-41, EOP-45, EOP-46 rewritten, twins regenerated, 7 hand mutants killed. Functions 2172/2172, scripts 1061/1061.
+
 ## Open for Taher (defaults taken)
 S5d-D1 (scope with fallback, not an identity cache), S5d-D5 (no delta rebuild until a device asks), the 150 ms debounce kept, `categories` not cached. Veto any of them in the PR.
 

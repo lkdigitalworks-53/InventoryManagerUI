@@ -73,7 +73,12 @@ TestCase {
         return function() { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
     }
     // Reads a scope index through the public Edit API (an index answers before `original` is looked at).
-    function idxQty(index, id) { return EP.heldAtCompletion([], id, index); }
+    // What an index built by scopeOf holds for a product (its sums), read directly: EP.heldAtCompletion now trusts an index only
+    // for the rows it was made from (PR #210 sweep, F1), so it is not a way to read a bare index any more.
+    function idxQty(index, id) {
+        var k = "k:" + id;
+        return (index && index.sums && Object.prototype.hasOwnProperty.call(index.sums, k)) ? index.sums[k] : 0;
+    }
 
     function test_EOP_01_linesof_one_picker_line_per_row_in_the_same_order_quantity_r() {
         const rows = [row("A", 2, { discountType: "percent", discountValue: 12 }), null, row("B", 5, { discountType: "weird", discountValue: undefined }), 7];
@@ -645,6 +650,9 @@ TestCase {
         eq(idxQty(done.held, "A"), 4);
         eq(idxQty(done.held, "C"), 2.5);
         eq(idxQty(done.held, "B"), 0);
+        // each index remembers the rows and the key it was made from (the same arrays, not copies)
+        ok(done.cart.rows === lines && done.cart.field === "qty", "cart index: wrong source");
+        ok(done.held.rows === original && done.held.field === "quantity", "held index: wrong source");
         for (const status of ["pending", "processing", "cancelled", "", undefined]) eq(EP.scopeOf(lines, ctx(status, original)).held, null);
         eq(idxQty(EP.scopeOf(lines, ctx("pending")).cart, "A"), 3);
         for (const junk of [undefined, null, 5, "x", {}, { status: "completed" }, { status: "completed", original: "x" }]) {
@@ -673,14 +681,24 @@ TestCase {
         const scope = EP.scopeOf(lines, c);
         eq(EP.availableFor(prod("A", 5), lines, c, scope), 6);
         eq(EP.availableFor(prod("D", 3), lines, c, scope), 5);
-        eq(EP.heldAtCompletion([], "A", scope.held), 4);
-        // the scope is read, not the lines or the original it was made from: it answers when they are empty or different
-        eq(EP.ceilingFor("A", prod("A", 5), ctx("completed", []), scope), 9);
-        eq(EP.ceilingFor("A", prod("A", 5), ctx("completed", [orig("A", 100, false, 0)]), scope), 9);
-        eq(EP.availableFor(prod("A", 5), [], ctx("pending"), scope), 2);
-        eq(EP.availableFor(prod("A", 5), [], ctx("pending")), 5);
-        eq(EP.availableFor(prod("A", 5), [], ctx("completed", []), scope), 6);
-        eq(EP.availableFor(prod("A", 5), [], ctx("completed", []), { cart: EP.scopeOf([], ctx("pending")).cart, held: scope.held }), 9);
+        eq(EP.heldAtCompletion(original, "A", scope.held), 4);
+        // a scope answers only for the very lines and original it was made from: anything else is scanned (PR #210 sweep, F1)
+        eq(EP.heldAtCompletion([], "A", scope.held), 0);
+        eq(EP.heldAtCompletion([orig("A", 100, false, 0)], "A", scope.held), 100);
+        eq(EP.ceilingFor("A", prod("A", 5), ctx("completed", []), scope), 5);
+        eq(EP.ceilingFor("A", prod("A", 5), ctx("completed", [orig("A", 100, false, 0)]), scope), 105);
+        eq(EP.availableFor(prod("A", 5), [], ctx("pending"), scope), 5);
+        eq(EP.availableFor(prod("A", 5), [], ctx("completed", []), scope), 5);
+        eq(EP.availableFor(prod("A", 5), [], ctx("completed", []), { cart: EP.scopeOf([], ctx("pending")).cart, held: scope.held }), 5);
+        // the cart index of a scope never answers for the held key (and the other way round): a swap is refused, not trusted
+        eq(EP.heldAtCompletion(original, "A", scope.cart), 4);
+        // made from these exact arrays, the scope is read and they are not read again: emptied in place AFTER, it still answers
+        const ls = [line("A", 2), line("A", 1)], org = [orig("A", 3, false, 0), orig("A", 1, false, 0)];
+        const c2 = ctx("completed", org), sc = EP.scopeOf(ls, c2);
+        ls.length = 0; org.length = 0;
+        eq(EP.ceilingFor("A", prod("A", 5), c2, sc), 9);
+        eq(EP.availableFor(prod("A", 5), ls, c2, sc), 6);
+        eq(EP.availableFor(prod("A", 5), ls, ctx("pending"), sc), 2);
     }
 
     function test_EOP_47_a_scope_with_no_held_index_on_a_completed_order_falls_back_t() {

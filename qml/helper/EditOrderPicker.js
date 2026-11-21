@@ -56,7 +56,7 @@ function _originalOf(ctx, productId) { return originalOf(ctx && ctx.original, pr
 // sweep, F1.)
 function heldAtCompletion(original, productId, index) {
     if (_blankId(productId)) return 0
-    var fast = NP.qtyFromIndex(index, productId)    // an index of `original` (scopeOf), when the sheet is building
+    var fast = NP.indexFits(index, original, "quantity") ? NP.qtyFromIndex(index, productId) : null    // an index of THIS `original` (scopeOf), when the sheet is building
     if (fast !== null) return fast
     if (!Array.isArray(original)) return 0
     var id = String(productId)
