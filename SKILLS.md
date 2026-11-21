@@ -5256,3 +5256,14 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 
 **The check:** `grep -n "dp(28)" qml/pages/*Order*`: no stepper hit. `node --test functions/test/pickerS5cWiring.test.js`: green. On a device: checks 122 to 126 (Back with and without a draft) and 131 (TalkBack toggle).
 
+## Skill 180: Before a compliance document says "the law says", read the primary text, then check each claim against the code it describes
+
+1. Find the primary text (rule, section, press release, circular), not a summary. An official site can still hold the wrong version: CBIC's archive page for the accounts rules is an old draft whose sub-rule numbers are shifted by one. Cross-check the number you cite against two sources, and say which copy you read.
+2. A claim about "what is in force" needs the date and the instrument. A Council recommendation is not law until an Act amendment, notification or circular exists (the 8 October 2026 free-sample relief is such a case); say "recommendation" and check again later.
+3. Check every statement about what the app does against the code before keeping it. The CA-4 draft said a damaged return leaves phantom stock; the code (`DataModel.qml`, `restock = condition !== "damaged"`) shows it leaves none, and the true gap was different.
+4. Rank by exposure, not by order of the questions. The unclassified disappearance of goods (section 35(6)) mattered more than the layout questions the draft called blocking.
+5. Mark what was not re-verified ("from my knowledge") and what still needs a human professional; never present a research answer as a CA's advice.
+6. Docs-only change: no tests apply, but run `node .github/scripts/skills-index.js --write` and the doc guard tests, and say so in the report.
+
+**The check:** `grep -c "_(blank)_" docs/superpowers/CA-QUESTIONS.md` is 0, every answer ends with a verdict and a confidence, and `node .github/scripts/skills-index.js` reports no drift.
+

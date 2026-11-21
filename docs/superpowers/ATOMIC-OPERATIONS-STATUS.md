@@ -167,3 +167,8 @@ grep -rn "ActivityLog.record(" qml --include=*.qml | grep -v ActivityLog.qml | w
 - **Gap lines:** G1 unchanged (three op types on the client); step 2 is complete except AP3c below.
 - **Next (arc order):** AP4 (Taher's device pass of the whole add arc, test plan steps 1 to 21 plus the AP3a plan), then step 3 (new order, `_tryAdjustOrder`, imported completion, reverse), step 4 (import chunking; G5 and G9 need designs). Small follow-ups found: Edit Product sheet has the same lenient parsing (KNOWN-ISSUES 62), seed `SupplierStore` in two e2e suites (KNOWN-ISSUES 54), delete `nextProductId` with its pin (50). Two questions wait for Taher (KNOWN-ISSUES 61): fractional stock, selling below cost.
 
+## 18. Update 2026-11-21 (P1: CA-QUESTIONS researched and answered; docs only)
+- Branch `docs/2026-11-21-ca-questions-review`. No code changed. `docs/superpowers/CA-QUESTIONS.md` now holds a research answer, verdict, confidence and sources for each of the 17 questions, a correction to CA-4, two new questions (CA-18, CA-19), a product follow-up table F1 to F13 and a source list. It is not a CA's advice; items marked "Real CA still needed: Yes" should go to one.
+- **Effect on the P1 queue:** S2e-2 and S4c are no longer parked on the CA. S2e-2 should carry F1 (reason on a negative adjustment), F2 (delete with stock), F3 (damaged return = `sales_return` + `write_off`) and F5 (picker help text); `opening` (F4) and the register layout refinements (F6) come before S4c. KNOWN-ISSUES 74 to 79.
+- **Next:** Taher decides F1 to F4 (see the session report), then S2e-2 as its own branch.
+
