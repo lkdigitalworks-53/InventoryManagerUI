@@ -21,7 +21,7 @@ Out (documented in KNOWN-ISSUES): emulator e2e QML-to-endpoint case, date-picker
 - [x] 3. Wiring tests (63, incl. page function bodies run in a vm + 31 page mutants) + QML twin tests/tst_StockRegisterPage.qml; SRS-04 dormancy replaced by SRW-13; sessionRecheckWiring pin extended for the new overlay. Whole .github suite 1193 green.
 - [x] 4. Test plan `test-plans/2026-11-20-p1-s4b2-register-page-test-plan.md` + README row (device steps 1..22).
 - [x] 5. Docs: design section 8, KNOWN-ISSUES (S4b-2 section), ATOMIC-OPERATIONS-STATUS 13, README, AGENTS, Skill 178 + SKILLS-INDEX; row extracted to `qml/components/StockRegisterRow.qml` per qt-qml skill.
-- [ ] 6. Push, open PR, read CI on the new head, fix reds.
+- [x] 6. Pushed, PR #209 opened, CI on be60ef5: QML, Functions, Rules, E2E all green (summary comment job last checked in progress).
 
-## NEXT (if this session stops)
-Continue at the first unchecked step. Each commit is independent. Do not force-push.
+## NEXT
+Human review of PR #209 and the 22-step device pass in the test plan. Then S4b-3 (emulator e2e QML to endpoint, date picker for custom range, optional header split), then S3 or what the CA answers unblock. Do not force-push.
