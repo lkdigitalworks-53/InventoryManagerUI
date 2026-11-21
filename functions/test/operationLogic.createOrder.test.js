@@ -37,6 +37,13 @@ async function run(db, b, extra) {
         ops: v.ops, clientTimestamp: v.clientTimestamp, serverTimestamp: TS, now: NOW }, extra || {}));
 }
 const withCounter = (value, more) => strictDb(Object.assign({ [T + "counters/orders"]: { value } }, more || {}));
+// The engine rolls back whatever the validator lets through (defence in depth, PR #208 review: checkCreateOrder now refuses extra ops).
+// Validated as a completeOrder (no shape rules), applied as a createOrder: proves the APPLY layer on its own.
+async function runUnchecked(db, ops, id) {
+    const v = validated(body(ops, id, "completeOrder"));
+    return OL.applyOperation(db, { tenantId: "t1", actorUid: "u-actor", actorRole: "staff", requestId: "createOrder:dev1-" + (id || "a"),
+        opType: "createOrder", ops: v.ops, clientTimestamp: "CT", serverTimestamp: TS, now: NOW });
+}
 
 // ------------------------------------------------------------------ registry and op type
 
@@ -113,12 +120,18 @@ test("V-7 braces left in an id are never legal; an undeclared name is refused, a
     assert.equal(invalid(body([create("order", "{{ord}}", orderDoc()), mint("order", "ord")])).error, "unbound-placeholder");
 });
 
-test("K-4 DOCUMENTED GAP (D-NO-5): a placeholder INSIDE a longer id is accepted (only an id that is exactly one token is entity-checked); the planner always sends the bare token", async () => {
-    const db = withCounter(12);
-    validated(body([mint("order", "ord"), create("order", "X-{{ord}}", orderDoc())]));
-    const r = await run(db, body([mint("order", "ord"), create("order", "X-{{ord}}", orderDoc())]));
-    assert.equal(r.ok, true);
-    assert.ok(db.store[T + "orders/X-ORD-013"]);
+test("S-1 (D-NO-5b, was gap K-4) the order id is the BARE token: a composite id, a literal id and a missing mint are invalid-order", () => {
+    const composite = invalid(body([mint("order", "ord"), create("order", "X-{{ord}}", orderDoc({ orderId: "X-{{ord}}" }))]));
+    assert.deepEqual([composite.error, composite.opIndex], ["invalid-order", 1]);
+    const tail = invalid(body([mint("order", "ord"), create("order", "{{ord}}-1", orderDoc({ orderId: "{{ord}}-1" }))]));
+    assert.deepEqual([tail.error, tail.opIndex], ["invalid-order", 1]);
+    // the id alone is wrong while the doc names the bare token (a different line of the check than the doc's own orderId)
+    for (const id of ["X-{{ord}}", "{{ord}}-1", " {{ord}}"]) {
+        const v = invalid(body([mint("order", "ord"), create("order", id, orderDoc({ orderId: "{{ord}}" }))]));
+        assert.deepEqual([v.error, v.opIndex], ["invalid-order", 1], id);
+    }
+    const literal = invalid(body([create("order", "ORD-500", orderDoc({ orderId: "ORD-500" }))]));
+    assert.deepEqual([literal.error, literal.opIndex], ["invalid-order", 0], "no mint: the id space is the counter's");
 });
 
 test("V-8 mint rules hold: duplicate bind name, bad bind name, unknown counter, too many mints", () => {
@@ -294,8 +307,7 @@ test("B-11 a client-style mint and the server mint on ONE counter doc never hand
 test("B-12 ATOMIC: a rejected operation leaves NO trace and burns no number; the retry after the fix gets the SAME id", async () => {
     const blocker = { txId: "tx-x" };
     const db = withCounter(12, { [T + "transactions/tx-x"]: blocker });
-    const b = body(orderOps().concat([create("transaction", "tx-x", { txId: "tx-x" })]));
-    const r = await run(db, b);
+    const r = await runUnchecked(db, orderOps().concat([create("transaction", "tx-x", { txId: "tx-x" })]));
     assert.equal(r.ok, false);
     assert.equal(r.status, 409);
     assert.equal(r.error, "conflict");
@@ -304,7 +316,7 @@ test("B-12 ATOMIC: a rejected operation leaves NO trace and burns no number; the
     assert.deepEqual(db.store[T + "counters/orders"], { value: 12 });
     assert.equal(db.store[T + "orders/ORD-013"], undefined);
     delete db.store[T + "transactions/tx-x"];
-    const retry = await run(db, b);
+    const retry = await run(db, body(orderOps()));
     assert.equal(retry.ok, true, JSON.stringify(retry));
     assert.equal(retry.results[0].id, "ORD-013");
 });
@@ -312,7 +324,7 @@ test("B-12 ATOMIC: a rejected operation leaves NO trace and burns no number; the
 test("B-13 a literal order id that already exists is a conflict (409), never an overwrite", async () => {
     const old = { orderId: "ORD-005", customer: "Old" };
     const db = strictDb({ [T + "orders/ORD-005"]: old });
-    const r = await run(db, body([create("order", "ORD-005", orderDoc({ orderId: "ORD-005" }))]));
+    const r = await runUnchecked(db, [create("order", "ORD-005", orderDoc({ orderId: "ORD-005" }))]);
     assert.equal(r.status, 409);
     assert.equal(db.writes.length, 0);
     assert.deepEqual(db.store[T + "orders/ORD-005"], old);
@@ -342,16 +354,63 @@ test("B-16 typed text with braces inside an order doc is substituted by the engi
 
 // ------------------------------------------------------------------ documented gaps and source pins
 
-test("K-1 DOCUMENTED GAP (D-NO-5): the server checks no order shape; an empty order doc is accepted (the planner is the shape authority, as for addProduct)", async () => {
-    const db = withCounter(12);
-    const r = await run(db, body([mint("order", "ord"), create("order", "{{ord}}", { x: 1 })]));
-    assert.equal(r.ok, true);
-    assert.deepEqual(db.store[T + "orders/ORD-013"], { x: 1 });
+test("S-2 (D-NO-5b, was gap K-1) the order doc must be a plain object that names itself: a missing, null, array, string or number doc, no orderId, another orderId", () => {
+    const bad = (after) => invalid(body([mint("order", "ord"), { kind: "mutation", entity: "order", entityId: "{{ord}}", action: "create", before: null, after }]));
+    for (const after of [undefined, null, [], [1], "x", 7, true, {}, { x: 1 }, { orderId: "ORD-001" }, { orderId: "{{other}}" }, { orderId: 1 }, { orderId: "" }, { orderid: "{{ord}}" }]) {
+        const v = bad(after);
+        assert.deepEqual([v.error, v.opIndex], ["invalid-order", 1], JSON.stringify(after));
+    }
+    // the fields themselves stay the planner's: a bare doc that only names itself is accepted
+    validated(body([mint("order", "ord"), create("order", "{{ord}}", { orderId: "{{ord}}" })]));
 });
 
-test("K-3 DOCUMENTED GAP (D-NO-5): a createOrder may carry stock deltas; the server does not forbid them (every op is still individually validated)", () => {
+test("S-3 (D-NO-5b, was gap K-3) nothing rides along: a stock delta, a second order, a second mint, a transaction row are invalid-order at the first extra op", () => {
     const delta = { kind: "delta", entity: "inventory", entityId: "PRD-001", deltas: { stock: -1 }, floors: { stock: 0 } };
-    assert.equal(OL.validateOperationRequest(body(orderOps().concat([delta]))).ok, true);
+    const v1 = invalid(body(orderOps().concat([delta])));
+    assert.deepEqual([v1.error, v1.opIndex], ["invalid-order", 2]);
+    const v2 = invalid(body(orderOps().concat([create("transaction", "tx-1", { txId: "tx-1" })])));
+    assert.deepEqual([v2.error, v2.opIndex], ["invalid-order", 2]);
+    const v3 = invalid(body([mint("order", "a"), mint("order", "b"), create("order", "{{a}}", orderDoc({ orderId: "{{a}}" })), create("order", "{{b}}", orderDoc({ orderId: "{{b}}" }))]));
+    assert.equal(v3.error, "invalid-order");
+    const v4 = invalid(body([delta, mint("order", "ord"), create("order", "{{ord}}", orderDoc())]));
+    assert.equal(v4.error, "invalid-order");
+});
+
+test("S-4 (D-NO-5b) the first op must be the ORDER mint and the second a create with no before: another counter, a before doc, a non-create are invalid-order or placeholder errors, never accepted", () => {
+    const other = invalid(body([mint("supplier", "s"), create("supplier", "{{s}}", { supplierId: "{{s}}" })]));
+    assert.deepEqual([other.error, other.opIndex], ["invalid-order", 0], "another counter's operation is not a createOrder");
+    const withBefore = invalid(body([mint("order", "ord"), { kind: "mutation", entity: "order", entityId: "{{ord}}", action: "create", before: { a: 1 }, after: orderDoc() }]));
+    assert.deepEqual([withBefore.error, withBefore.opIndex], ["invalid-order", 1]);
+    assert.equal(invalid(body([mint("order", "ord"), create("order", "{{ord}}", orderDoc()), mint("order", "x")])).error, "unused-mint", "the older rule keeps its precedence");
+});
+
+test("S-5 (D-NO-5b) monkey: 1500 corruptions of a valid operation; a request is accepted ONLY when the independent oracle agrees it is exactly mint + one bare-token order create", () => {
+    let seed = 20261121;
+    const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    const junk = [undefined, null, 0, 7, "", "x", "{{ord}}", "ORD-001", "{{other}}", [], {}, { orderId: "{{ord}}" }, true];
+    const oracle = (ops) => Array.isArray(ops) && ops.length === 2 && ops[0] && ops[1]
+        && ops[0].kind === "mint" && ops[0].counter === "order" && typeof ops[0].bind === "string"
+        && ops[1].kind === "mutation" && ops[1].entity === "order" && ops[1].action === "create" && (ops[1].before === null || ops[1].before === undefined)
+        && ops[1].entityId === "{{" + ops[0].bind + "}}" && ops[1].after && typeof ops[1].after === "object" && !Array.isArray(ops[1].after)
+        && ops[1].after.orderId === ops[1].entityId;
+    let accepted = 0;
+    for (let n = 0; n < 1500; n++) {
+        const ops = JSON.parse(JSON.stringify(orderOps()));
+        for (let k = 0, hits = 1 + rnd(3); k < hits; k++) {
+            const which = rnd(6);
+            const op = ops[rnd(ops.length)];
+            if (which === 0) op[["kind", "counter", "bind", "entity", "entityId", "action", "before", "after"][rnd(8)]] = junk[rnd(junk.length)];
+            else if (which === 1 && ops[1].after && typeof ops[1].after === "object") ops[1].after.orderId = junk[rnd(junk.length)];
+            else if (which === 2) ops.push(JSON.parse(JSON.stringify(ops[rnd(ops.length)])));
+            else if (which === 3) ops.splice(rnd(ops.length), 1);
+            else if (which === 4) ops.reverse();
+            else ops[1].after = junk[rnd(junk.length)];
+        }
+        let v;
+        assert.doesNotThrow(() => { v = OL.validateOperationRequest(body(ops, "m" + n)); }, JSON.stringify(ops));
+        if (v.ok) { accepted++; assert.equal(!!oracle(ops), true, "accepted but not a valid createOrder: " + JSON.stringify(ops)); }
+    }
+    assert.ok(accepted > 0, "the monkey must also hit accepted shapes, or the oracle check proves nothing");
 });
 
 test("G-1 dormancy: no QML sends the createOrder operation yet (NO3 replaces this guard with a wiring guard)", () => {

@@ -54,8 +54,9 @@ const ENDPOINTS = [
     { label: "recordMutation", make: sendMutation },
     { label: "recordMutationsBatch", make: sendBatch },
     { label: "recordOperation (completeOrder)", make: sendOperation("completeOrder") },
-    { label: "recordOperation (restock)", make: sendOperation("restock") },
-    { label: "recordOperation (createOrder)", make: sendOperation("createOrder") }
+    { label: "recordOperation (restock)", make: sendOperation("restock") }
+    // createOrder is not in this grid: since the PR #208 review its structure is fixed (a mint and ONE order create), so it cannot carry
+    // a staff delete or a tombstone at all. The two tests at the end of this file pin that, for every role.
 ];
 
 async function call(req) {
@@ -141,6 +142,23 @@ test("REGRESSION (NO1): a staff-role phone can create an order through createOrd
                   { kind: "mutation", entity: "order", entityId: "{{o}}", action: "create", before: null, after: { orderId: "{{o}}" } }] } });
         assert.equal(res.statusCode, 200, role + " " + JSON.stringify(jsonBody(res)));
         assert.equal(calls.operation, 1, role);
+    }
+});
+
+test("NO1 review: a createOrder that carries a staff delete or a removed_staff tombstone is refused for EVERY role (400 invalid-order, nothing applied): the op type cannot smuggle the owner-only writes", async () => {
+    const order = [{ kind: "mint", counter: "order", bind: "o" },
+                   { kind: "mutation", entity: "order", entityId: "{{o}}", action: "create", before: null, after: { orderId: "{{o}}" } }];
+    for (const [entity, action] of SENSITIVE) {
+        for (const role of ROLES) {
+            reset(role);
+            const extra = Object.assign({ kind: "mutation", entity: entity, entityId: "X1", action: action }, docs(action));
+            const res = await call({ handler: "recordOperation", counter: "operation", body: { env: "test", requestId: "createOrder:smuggle" + (++seq), opType: "createOrder", clientTimestamp: 1, ops: order.concat([extra]) } });
+            const label = entity + ":" + action + " as " + role + " -> " + JSON.stringify(jsonBody(res));
+            assert.equal(res.statusCode, 400, label);
+            assert.equal(jsonBody(res).error, "invalid-order", label);
+            assert.equal(jsonBody(res).opIndex, 2, label);
+            assert.equal(calls.operation, 0, label);
+        }
     }
 });
 

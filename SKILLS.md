@@ -5258,17 +5258,18 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 
 ## Skill 180: Adding a server operation type is three edits and a lot of pins; read what the old path really writes before you design the op
 
-**Why:** NO1 (new order as one operation) was two code lines (`OP_TYPES`, one registry entry) and 39 tests. The work is in proving what the two lines do NOT do: no ledger row, no feed row, no shape check, no invented id format.
+**Why:** NO1 (new order as one operation) was two code lines (`OP_TYPES`, one registry entry) and 39 tests; the PR #208 review then added a third, `checkCreateOrder`. The work is in proving what the lines do NOT do: no ledger row, no feed row, no invented id format, and (after review) nothing riding along.
 
 **Rules:**
 1. Before listing an operation's ops, read the old path to the last write. `addOrder` writes one doc and no feed row, so the operation has one create and no activity op; copying the add-product shape would have invented a feed row nobody asked for.
 2. A new counter registry entry needs a drift-guard row for EVERY client minter of that counter (single add AND bulk import), plus one source mutant per row. The guard guards nothing until a mutant of its own source is caught.
 3. A test that used the new key as the example of an UNregistered one must flip to a key that is still unregistered (`customer`, `staff`), and the commit says so.
 4. If a seed lists a collection, pin that a healthy counter never lists (`strictDb.listCalls == []`) and that a collision lists once. Cost at scale is a behaviour, not a comment.
-5. Pin what the server does NOT check as named tests (K-1, K-3, K-4) so the planner slice knows what it owns.
+5. An op type ANY role may send, with ONE fixed structure, gets a server structure check (op count, op kinds, the bare id token, the doc naming itself) and its own error code in `FailureCause._BUG_CODES`; the fields stay the planner's. NO1 first shipped it lax ("the planner is the shape authority") and the review found an empty `orders/ORD-nnn`, a stock delta and an owner-only write could all ride along. Pin only FIELD-level gaps as named K tests.
 6. A new op type that any role may send needs a role-grid row AND a four-role regression; the owner-only gate must not be widened by accident.
 7. Dormancy guard: walk `qml/` for the op name; NO3 replaces it with a wiring guard.
 8. Hand mutants: back up the sources, apply one change, run the related files, restore, repeat; check `git diff --stat lib` shows only the intended change at the end.
 
-**The check:** `grep -rn "createOrder" qml` is empty until NO3; `cd functions && node --test test/operationLogic.createOrder.test.js` is 35/35.
+**The check:** `grep -rn "createOrder" qml` is empty until NO3; `cd functions && node --test test/operationLogic.createOrder.test.js` is 37/37.
+9. A rollback test must not depend on the validator letting a bad op through. When a stricter validator removes the way to provoke a rejection, validate the extra ops under a looser op type and apply under the real one (`runUnchecked`), so the engine's atomicity stays proven on its own.
 

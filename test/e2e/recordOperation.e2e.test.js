@@ -1066,25 +1066,30 @@ test("NO1: a createOrder operation takes its order id from the server, lands the
     }
 });
 
-test("NO1: a rejected createOrder (a second create over an existing doc: 409 conflict) burns no number and writes nothing; the retry after the fix gets the same id", async () => {
+test("NO1: a createOrder with anything riding along (an extra row, a stock delta) is 400 invalid-order at the first extra op, burns no number and writes nothing; the valid request after it succeeds (PR #208 review: the structure is checked)", async () => {
     const before = await read(ORDER_COUNTER);
     let ok = null;
     try {
-        await seed("transactions/opE2E-no-blocker", { txId: "opE2E-no-blocker", kind: "created" });
-        const body = createOrderOp("createOrder:opE2E-no2");
-        body.ops.push({ kind: "mutation", entity: "transaction", entityId: "opE2E-no-blocker", action: "create", before: null, after: { txId: "opE2E-no-blocker", kind: "created" } });
-        const r = await post(body);
-        assert.equal(r.status, 409, JSON.stringify(r.body));
-        assert.equal(r.body.error, "conflict");
-        assert.deepEqual(await read(ORDER_COUNTER), before, "no order number was burned");
-        assert.equal(await read("audit_log/createOrder:opE2E-no2"), null, "no marker");
-        await db.doc(T + "transactions/opE2E-no-blocker").delete();
-        ok = await post(body);
+        const extras = [
+            { kind: "mutation", entity: "transaction", entityId: "opE2E-no-extra", action: "create", before: null, after: { txId: "opE2E-no-extra", kind: "created" } },
+            { kind: "delta", entity: "inventory", entityId: "opE2E-no-extra", deltas: { stock: -1 }, floors: { stock: 0 } }
+        ];
+        for (const extra of extras) {
+            const body = createOrderOp("createOrder:opE2E-no2");
+            body.ops.push(extra);
+            const r = await post(body);
+            assert.equal(r.status, 400, JSON.stringify(r.body));
+            assert.equal(r.body.error, "invalid-order");
+            assert.equal(r.body.opIndex, 2);
+            assert.deepEqual(await read(ORDER_COUNTER), before, "no order number was burned");
+            assert.equal(await read("audit_log/createOrder:opE2E-no2"), null, "no marker");
+            assert.equal(await read("transactions/opE2E-no-extra"), null, "the extra row was not written");
+        }
+        ok = await post(createOrderOp("createOrder:opE2E-no2"));
         assert.equal(ok.status, 200, JSON.stringify(ok.body));
         assert.equal((await read(ORDER_COUNTER)).value, Number(ok.body.results[0].id.substring(4)));
     } finally {
         await wipeCreateOrder(ok, before);
-        await db.doc(T + "transactions/opE2E-no-blocker").delete();
     }
 });
 
