@@ -268,6 +268,7 @@ Claims in the first draft that were checked, and the result:
 | Gifts to employees up to Rs 50,000 a year are outside supply | Correct; above the limit the whole value is a supply [S11] |
 | CA-4 "register shows stock that is not on the shelf" | **Wrong**, corrected: stock is not raised for a damaged return; the real gaps are gross supplies and a missing write-off row |
 | Counts: 17 questions, 4 blocking | Correct (now 19 questions) |
+| Deleting a product with stock writes an unvalued correction (CA-13), a form edit writes a reasonless one (CA-8) | Correct: `movementLogic.js` derives `adjustment` for update and delete, a delete counts as stock going to 0, no reason, no value |
 | Code claims: ledger kinds, five mandatory-reason kinds with 3 visible characters, server-stamped cost on six kinds, ledger write blocked and read limited to owner, admin and manager, fixed IST periods, no `opening` kind | All match the code (`functions/lib/movementLogic.js`, `firestore.rules`, `qml/helper/StockRegisterModel.js`) |
 
 Not done in this review: no code was changed and nothing was built or run. The `qt-qml-review` pass has nothing to review because no QML changed.

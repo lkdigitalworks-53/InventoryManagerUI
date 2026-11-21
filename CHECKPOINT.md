@@ -1,4 +1,4 @@
-# CHECKPOINT: 2026-11-21 CA-QUESTIONS.md expert review (docs only) - resume here
+# CHECKPOINT: 2026-11-21 CA-QUESTIONS.md expert review (docs only) - DONE, waiting for Taher's PR review
 
 **Branch:** `docs/2026-11-21-ca-questions-review` (cut from `main` @ `68afa5c`, PR #206 picker S5c merged).
 **Commit rule:** every commit message carries `taher.lkdw@gmail.com`.
@@ -15,10 +15,10 @@
 - [x] 4. Research R3: s.35 / s.36 retention (72 months), composition dealers and stock records.
 - [x] 5. Research R4: ITC reversal value (tax-exclusive, GSTR-3B 4(B)(1)), cost method, Schedule I gifts (Rs 50,000).
 - [x] 6. Research R5: sales return / damaged return / credit note, time of supply vs stock out, approval/job-work/in-transit, multi-premises (Rule 56(5)(c), (6), (8)).
-- [ ] 7. Write answers into `CA-QUESTIONS.md` (verdict per question, sources, confidence, what a real CA must confirm) + new gap questions.
-- [ ] 8. Update dependants: ATOMIC-OPERATIONS-STATUS, KNOWN-ISSUES, AGENTS, README, SKILLS.md + SKILLS-INDEX (only where needed), memory file.
-- [ ] 9. Review passes: requesting-code-review (doc vs code consistency), ponytail-audit (bloat/over-claim), qt-qml-review (none needed, state why). Script tests that touch docs.
-- [ ] 10. Commit (taher.lkdw@gmail.com), push, final report: done / pending / next.
+- [x] 7. Write answers into `CA-QUESTIONS.md` (verdict per question, sources, confidence, what a real CA must confirm) + new gap questions.
+- [x] 8. Update dependants: ATOMIC-OPERATIONS-STATUS, KNOWN-ISSUES, AGENTS, README, SKILLS.md + SKILLS-INDEX (only where needed), memory file.
+- [x] 9. Review passes: requesting-code-review (doc vs code consistency), ponytail-audit (bloat/over-claim), qt-qml-review (none needed, state why). Script tests that touch docs.
+- [x] 10. Commit (taher.lkdw@gmail.com), push, final report: done / pending / next.
 
 ## If this session is cut off
 Resume at first unticked step. Findings so far live in this file under "Findings" (append as you go).
@@ -42,3 +42,8 @@ Resume at first unticked step. Findings so far live in this file under "Findings
 - Code facts: ledger rows carry no reversal/correction link field (movementLogic.js); Firestore DB region asia-south1 (README 534, SKILLS 915); NO backup / PITR config anywhere in the repo (Rule 57(1) back-up expectation => ops follow-up).
 - NOT re-verified this session (write 'from my knowledge' in the doc): s.31 invoice timing, s.31(7) 6-month approval rule, Rule 55 challan, s.143 job work 1y/3y, s.34 credit-note time limit, AS 2/Ind AS 2 FIFO/weighted average.
 - NEXT: step 7 write answers into CA-QUESTIONS.md via a python substitution script (answers keyed CA-1..17 + new CA-18, CA-19 + sections: review verdicts for T1-T5, product follow-ups, sources, review log).
+
+## Result (steps 7-10)
+- `docs/superpowers/CA-QUESTIONS.md`: 17 answers filled + CA-18, CA-19 added, T1-T5 verdicts, CA-4 'why' corrected, product follow-ups F1-F13, sources S1-S13, review log. KNOWN-ISSUES 8 amended + 74-79; ATOMIC-OPERATIONS-STATUS section 18; README update; AGENTS S2e line; Skill 180 + index; test plan `test-plans/2026-11-21-ca-questions-review-test-plan.md`.
+- Guard suites RUN: functions 2108/2108, scripts 1061/1061. No code changed. No subagents used (Taher's rule); requesting-code-review done as a sequential self-review, qt-qml-review not applicable (no QML), ponytail-audit applied to the code paths the doc describes.
+- Open for Taher: decisions F1-F4, then S2e-2 on its own branch. Real CA still needed on: CA-2 signature, CA-3, CA-4, CA-7, CA-8, CA-9/10 partial loss + method, CA-12 >Rs 50k, CA-14, CA-18, CA-19.
