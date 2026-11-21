@@ -18,6 +18,7 @@ const { load, extractFunction } = require(path.join('..', '..', '..', 'functions
 const REPO = path.resolve(__dirname, '..', '..', '..');
 const rd = (rel) => fs.readFileSync(path.join(REPO, rel), 'utf8');
 const PAGE = rd('qml/pages/StockRegisterPage.qml');
+const ROW = rd('qml/components/StockRegisterRow.qml');
 const MAIN = rd('qml/Main.qml');
 const PROFILE = rd('qml/pages/ProfilePage.qml');
 const GLUE_SRC = rd('qml/helper/StockRegisterPage.js');
@@ -34,22 +35,26 @@ const noComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm
 test('SRW-01 the page imports the helper by name and nothing else it does not use', () => {
   assert.match(PAGE, /^import "\.\.\/helper\/StockRegisterPage\.js" as Glue$/m);
   // Skill 156 rule 1: every capitalised helper namespace used is imported (the tree guard also scans this file).
-  assert.ok(!/\bStockRegisterModel\./.test(noComments(PAGE)), 'the page decides through Glue; the engine stays behind it');
+  assert.match(ROW, /^import "\.\.\/helper\/StockRegisterPage\.js" as Glue$/m);
+  assert.ok(!/\bStockRegisterModel\./.test(noComments(PAGE)) && !/\bStockRegisterModel\./.test(noComments(ROW)), 'the page decides through Glue; the engine stays behind it');
 });
 
 test('SRW-02 every Glue name the page uses is exported by the helper', () => {
-  const used = [...new Set([...noComments(PAGE).matchAll(/\bGlue\.(\w+)/g)].map((m) => m[1]))].sort();
+  const used = [...new Set([...noComments(PAGE + ROW).matchAll(/\bGlue\.(\w+)/g)].map((m) => m[1]))].sort();
   assert.ok(used.length >= 15, 'found ' + used.length);
   for (const n of used) assert.ok(n in Glue, n + ' is not exported by StockRegisterPage.js');
 });
 
-test('SRW-03 the row delegate declares exactly the ListModel roles, in order, and no reserved word', () => {
-  const delegate = PAGE.slice(PAGE.indexOf('delegate: Rectangle {'));
-  const names = [...delegate.matchAll(/required property (?:string|bool|int|real|var) (\w+)/g)].map((m) => m[1]);
+test('SRW-03 the row component declares exactly the ListModel roles, in order, and no reserved word; the page delegate adds only what the row lets it', () => {
+  const names = [...ROW.matchAll(/required property (?:string|bool|int|real|var) (\w+)/g)].map((m) => m[1]);
   // The first nine are the row's roles; later ones belong to the small nested delegates (modelData).
   assert.deepEqual(names.slice(0, Glue.ROW_KEYS.length), plain(Glue.ROW_KEYS));
   assert.ok(!Glue.ROW_KEYS.includes('id') && !Glue.ROW_KEYS.includes('enabled'));
   assert.deepEqual(names.slice(Glue.ROW_KEYS.length), ['modelData', 'modelData']);
+  assert.match(PAGE, /delegate: StockRegisterRow \{[^}]*open: root\.expandedId === productId[^}]*detail: Glue\.detailRows\(root\._body, root\.expandedId, productId\)[^}]*onToggled: function\(id\) \{ root\._toggleRow\(id\) \}/s);
+  assert.ok(!/required property/.test(noComments(PAGE).replace(/required property string modelData/g, '')), 'no role is declared twice');
+  assert.match(ROW, /signal toggled\(string productId\)/);
+  assert.equal((noComments(ROW).match(/row\.toggled\(row\.productId\)/g) || []).length, 2, 'tap and the accessibility press action');
 });
 
 test('SRW-04 on demand only: one load call, in the tap function; no timer, no auto-load hook', () => {
@@ -120,7 +125,7 @@ test('SRW-13 dormancy REPLACED by the real callers (Skill 155 rule 8): exactly t
   const naming = (re) => files.filter((f) => re.test(noComments(rd(f)))).sort();
   assert.deepEqual(naming(/StockRegisterService/).filter((f) => f !== 'qml/model/StockRegisterService.qml' && f !== 'qml/model/qmldir'), ['qml/Main.qml', 'qml/pages/StockRegisterPage.qml']);
   assert.deepEqual(naming(/StockRegisterModel/).filter((f) => f !== 'qml/helper/StockRegisterModel.js' && f !== 'qml/model/StockRegisterService.qml'), ['qml/Main.qml', 'qml/helper/StockRegisterPage.js', 'qml/pages/ProfilePage.qml']);
-  assert.deepEqual(naming(/StockRegisterPage/), ['qml/Main.qml', 'qml/pages/StockRegisterPage.qml']);
+  assert.deepEqual(naming(/StockRegisterPage/), ['qml/Main.qml', 'qml/components/StockRegisterRow.qml', 'qml/pages/StockRegisterPage.qml']);
 });
 
 // ---- the page's real function bodies in a sandbox ----------------------------------------------------------------

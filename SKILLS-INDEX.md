@@ -188,3 +188,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 178: Move a sheet's whole submit decision into one pure function, parse numbers strictly, and run the real tap in Node
 - 179: Before fixing a key or a tap, find which route really delivers it; make a two-route fix idempotent; give a small control a big target without eating its row
 - 180: Adding a server operation type is three edits and a lot of pins; read what the old path really writes before you design the op
+- 181: Build a Felgo page as painting only: pure page glue, the page's own function bodies run in Node, and mutants run under a non-UTC zone

@@ -17,10 +17,10 @@ Out (documented in KNOWN-ISSUES): emulator e2e QML-to-endpoint case, date-picker
 ## Steps (tick as done)
 - [x] 0. Clone, read memory + P1 designs + service/model + Main/Profile patterns, picked S4b-2, cut branch.
 - [x] 1. Pure glue `StockRegisterPage.js` + Node tests (67 tests, 52 hand mutants killed; mutants run under a non-UTC zone because the sandbox is UTC).
-- [ ] 2. Page QML + ProfilePage row + Main wiring + sign-out clear.
+- [x] 2. Page QML + ProfilePage row + Main wiring + sign-out clear.
 - [x] 3. Wiring tests (63, incl. page function bodies run in a vm + 31 page mutants) + QML twin tests/tst_StockRegisterPage.qml; SRS-04 dormancy replaced by SRW-13; sessionRecheckWiring pin extended for the new overlay. Whole .github suite 1193 green.
-- [ ] 4. Test plan + test-plans README row.
-- [ ] 5. Docs: design section 8, KNOWN-ISSUES, ATOMIC-OPERATIONS-STATUS/P1 status, README, AGENTS, SKILLS (next number) + `skills-index.js --write`, then `.github` suite.
+- [x] 4. Test plan `test-plans/2026-11-20-p1-s4b2-register-page-test-plan.md` + README row (device steps 1..22).
+- [x] 5. Docs: design section 8, KNOWN-ISSUES (S4b-2 section), ATOMIC-OPERATIONS-STATUS 13, README, AGENTS, Skill 178 + SKILLS-INDEX; row extracted to `qml/components/StockRegisterRow.qml` per qt-qml skill.
 - [ ] 6. Push, open PR, read CI on the new head, fix reds.
 
 ## NEXT (if this session stops)
