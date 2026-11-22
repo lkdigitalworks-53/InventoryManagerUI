@@ -14,8 +14,8 @@
 - [x] 4. Tests: `functions/test/pickerS5e3Names.test.js` (+ `testSupport/qmlButtonScan.js`), run in Node only.
 - [x] 5. Docs: test plan rows and device checks, KNOWN-ISSUES (97 and 70 updated, new findings), Skill 185 + index, AGENTS, README, this file.
 - [x] 6a. Committed `6eb5671` (code, tests, plan, test plan, KNOWN-ISSUES) and pushed; docs commit (Skill 185, index, AGENTS, README, this file) follows.
-- [ ] 6b. Open PR against `main`, read CI on its head (QML, Functions, Rules, E2E), fix anything red.
-- [ ] 7. Final report: done / open / next. Then S5e-3b (13 text-child buttons, number-field names KI 108, font and theme audit).
+- [x] 6b. PR #215 opened against `main`. CI on head `5f04e7a`: QML Tests, Functions Tests, Firestore + Storage Rules Tests, E2E Tests all success (deploy jobs skipped, as for any PR). Test counts inside the jobs were not read.
+- [x] 7. Final report: done / open / next. NEXT SESSION: S5e-3b (13 text-child buttons, number-field names KI 108, font and theme audit).
 
 ## If this session is cut off
 Resume at the first unticked step. Re-measure counts before claiming any: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`.
