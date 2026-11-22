@@ -192,4 +192,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 182: Measure a slow path with the real code before tuning it; replace an N x L scan with a per-build index behind a scope that always has the slow answer as fallback
 - 183: Give every control of a sheet a name, a role, an action and a 48 dp target, put the spoken words in a tested pure helper, and prove a control's hit area from source before anyone runs a screen reader
 - 184: Animate a progress value, not a position, when the size it depends on is laid out later; put an overlay's sums in a pure helper; and measure wrapped text with a hidden unwrapped copy that nothing feeds back into
-- 185: Count unnamed controls with a scan that reads only a button's own properties, and give a button one translated word that the picture reuses
+- 186: Count unnamed controls with a scan that reads only a button's own properties, and give a button one translated word that the picture reuses

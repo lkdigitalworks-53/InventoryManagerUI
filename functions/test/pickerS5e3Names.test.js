@@ -61,7 +61,7 @@ test("S5E3-05 RATCHET: no icon-only raw button under qml/ lacks a spoken name (o
     assert.deepEqual(iconOnly.map((b) => b.file), ["qml/helper/OrderRow.qml", "qml/helper/OrderRow.qml"],
         "a new unnamed icon button: give it Accessible.role and Accessible.name (S5e3a-D2). Found: " + JSON.stringify(iconOnly));
 });
-test("S5E3-06 the one allowed exception stays dead: nothing instantiates OrderRow (KNOWN-ISSUES 109)", () => {
+test("S5E3-06 the one allowed exception stays dead: nothing instantiates OrderRow (KNOWN-ISSUES 121)", () => {
     for (const f of qmlFiles(path.join(ROOT, "qml"))) {
         if (f.endsWith("OrderRow.qml")) continue;
         assert.equal(/\bOrderRow\s*\{/.test(stripComments(fs.readFileSync(f, "utf8"))), false,

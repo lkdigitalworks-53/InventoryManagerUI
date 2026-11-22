@@ -5348,7 +5348,7 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 
 **The check:** `node --test functions/test/toastLayout.test.js functions/test/toastHostLayer.test.js`: green; `node functions/test/testSupport/pickerTwin.js --write` changes nothing. On a device: checks 151 to 161.
 
-## Skill 185: Count unnamed controls with a scan that reads only a button's own properties, and give a button one translated word that the picture reuses
+## Skill 186: Count unnamed controls with a scan that reads only a button's own properties, and give a button one translated word that the picture reuses
 
 **Why:** KNOWN-ISSUES 97 said 8 unnamed buttons. Its scan counted any `text:` line in a block as a name, so a `ToolTip.text:` (hover only, never on a phone) hid two buttons; the true count was 10, and 13 more draw their label only in a child `Text`. A number from a lenient scan is a wrong number that looks measured.
 
@@ -5359,8 +5359,8 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 4. A shared icon component (the FAB) takes a `label` property and speaks it; a ratchet pins its users and that each passes a translated label, because a default empty name is silent.
 5. A button that shows a word gets that word once: its own `text` (the spoken name) and a `contentItem` that draws `text` plus any decoration (the chevron), so the picture and the name cannot drift and a screen reader never reads a glyph.
 6. A hit area grows by height only when the width is already settled: `Layout.minimumHeight`, not `preferredHeight`, so it grows with a big system font instead of clipping; set `verticalAlignment` explicitly; leave padding and font alone.
-7. Do not resize what you cannot see: a header slot or a card row sized to fit its buttons changes layout when a button grows. Name it now, write the size down (KNOWN-ISSUES 107).
+7. Do not resize what you cannot see: a header slot or a card row sized to fit its buttons changes layout when a button grows. Name it now, write the size down (KNOWN-ISSUES 119).
 8. Hand-mutate the QML AND the scanner (21 and 11 here: a dropped name, both states the same word, a missing label, 28 dp back, a chevron in the name, a fixed preferred height, a fourth FAB without a label, a new unnamed button, a `ToolTip.text` counted as a name, strings not blanked, nested buttons skipped). Read each survivor: the one that lived was equivalent (`{` against `{}` in the flattened text); the first run of the name rule let a concatenation through and was tightened.
-9. Say what the scan cannot see: tap targets built from a `MouseArea` (KNOWN-ISSUES 110), unnamed text fields (108), and whether the Android bridge reads a child `Text` (97).
+9. Say what the scan cannot see: tap targets built from a `MouseArea` (KNOWN-ISSUES 122), unnamed text fields (120), and whether the Android bridge reads a child `Text` (97).
 
 **The check:** `node --test functions/test/pickerS5e3Names.test.js`: green. On a device: checks 162 to 175.
