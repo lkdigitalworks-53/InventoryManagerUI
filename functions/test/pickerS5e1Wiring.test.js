@@ -82,7 +82,7 @@ test("S5E1-04 chip.spoken: the label, then the count after a comma only when the
 test("S5E1-05 chip.choose sets the selection first and then emits the index and the label", () => {
     const fn = noComments(extractFunction("components/ChipScroller.qml", "choose"));
     const log = [];
-    const box = { index: 2, chip: { entry: { label: "Pending" } }, root: { selected: 0, chipSelected: (i, l) => log.push([i, l, box.root.selected]) } };
+    const box = { index: 2, chip: { enabled: true, entry: { label: "Pending" } }, root: { selected: 0, chipSelected: (i, l) => log.push([i, l, box.root.selected]) } };
     vm.createContext(box);
     vm.runInContext(fn, box);
     vm.runInContext("choose()", box);
@@ -162,4 +162,33 @@ test("S5E1-11 the in-stock row keeps its S2 and S5c accessibility wiring (the ne
     assert.match(sheet, /Accessible\.onPressAction: root\._toggleStockA11y\(\)/);
     assert.match(sheet, /Accessible\.onToggleAction: root\._toggleStockA11y\(\)/);
     assert.match(sheet, /Accessible\.ignored: true/);
+});
+test("S5E1-12 chip.choose does nothing on a disabled chip (the stock register dims its period chips while a load runs)", () => {
+    const fn = noComments(extractFunction("components/ChipScroller.qml", "choose"));
+    const log = [];
+    const mk = (enabled) => {
+        const box = { index: 1, chip: { enabled, entry: { label: "Last 7 days" } }, root: { selected: 0, chipSelected: (i, l) => log.push([i, l]) } };
+        vm.createContext(box);
+        vm.runInContext(fn, box);
+        return box;
+    };
+    const off = mk(false);
+    vm.runInContext("choose()", off);
+    vm.runInContext("choose()", off);
+    assert.deepEqual(log, [], "a disabled chip emitted a selection");
+    assert.equal(off.root.selected, 0, "a disabled chip changed the selection");
+    // Anything that is not exactly an enabled chip is refused too (an undefined `enabled` must not select).
+    for (const bad of [undefined, null, 0, ""]) {
+        const b = mk(bad);
+        vm.runInContext("choose()", b);
+        assert.equal(b.root.selected, 0, "enabled=" + String(bad) + " selected");
+    }
+    const on = mk(true);
+    vm.runInContext("choose()", on);
+    assert.equal(on.root.selected, 1);
+    assert.deepEqual(log, [[1, "Last 7 days"]]);
+    // The guard is the FIRST statement, before the selection is set.
+    assert.match(fn, /function choose\(\) \{\s*if \(!chip\.enabled\) return\s*root\.selected = index/);
+    // The one consumer that dims its chips says so, so this guard has a reason to exist.
+    assert.match(noComments(read("qml/pages/StockRegisterPage.qml")), /ChipScroller \{[^}]*enabled: !root\._busy/s);
 });

@@ -52,7 +52,7 @@ In: `PickerSpeech.js` (new); `ProductPickerRow` name binding; `ChipScroller`; `S
 
 ## 5. Tests
 - `functions/test/pickerSpeech.test.js` SPK-01..12 (`SPK-12` is Node only: it builds real rows with `PickerSheetModel.build` and proves the speech reads the keys the model really gives, and a no-price row never says a price). Derived QML twin `tests/tst_PickerSpeech.qml` (registered in `pickerTwin.js`, `PAIR-01`).
-- `functions/test/pickerS5e1Wiring.test.js` S5E1-01..11: the row's name binding is run against a row double; `chip.spoken` and `chip.choose` are run in a sandbox; the three shared components are pinned; every `AbstractButton` in the sheet's surface must name itself; every `ChipScroller` consumer is listed.
+- `functions/test/pickerS5e1Wiring.test.js` S5E1-01..12: the row's name binding is run against a row double; `chip.spoken` and `chip.choose` are run in a sandbox; the three shared components are pinned; every `AbstractButton` in the sheet's surface must name itself; every `ChipScroller` consumer is listed.
 - Seeded monkey (SPK-11, 600 rounds of junk in every field). Hand mutants: 30, all killed (labels in section 8).
 - Not covered and said so: how TalkBack reads any of it (device), the overflow hit area of the X (device), the chip row's look at five pages (device). CI runs the derived twin.
 
@@ -68,6 +68,10 @@ In: `PickerSpeech.js` (new); `ProductPickerRow` name binding; `ChipScroller`; `S
 - **Q4.** Commit email (KI 93): the history now carries four addresses. Pick one.
 
 ## 8. Result (2026-11-22)
-Functions 2195/2195 (main @ `ae81334` measured 2172, +12 SPK, +11 S5E1), scripts 1199/1199. 30 hand mutants, 30 killed; one earlier mutant (`v >= 1` against `v > 0` in the picked-quantity guard) was equivalent after `Math.floor`, so the guard was simplified to `v > 0`. QML lint: brace balance clean on every touched file; the lint's style findings are the ones the same files already had (ORD-1, PRF-1, STY-3), no BND or loop finding is new. CI result is recorded in `CHECKPOINT.md` and the PR.
+Functions 2196/2196 (main @ `ae81334` measured 2172, +12 SPK, +12 S5E1; S5E1-12 added by the PR #213 sweep), scripts 1199/1199. 30 hand mutants, 30 killed; one earlier mutant (`v >= 1` against `v > 0` in the picked-quantity guard) was equivalent after `Math.floor`, so the guard was simplified to `v > 0`. QML lint: brace balance clean on every touched file; the lint's style findings are the ones the same files already had (ORD-1, PRF-1, STY-3), no BND or loop finding is new, EXCEPT one new ORD-1 (`TextMetrics` before the property lines of `ChipScroller`), found and fixed in the PR #213 sweep (KNOWN-ISSUES 100). CI result is recorded in `CHECKPOINT.md` and the PR.
 
 **The 30 mutants (each applied alone, then undone; the Node run of `pickerSpeech` + `pickerS5e1Wiring` had to fail):** price>=0; no floor; no dedup; canAdd loose; atMax loose; no trim; per->/; order; selected always; chip role; chip no press action; chip 40; row ignores pill; pill fixed 32; pillHeight fixed; metrics wrong font; emit before select; chipText not ignored; spoken dot; chip unchecked; tap differs; clear unnamed; clear 28; field unnamed; X unnamed; header grows; X 36; row drops qty; row drops price text; plus unnamed.
+
+## 9. PR #213 review sweep (2026-11-22, same branch)
+Skills: requesting-code-review, qt-qml-review, ponytail-audit, one agent, no parallel agents. Read the whole diff (18 files), ran the QML lint on the four changed components and diffed its findings against `main`, traced every `ChipScroller` and `SearchField` consumer, ran the baseline (functions 2195/2195, scripts 1199/1199). Fixed: F1 disabled chip press guard (S5E1-12, 3 of 3 mutants killed), F2 lint order, F3 check 141 currency text, F4 the lint claim above. Not fixed, written down: KNOWN-ISSUES 101, 102. Ponytail audit: nothing to delete; the explicit `Accessible.role: Accessible.Button` on two `AbstractButton`s is already the default role but pins intent against a style change and two tests assert it, so it stays (net 0 lines).
+

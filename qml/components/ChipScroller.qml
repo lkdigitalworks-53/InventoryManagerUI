@@ -26,9 +26,10 @@ Item {
 
     // The pill follows the system font (a big font makes a taller pill); the 48 dp row follows the pill, 4 dp above and
     // below at least, so a huge text size grows the row instead of clipping the pill. One measured line, same font as the chip.
-    TextMetrics { id: lineMetrics; font.pixelSize: sp(Constants.fsSmall); font.bold: true; text: "Ag" }
     readonly property real _pillHeight: Math.max(dp(32), lineMetrics.height + dp(12))
     implicitHeight: Math.max(dp(48), _pillHeight + dp(8))
+
+    TextMetrics { id: lineMetrics; font.pixelSize: sp(Constants.fsSmall); font.bold: true; text: "Ag" }
 
     Flickable {
         id: flick
@@ -58,6 +59,9 @@ Item {
                             : chip.entry.label
 
                     function choose() {
+                        // A tap never reaches a disabled chip (StockRegisterPage dims the row while a load runs). The screen
+                        // reader's press action is not guaranteed to stop there, so the same code refuses it here.
+                        if (!chip.enabled) return
                         root.selected = index
                         root.chipSelected(index, chip.entry.label)
                     }
