@@ -46,5 +46,5 @@ The repo's QML lint script is not in the tree (S5e-2 notes ran a local copy); ru
 - **Q2.** Should S5e-3b also resize the three undersized icon buttons (KI 107) once a build exists, even though it changes a header slot? Default: only after a device look.
 - **Q3.** Is a 48 dp price field too tall for the New Order line row on your device? Checks 169 to 171 show it; revert is one property.
 
-## 8. Result
-(filled in at the end of the session)
+## 8. Result (2026-11-22)
+Built as planned (D1 to D7 unchanged). Measured: new Node tests 24 (`S5E3-01..24`); functions suite 2224 before, 2249 after (+25; 24 are the new file, one more comes from an existing test that counts files, not traced); scripts 1199/1199; `skills-index.js --check` current (186 skills). Hand mutants: 21 in the QML all killed (the first run of the name rule let `qsTr("Rename") + " supplier"` through, tightened to "no `+` outside strings", then killed); 11 in the scanner, 10 killed, 1 equivalent (`flatten` emitting `{` instead of `{}`). Scan of the final tree: 0 icon-only unnamed buttons except the dead `OrderRow` (2), 13 text-child buttons pinned for S5e-3b. Not run: CI (read on the PR head), any device check (162 to 175), the repo's QML lint (the script is not in the tree; rules applied by hand). New KNOWN-ISSUES 107 to 110; 97 corrected, 70 (a) and (b) closed.
