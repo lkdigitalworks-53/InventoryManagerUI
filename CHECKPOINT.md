@@ -22,7 +22,8 @@
 - [x] R2. QML lint on the four changed components, diffed against `main`: one new ORD-1 (fixed). Others are old or false positives (object literal in the row's name binding).
 - [x] R3. Fixes: F1 `choose()` refuses on a disabled chip (S5E1-05 updated, S5E1-12 new, 3 of 3 mutants killed), F2 `TextMetrics` moved, F3 check 141 text, F4 plan lint claim. Functions 2196/2196 locally.
 - [x] R4. Ponytail audit: nothing to delete (net 0). Docs: KNOWN-ISSUES 100 to 102 (93 and 99 closed), Skill 183 rules 2 and 7, plan section 9, test plan checks 141 and 144 and counts, AGENTS, this file.
-- [ ] R5. Push, read CI on the new tip, make the PR body current, report to Taher.
+- [x] R5. Pushed `0e36a93`; CI green: QML 3341, Functions 2196, Rules 129, E2E 124 = 5790/5790. PR body made current (counts, sweep, email).
+- [x] R6. Report to Taher: done / next (next = human review in the PR, device checks 141 to 150, Q1 to Q3 of plan section 7, then S5e-2).
 
 ## If this session is cut off
 Resume at the first unticked step. Re-measure counts before claiming any: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`.
