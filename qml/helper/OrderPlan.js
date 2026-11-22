@@ -2,6 +2,7 @@
 .import "OperationKeys.js" as Keys
 .import "AddProductPlan.js" as AP
 .import "DocLimits.js" as DocLimits
+.import "RestockFlow.js" as RF
 
 // Pure planner for the atomic create-order operation (atomic-ops NO2). Designs:
 // docs/superpowers/specs/2026-11-21-create-order-atomic-operation-design.md (sections 2, 3: D-NO-5b is the server rule this
@@ -34,7 +35,9 @@ function _typed(s) { return AP.neutralisePlaceholders(typeof s === "string" ? s.
 function _line(lp) {
     if (!_isObj(lp)) return null
     if (typeof lp.productId !== "string" || _typed(lp.name).length === 0) return null
-    if (!_isNum(lp.price) || lp.price < 0) return null
+    // The app's one price limit (Add Product and Restock enforce it too): above it is a typo, not a price. New Order's unit-price
+    // field has no cap of its own (KNOWN-ISSUES 101), so this is the only guard on that value.
+    if (!_isNum(lp.price) || lp.price < 0 || lp.price > RF.MAX_UNIT_COST) return null
     if (!_isNum(lp.quantity) || lp.quantity < 1 || Math.floor(lp.quantity) !== lp.quantity) return null
     if (typeof lp.taxable !== "boolean" || !_isNum(lp.taxPercent) || lp.taxPercent < 0 || lp.taxPercent > 100) return null
     if (lp.discountType !== "flat" && lp.discountType !== "percent") return null

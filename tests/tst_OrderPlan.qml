@@ -107,6 +107,8 @@ TestCase {
             ["bad-line", function(o) { o.products = [] }],
             ["bad-line", function(o) { o.products[0].name = " " }],
             ["bad-line", function(o) { o.products[0].price = -1 }],
+            ["bad-line", function(o) { o.products[0].price = 1000000000.01 }],
+            ["bad-line", function(o) { o.products[0].price = 1e308 }],
             ["bad-line", function(o) { o.products[0].quantity = 0 }],
             ["bad-line", function(o) { o.products[0].quantity = 1.5 }],
             ["bad-line", function(o) { o.products[0].taxPercent = 101 }],
@@ -122,7 +124,8 @@ TestCase {
             ["bad-totals", function(o) { o.taxBreakdown = {} }],
             ["bad-totals", function(o) { o.taxBreakdown = [{ rate: -1, amount: 1 }] }],
             ["bad-totals", function(o) { o.taxBreakdown = [{ rate: 5, amount: -1 }] }],
-            ["bad-totals", function(o) { o.products[0].price = 1e308; o.products[0].quantity = 5 }]
+            // the price is within its limit, the whole quantity is huge: the money overflows to Infinity
+            ["bad-totals", function(o) { o.products[0].price = 5; o.products[0].quantity = 1e308 }]
         ]
         for (var i = 0; i < table.length; ++i) {
             var o = _order(); table[i][1](o)
@@ -149,7 +152,7 @@ TestCase {
     }
 
     function test_boundaries_that_are_allowed() {
-        var lines = [{ price: 0 }, { taxPercent: 0, taxable: false }, { taxPercent: 100 }, { discountType: "percent", discountValue: 150 },
+        var lines = [{ price: 0 }, { price: 1000000000 }, { taxPercent: 0, taxable: false }, { taxPercent: 100 }, { discountType: "percent", discountValue: 150 },
                      { discountType: "flat", discountValue: 1e6 }]
         for (var i = 0; i < lines.length; ++i) {
             // the totals of these lines are the store's; only the planner's bounds are under test, so the doc is rebuilt consistently

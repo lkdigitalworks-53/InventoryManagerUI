@@ -21,6 +21,7 @@ const OP = load("OrderPlan.js");
 const FC = load("FailureCause.js");
 const DI = load("DescribeItem.js");
 const AP = load("AddProductPlan.js");
+const RF_MAX_UNIT_COST = load("RestockFlow.js").MAX_UNIT_COST;
 
 const T = "tenants/t1/";
 const NOW = new Date("2026-06-15T12:00:00Z");
@@ -194,6 +195,10 @@ const REFUSALS = [
     ["bad-line", { order: ordWith((o) => { o.products[0].productId = undefined; }) }],
     ["bad-line", { order: ordWith((o) => { o.products[0].price = -1; }) }],
     ["bad-line", { order: ordWith((o) => { o.products[0].price = NaN; }) }],
+    // the app's one price limit (RestockFlow.MAX_UNIT_COST = 1e9): one paisa over it, and a 20-digit typed price
+    ["bad-line", { order: ordWith((o) => { o.products[0].price = 1e9 + 0.01; }) }],
+    ["bad-line", { order: ordWith((o) => { o.products[0].price = 99999999999999999999; }) }],
+    ["bad-line", { order: ordWith((o) => { o.products[0].price = 1e308; }) }],
     ["bad-line", { order: ordWith((o) => { o.products[0].quantity = 0; }) }],
     ["bad-line", { order: ordWith((o) => { o.products[0].quantity = 1.5; }) }],
     ["bad-line", { order: ordWith((o) => { o.products[0].quantity = "2"; }) }],
@@ -222,8 +227,8 @@ const REFUSALS = [
     ["bad-totals", { order: ordWith((o) => { o.taxBreakdown = [null]; }) }],
     ["bad-totals", { order: ordWith((o) => { o.taxBreakdown = [{ rate: -1, amount: 1 }]; }) }],
     ["bad-totals", { order: ordWith((o) => { o.taxBreakdown = [{ rate: 5, amount: -1 }]; }) }],
-    // the money overflows to Infinity although every factor is finite
-    ["bad-totals", { order: ordWith((o) => { o.products[0].price = 1e308; o.products[0].quantity = 5; }) }],
+    // the money overflows to Infinity although every factor is finite (the price is within its limit, the whole quantity is huge)
+    ["bad-totals", { order: ordWith((o) => { o.products[0].price = 5; o.products[0].quantity = 1e308; }) }],
 ];
 
 test("R-1 every refusal reason, with the input that earns it, and nothing is built for it", () => {
@@ -243,12 +248,15 @@ test("R-2 a bad line names its index; an empty cart is index -1", () => {
     assert.deepEqual(plain(OP.build({ key: KEY, order: ordWith((x) => { x.products = []; }) })), { ok: false, reason: "bad-line", index: -1 });
 });
 
-test("R-3 boundaries that ARE allowed: price 0, tax 0 and 100, a percent discount over 100 (the store clamps it), a flat discount over the gross, an old order without epoch and adjustments", () => {
-    for (const l of [{ price: 0 }, { taxPercent: 0, taxable: false }, { taxPercent: 100 }, { discountType: "percent", discountValue: 150 },
+test("R-3 boundaries that ARE allowed: price 0 and exactly the app limit 1e9, tax 0 and 100, a percent discount over 100 (the store clamps it), a flat discount over the gross, an old order without epoch and adjustments", () => {
+    for (const l of [{ price: 0 }, { price: RF_MAX_UNIT_COST }, { taxPercent: 0, taxable: false }, { taxPercent: 100 }, { discountType: "percent", discountValue: 150 },
                      { discountType: "flat", discountValue: 1e6 }, { qty: 1000000 }]) {
         const p = build({}, orderDoc({}, [lineIn(l)]));
         assert.equal(p.ok, true, JSON.stringify(l));
     }
+    // one limit for every price entry: if Add Product's limit moves, this planner's moves with it, or this line says so
+    assert.equal(load("AddProductFlow.js").MAX_MONEY, RF_MAX_UNIT_COST);
+    assert.equal(RF_MAX_UNIT_COST, 1e9);
     const old = orderDoc(); delete old.completionEpoch; delete old.adjustments; delete old.products[0].consumption;
     const a = build({}, old).ops[1].after;
     assert.deepEqual([a.adjustments, a.completionEpoch, a.products[0].consumption], [[], 0, []], "the stored doc always carries the three, whatever the input left out");
