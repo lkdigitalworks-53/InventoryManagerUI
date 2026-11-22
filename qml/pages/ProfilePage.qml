@@ -34,6 +34,8 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             implicitWidth: dp(40)
             implicitHeight: dp(40)
+            Accessible.role: Accessible.Button
+            Accessible.name: qsTr("Back")
             padding: 0
             background: Rectangle { color: parent.pressed ? Qt.rgba(0,0,0,0.04) : "transparent"; radius: dp(12) }
             contentItem: Item {

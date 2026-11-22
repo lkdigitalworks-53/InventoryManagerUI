@@ -8,7 +8,7 @@
 
 ## Steps
 - [x] 0. Cloned fresh (remote URL scrubbed of the PAT), skills read, roadmap read from the repo and the GitHub API: S1-S5e-2 merged (#214 merged); open PRs #212 (NO2), #211, #178, #39, #29, none picker. Next on the picker roadmap = S5e-3, then S5e-4.
-- [x] 1. Recon: KI 97's scan was lenient (a `text:` anywhere in a block, even a ToolTip, counted as a name). Depth-aware scan over `qml/**`: 10 icon-only buttons with no spoken name (not 8): FloatingActionButton (3 instances), back x3 (Activity, Profile, Staff), supplier + toggles (AddProduct, Restock), rename toggle (EditProduct), workspace edit (ProfileSettings), Suspend and Remove (MemberManagement). A second class (about 20 buttons whose label lives only in a child `Text`) is a different fix: S5e-3b.
+- [x] 1. Recon: KI 97's scan was lenient (a `text:` anywhere in a block, even a ToolTip, counted as a name). Depth-aware scan over `qml/**`: 10 icon-only buttons with no spoken name (not 8): FloatingActionButton (3 instances), back x3 (Activity, Profile, Staff), supplier + toggles (AddProduct, Restock), rename toggle (EditProduct), workspace edit (ProfileSettings), Suspend and Remove (MemberManagement). A second class (13 buttons whose label lives only in a child `Text`) is a different fix: S5e-3b.
 - [ ] 2. Plan doc (scope, decisions D1 to D7, trade-offs, what is NOT done).
 - [ ] 3. Code: names + `FloatingActionButton.label`; "Manage channels" link 48 dp with its own `text`; four price/discount fields `Layout.minimumHeight: dp(48)`.
 - [ ] 4. Tests: `functions/test/pickerS5e3Names.test.js` (+ `testSupport/qmlButtonScan.js`), run in Node only.

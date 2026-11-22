@@ -217,13 +217,16 @@ BottomSheet {
         // Compact "Manage channels" link, mirrors how AddProductDialog
         // exposes the categories editor.
         QQC.AbstractButton {
+            id: manageChannelsLink
             Layout.alignment: Qt.AlignRight
-            implicitHeight: dp(28)
+            // The button's own `text` is its spoken name (no chevron); the picture adds the chevron.
+            text: qsTr("Manage channels")
+            implicitHeight: dp(48)
             leftPadding: dp(8); rightPadding: dp(8)
             topPadding: 0; bottomPadding: 0
             background: Rectangle { color: "transparent" }
             contentItem: Text {
-                text: qsTr("Manage channels  ›")
+                text: manageChannelsLink.text + "  ›"
                 color: Constants.brand2
                 font.pixelSize: sp(Constants.fsCaption)
                 font.bold: true
@@ -329,11 +332,13 @@ BottomSheet {
                             }
                             QQC.TextField {
                                 id: linePriceField
+                                Layout.minimumHeight: dp(48)
                                 Layout.preferredWidth: dp(72)
                                 text: InventoryStore.formatCurrency(modelData.price)
                                 inputMethodHints: Qt.ImhFormattedNumbersOnly
                                 font.pixelSize: sp(Constants.fsBody)
                                 horizontalAlignment: Text.AlignRight
+                                verticalAlignment: TextInput.AlignVCenter
                                 selectByMouse: true
                                 padding: 0
                                 leftPadding: dp(6); rightPadding: dp(6)
@@ -373,11 +378,13 @@ BottomSheet {
                             }
                             QQC.TextField {
                                 id: lineDiscField
+                                Layout.minimumHeight: dp(48)
                                 Layout.fillWidth: true
                                 text: String(modelData.discountValue || 0)
                                 inputMethodHints: Qt.ImhFormattedNumbersOnly
                                 font.pixelSize: sp(Constants.fsBody)
                                 horizontalAlignment: Text.AlignRight
+                                verticalAlignment: TextInput.AlignVCenter
                                 selectByMouse: true
                                 padding: 0
                                 leftPadding: dp(6); rightPadding: dp(6)

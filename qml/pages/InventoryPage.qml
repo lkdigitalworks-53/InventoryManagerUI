@@ -203,6 +203,7 @@ Item {
 
     FloatingActionButton {
         visible: root.canManageInventory
+        label: qsTr("Add product")
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.rightMargin: dp(Constants.space5)

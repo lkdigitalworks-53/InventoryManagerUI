@@ -175,6 +175,8 @@ BottomSheet {
                             visible: card.manageable
                             Layout.preferredWidth: dp(32)
                             Layout.preferredHeight: dp(32)
+                            Accessible.role: Accessible.Button
+                            Accessible.name: modelData.status === "suspended" ? qsTr("Activate member") : qsTr("Suspend member")
                             enabled: !root.busy
                             background: Rectangle {
                                 radius: dp(Constants.radiusPill)
@@ -199,6 +201,8 @@ BottomSheet {
                             visible: card.manageable
                             Layout.preferredWidth: dp(32)
                             Layout.preferredHeight: dp(32)
+                            Accessible.role: Accessible.Button
+                            Accessible.name: qsTr("Remove member")
                             enabled: !root.busy
                             background: Rectangle {
                                 radius: dp(Constants.radiusPill)

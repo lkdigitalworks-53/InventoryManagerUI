@@ -44,6 +44,8 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             implicitWidth: dp(40)
             implicitHeight: dp(40)
+            Accessible.role: Accessible.Button
+            Accessible.name: qsTr("Back")
             padding: 0
             background: Rectangle { color: parent.pressed ? Qt.rgba(0,0,0,0.04) : "transparent"; radius: dp(12) }
             contentItem: Item {
@@ -244,6 +246,7 @@ Item {
 
     FloatingActionButton {
         visible: root.canManageStaff || root.canInviteMembers
+        label: root.canInviteMembers ? qsTr("Add staff or invite member") : qsTr("Add staff")
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.rightMargin: dp(Constants.space5)

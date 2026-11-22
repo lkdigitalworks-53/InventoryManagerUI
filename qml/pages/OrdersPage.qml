@@ -415,6 +415,7 @@ Item {
 
     // ── FAB ──
     FloatingActionButton {
+        label: qsTr("New order")
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.rightMargin: dp(Constants.space5)
