@@ -5,6 +5,7 @@ import QtQuick.Layouts
 import "../helper"
 import "../model"
 import "../helper/PickerRowGeometry.js" as Geo
+import "../helper/PickerSpeech.js" as Speech
 
 // One product row of ProductPickerSheet (picker v2, slice S2). Painting only: what the row says comes from
 // PickerSheetModel.build (qml/helper/PickerSheetModel.js) and every size from PickerRowGeometry.js, both tested
@@ -50,8 +51,13 @@ Rectangle {
     border.width: qty > 0 ? 2 : 1
 
     Accessible.role: Accessible.ListItem
-    Accessible.name: name + ", " + productId + ", " + pillLabel + (inOrderLabel.length > 0 ? ", " + inOrderLabel : "")
-                     + (canAdd ? "" : ", " + reasonText)
+    // Name, ID, price, availability, how many are picked, why it is off (S5e-1; the words live in PickerSpeech.js).
+    // The object is written out here so the binding re-reads when any of these changes.
+    Accessible.name: Speech.row({
+        name: root.name, productId: root.productId, unit: root.unit, price: root.price,
+        pillLabel: root.pillLabel, inOrderLabel: root.inOrderLabel, qty: root.qty, atMax: root.atMax,
+        canAdd: root.canAdd, reasonText: root.reasonText
+    }, InventoryStore.formatCurrency(root.price))
 
     // Keep the field in step with the draft. While the person types, leave a blank or already-equal field alone, but show
     // a clamp at once (typed 50 with 8 in stock: the field must say 8, not keep a number the draft refused).

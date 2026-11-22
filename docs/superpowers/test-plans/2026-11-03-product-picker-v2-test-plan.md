@@ -19,7 +19,10 @@ Design: `specs/2026-11-03-product-picker-v2-design.md` (approved 2026-11-03). Au
 | S5b | one stock rule: `ceilingOf`, `ceilingFor`, `stepUp`, `stockShortfalls`; legacy catalog seed deleted | `+` stepper, Save check and sheet agree; fractional stock is whole units; a product that left the catalog cannot be raised | BUILT on `feat/2026-11-16-picker-s5b-one-stock-formula-delete-legacy-seed` 2026-11-16; Node RUN; CI not read yet |
 | S5c | 48 dp cart steppers on their own row, Back route through the product sheet, in-stock toggle repeat gate | Cart rows, Android Back with the sheet up | MERGED as #206 (2026-11-20); device checks 120 to 133 not run yet |
 | S5d | measured the sheet rebuild with the real helpers (`scripts/bench/pickerBench.cjs`); one cart index per build (`beginBuild` / `endBuild`, `NP.qtyIndex`, `EP.scopeOf`); Edit Order reads its rows once per build | Same rows and numbers; the sheet answers sooner with a big cart | BUILT on `feat/2026-11-21-picker-s5d-cart-index-and-bench` 2026-11-21 (PR #210); Node RUN; CI green; device checks 134 to 140 |
-| S5e | TalkBack of the whole sheet, themes, font scale, ToastHost wrap (KI 26), small touch targets (KI 70), KI 29 cap, final device pass | none or fixes | PLANNED |
+| S5e-1 | `PickerSpeech.js`; the row's spoken name (price, quantity, maximum, reason once); `ChipScroller` radio-button chips on a 48 dp row that follows the pill; `SearchField` names and a 44 dp clear button; `BottomSheet` X named and 48 dp | Same rows and numbers; TalkBack reads and acts on chips, the clear button and the X; chip rows are 8 dp taller on five screens | BUILT on `feat/2026-11-22-picker-s5e1-talkback-and-targets` 2026-11-22; Node RUN; QML twin CI only; device checks 141 to 150 not run |
+| S5e-2 | ToastHost wrap (KI 26), its own PR | long toasts wrap instead of clipping | PLANNED |
+| S5e-3 | font scale and both themes pass; the other unnamed buttons (KI 97); KI 70 (a), (b) | none or fixes | PLANNED |
+| S5e-4 | curated final device pass; KI 29 decided with a number | none | PLANNED |
 
 ## 1. Unit tests
 
@@ -80,6 +83,12 @@ Was, before CI: the two derived twins; `BottomSheet` with `scrollBody: false` an
 - **Mutation:** 32 hand mutants (10 `NewOrderPicker`, 6 `EditOrderPicker`, 5 `PickerSheetModel`, 11 dialogs). First run: 29 killed, 3 survivors. NP-3 (a blank-id line counted for a product whose id reads "null") was a real gap, fixed by two assertions in NOP-38, now killed. NP-10 (`"k:" + id` without `String()`) and PM-5 (the `typeof` guard in `_scope`) are equivalent: string concatenation converts the same way, and the `try` already catches a non-function. PM-5's guard is kept on purpose: it spares a thrown TypeError per build when a caller has no scope hooks. The script is not in the repo (like S2 to S5c).
 - **Rules, E2E:** none: no server and no rule change.
 - **Bench (a tool, not a gate):** `node scripts/bench/pickerBench.cjs [--json] [--quick]`. Numbers of this slice are in the plan, section "What the numbers say".
+
+### S5e-1 unit and wiring tests (2026-11-22)
+| File | Cases | Covers |
+|---|---|---|
+| `functions/test/pickerSpeech.test.js` and `tests/tst_PickerSpeech.qml` | SPK-01..12 (SPK-12 Node only) | the row's spoken name: normal row, order of parts, price only above zero and only as text, unit trimmed or missing, reason only when not addable (anything but `true` counts as not), repeated parts spoken once, picked quantity whole and at least one, maximum only for `true`, blank and non-text parts dropped, junk row never throws and says nothing, seeded monkey 600 rounds (string out, no junk words, no stray separators, pure, input not mutated), real model rows give every key the speech reads and a no-price row never says a price |
+| `functions/test/pickerS5e1Wiring.test.js` | S5E1-01..11 | the row binding passes the ten named properties and the formatted price and runs to the same words; chip is one radio button with name, checked, press action and the same code as a tap; `chip.spoken` run; `chip.choose` run (selection first, one signal); chip row height follows the pill and is never under 48 dp; every `ChipScroller` consumer listed and none sets a height; clear button named and 44 dp, field named; sheet X named, 48 dp, header keeps 36 dp, still asks the guard; every `AbstractButton` of the sheet's surface names itself; the S2 and S5c in-stock wiring is untouched |
 
 ## 2. Functional, rules, e2e
 
@@ -290,6 +299,18 @@ Prerequisites: a dev tenant with at least 2000 products (the scale seed) and a f
 139. Monkey. 20-line order, open the sheet, tick products, press Add, immediately open Add products again, repeat 10 times; also rotate once and press Back with a draft. Expect no crash, no stale "In this order" label (it always shows the order as it is NOW) and no lost line.
 140. Regression. Steps 104 to 119 (S5a and S5b, the stock rule) and 120 to 133 (S5c) behave as written.
 
+### Slice S5e-1 checks (TalkBack and touch targets; need a build, Taher decides)
+141. TalkBack on, sheet open. Swipe to a product row. Expect: name, ID, price per unit ("Rs 120.00 per kg"), "N unit left", then "In this order: ..." if it is, "N selected" once you picked some, "Maximum reached" at the ceiling. A disabled row says its reason ONCE ("Out of stock", not twice). A product with no selling price says "No price, No selling price" and NO price.
+142. TalkBack, same row: do the stepper buttons and the quantity field stay separate stops? Does the row read twice (its long name, then each child)? Report what you hear (KNOWN-ISSUES 95). Double tap "One more of X": quantity goes up once and the row name now says "1 selected".
+143. TalkBack, category chips. Each is ONE stop: "<category>, radio button, selected / not selected". Double tap one: the list filters once and that chip says selected. Swipe past the last chip: no silent stops.
+144. TalkBack on the Orders page: "Pending, 3, radio button". Double tap: the filter changes once. Same on Inventory, Sales and the stock register (period chips; they are dimmed while a load runs).
+145. Touch, chips on five screens (Inventory, Orders, Sales, stock register, the sheet). Tap just above and just below the painted pill: it selects. The row is 8 dp taller than before; nothing below it overlaps or clips. At the largest system font the pill and the row grow together, nothing is cut.
+146. TalkBack, search field. Focus it: "Search name, ID, SKU or category, edit box". Type a letter: a "Clear search, button" appears; double tap clears the text and the list returns.
+147. Touch, search field. With text in it, tap the far right edge of the field (the 44 dp clear area). The text field is about 16 dp narrower while the button shows: confirm a long query still reads well.
+148. TalkBack, any sheet (Add products, Add Product, Restock, a settings sheet): the top-right X says "Close, button". Double tap it with a draft: the discard question appears. Touch: tap 5 dp above and below the X: it still closes. The title never runs under it.
+149. Largest font and both themes: chip rows, search field, the sheet header X, a row with a long name. Nothing clipped; the in-stock row and the footer are reachable.
+150. Monkey, TalkBack on, 30 seconds: flip chips, type and clear, toggle in stock, step up and down, scroll. No crash; the list stays consistent; the footer total equals what you picked.
+
 ### Affected areas
 | Area | What to check |
 |---|---|
@@ -319,7 +340,8 @@ Run the existing New Order, Edit Order, approve-all and restock checks from the 
 | S5b | functions suite 1909/1909 after sweep 1 (baseline 1882; S5b +18, sweep +9), scripts 1049/1049 | green on the pre-rebase merged head (QML 3185, Functions 1909, Rules 129, E2E 121 = 5344/5344); read CI again on the rebased head | 16 listed (104 to 119) | 18 hand mutants of the new helper code, all killed after two added assertions | not yet |
 | S5c | new Node tests 43 (CSG 7, PGD 11, BR 11, S5C 14); functions suite 2033/2033, scripts 1061/1061 | pending: read CI on the PR head | 26 helper mutants (24 killed, 1 redundant guard deleted, 1 equivalent), 15 QML-source mutants all killed | n/a | not yet (checks 120 to 133) |
 | S5d | new Node tests 22 (NOP 5, EOP 4, SHEET 3, S5D 10); functions suite 2130/2130 on the branch before the merge (main @ `68afa5c` measured 2108, +22), 2171/2171 after merging main @ `a3227e7` (#208 NO1); PR #210 sweep: +1 test (NOP-43, the index guard), NOP-41, EOP-45, EOP-46 rewritten on purpose, 2172/2172; scripts 1061/1061 (unchanged) | green on `7b5cc60` (PR #210): QML 3319, Functions 2171, Rules 129, E2E 124 = 5743/5743 (the QML twins ran, first push); green on the sweep tip `2d7733b`: QML 3320, Functions 2172, Rules 129, E2E 124 = 5745/5745; then rebased onto main @ `7ceaf65` (#209, `0ebcf31`): functions 2172/2172, scripts 1199/1199 locally, CI on the rebased tip: see CHECKPOINT R9 | 32 hand mutants: 30 killed (1 real gap found and closed), 2 equivalent, named above; sweep: 7 more on the `indexFits` guard (always true, rows only, key only, array sums, held without the fit, wrong key on held, wrong key on cart), 7 killed | n/a | not yet (checks 134 to 140) |
-| S5e | not yet | not yet | n/a | n/a | not yet |
+| S5e-1 | new Node tests 23 (SPK 12, S5E1 11); functions suite 2195/2195 (main @ `ae81334` measured 2172), scripts 1199/1199 | pending: read CI on the PR head (new twin `tst_PickerSpeech`) | 30 listed, 30 killed (plan section 8); one more was equivalent and the guard was simplified | n/a | not yet (checks 141 to 150) |
+| S5e-2 to S5e-4 | not yet | not yet | n/a | n/a | not yet |
 
 ## Known gaps stated up front
 - The S5d speed numbers are Node (V8) figures on real helper code with store-shaped hooks; a phone runs QML's V4, slower, and Edit Order's `ListModel.get` is not simulated. Only the ratios carry over; the real figures come from checks 134 to 136 (KNOWN-ISSUES 76).

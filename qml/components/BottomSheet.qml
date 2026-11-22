@@ -205,22 +205,33 @@ QQC.Dialog {
                     elide: Text.ElideRight
                 }
 
-                QQC.AbstractButton {
-                    implicitWidth: dp(36); implicitHeight: dp(36)
-                    contentItem: Item {
-                        Icon {
-                            anchors.centerIn: parent
-                            name: "close"
-                            color: Constants.textSecondary
-                            size: sp(16)
+                // S5e-1 (KNOWN-ISSUES 94): the X had no name ("unlabeled button") and a 36 dp target. The wrapper keeps
+                // the 36 dp the header lays out, the button is 48 dp and centred on it, so it reaches 6 dp past the
+                // wrapper into the free margins and the header does not grow (the sheet body starts 8 dp below).
+                Item {
+                    Layout.preferredWidth: dp(36)
+                    Layout.preferredHeight: dp(36)
+                    QQC.AbstractButton {
+                        anchors.centerIn: parent
+                        implicitWidth: dp(48); implicitHeight: dp(48)
+                        width: implicitWidth; height: implicitHeight
+                        Accessible.role: Accessible.Button
+                        Accessible.name: qsTr("Close")
+                        contentItem: Item {
+                            Icon {
+                                anchors.centerIn: parent
+                                name: "close"
+                                color: Constants.textSecondary
+                                size: sp(16)
+                            }
                         }
+                        background: Rectangle { color: "transparent" }
+                        // Guarded — this bypassed busy entirely before, one of
+                        // four separate dismissal paths (back button,
+                        // tap-outside, this X, and Cancel below) that all
+                        // needed the same guard, not just the obvious ones.
+                        onClicked: root.requestClose()   // busy-guarded inside; closes unless guardClose asks the owner
                     }
-                    background: Rectangle { color: "transparent" }
-                    // Guarded — this bypassed busy entirely before, one of
-                    // four separate dismissal paths (back button,
-                    // tap-outside, this X, and Cancel below) that all
-                    // needed the same guard, not just the obvious ones.
-                    onClicked: root.requestClose()   // busy-guarded inside; closes unless guardClose asks the owner
                 }
             }
 
