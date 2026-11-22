@@ -27,7 +27,7 @@
 - [x] R7. Report to Taher: done / next (next = human review in the PR, decide KNOWN-ISSUES 93, device checks 134 to 140, then S5e).
 
 - [x] R8. (same day) Rebased the branch onto `main` @ `7ceaf65` (#209 S4b-2, which took Skill 181): the old merge commit is gone, six commits replayed, CHECKPOINT kept as this branch's, the other docs merged by hand; my skill is now **Skill 182**, KNOWN-ISSUES stay 83 to 89 (+ 90 to 93). Force-pushed with lease as `0ebcf31`. Main's #209 checkpoint archived as `specs/2026-11-21-pr209-merged-prev-CHECKPOINT.md`. Functions 2172/2172, scripts 1199/1199 locally. CI on the rebased tip: read it (R9).
-- [ ] R9. Read CI on the rebased tip. If red: read the junit of the failing job first.
+- [x] R9. CI green on `9216930` (rebased tip + numbering fixes): 5753/5753 tests passed, all four jobs. Next = human review in the PR, KNOWN-ISSUES 93, device checks 134 to 140, then S5e.
 
 ## If this session is cut off
 Resume at the first unticked step. Re-measure counts before claiming any: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`.
