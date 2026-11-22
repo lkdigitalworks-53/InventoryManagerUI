@@ -16,8 +16,9 @@
 //   TS-1..6   source shape: what the functions rely on is really declared
 //   TS-7      no popup in the tree can out-rank the pill
 //   TL-8..9   (S5e-2) the dismiss time follows the message, per toast, and an ignored toast leaves it alone
-//   TS-8..14  (S5e-2) the wrap: slides animate `rise`, y is derived, the text wraps, the measure copy cannot loop,
-//             every TL.* the file calls exists
+//   TS-8..17  (S5e-2) the wrap: slides animate `rise`, y is derived, the text wraps, the measure copy cannot loop,
+//             every TL.* the file calls exists, the longest message fits the line cap, the corner radius is capped
+//             and the text is plain (review sweep)
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -309,7 +310,7 @@ test("TS-13 _showInternal sets the dismiss time from the message, then restarts 
 test("TS-14 every TL.* the file calls exists in ToastLayout.js, and the import is the one tested", () => {
     assert.match(SRC, /^import "\.\.\/helper\/ToastLayout\.js" as TL$/m);
     const used = new Set([...CODE.matchAll(/\bTL\.(\w+)/g)].map((m) => m[1]));
-    assert.ok(used.size >= 6, "pillY pillWidth pillHeight textWidth dismissMs MAX_LINES: " + [...used]);
+    assert.ok(used.size >= 7, "pillY pillWidth pillHeight pillRadius textWidth dismissMs MAX_LINES: " + [...used]);
     for (const name of used) assert.ok(name in LAYOUT, "TL." + name + " is not defined in ToastLayout.js");
 });
 
@@ -321,4 +322,18 @@ test("TS-15 the longest toast in the app wraps inside the line cap on a 360 dp p
         const lines = Math.ceil((134 * glyph) / textW);
         assert.ok(lines <= LAYOUT.MAX_LINES, "lines " + lines + " at scale " + scale);
     }
+});
+
+test("TS-16 the corner radius is capped at half the one-line height, never the bare 999 token (a tall pill would cut its text corners)", () => {
+    assert.match(CODE, /^\s+radius: TL\.pillRadius\(dp\(Constants\.radiusPill\), _minHeight\)$/m);
+    assert.doesNotMatch(CODE, /radius: dp\(Constants\.radiusPill\)/, "the bare token is the old, clipping radius");
+    assert.equal((CODE.match(/\bradius:/g) || []).length, 1, "one radius in the file");
+});
+
+test("TS-17 both texts are PLAIN: a server or proxy error body such as <html>... must show as text, and the measure copy must agree with the pill", () => {
+    const m = block("id: measure", "Text {\n            id: pillText");
+    const t = block("id: pillText", "\n        }\n    }");
+    assert.match(m, /textFormat: Text\.PlainText/);
+    assert.match(t, /textFormat: Text\.PlainText/);
+    assert.equal((CODE.match(/textFormat:/g) || []).length, 2, "exactly the two texts, same format");
 });

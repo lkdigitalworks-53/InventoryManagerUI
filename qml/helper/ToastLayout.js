@@ -38,6 +38,14 @@ function pillHeight(contentHeight, minHeight, pad) {
     return Math.max(_pos(minHeight), _pos(contentHeight) + _pos(pad))
 }
 
+// Corner radius. The theme token is 999 ("fully round") and Qt clamps a Rectangle radius to half its height, so the one-line
+// 40 dp pill is a stadium (radius 20) but a 4-line pill of about 95 dp would get radius 47 and its curve would cut into the
+// first and last line (white text, so the cut part is invisible on a light sheet). Cap the radius at half the ONE-LINE height:
+// identical look for one line, a 20 dp corner that stays clear of the text for any taller pill (picker S5e-2 review sweep).
+function pillRadius(token, minHeight) {
+    return Math.min(_pos(token), _pos(minHeight) / 2)
+}
+
 // How long the toast stays: whole milliseconds, between DISMISS_MIN_MS and DISMISS_MAX_MS, growing with the length
 // of the message. A non-string counts as empty.
 function dismissMs(msg) {

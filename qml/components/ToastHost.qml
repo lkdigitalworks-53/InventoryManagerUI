@@ -71,7 +71,8 @@ Item {
         y: parent ? TL.pillY(parent.height, rise, height, dp(Constants.tabbarClearance), _minHeight) : 600
         width: TL.pillWidth(measure.implicitWidth, parent ? parent.width - dp(40) : dp(360), dp(32))
         height: TL.pillHeight(pillText.contentHeight, _minHeight, dp(16))
-        radius: dp(Constants.radiusPill)
+        // Capped at half the one-line height: the token (999) would round a tall pill into an ellipse and cut the text corners.
+        radius: TL.pillRadius(dp(Constants.radiusPill), _minHeight)
         color: Qt.rgba(0.008, 0.024, 0.090, 0.92)
         opacity: 0
         visible: opacity > 0.01
@@ -103,6 +104,7 @@ Item {
             visible: false
             text: pillText.text
             font: pillText.font
+            textFormat: Text.PlainText
         }
 
         Text {
@@ -110,6 +112,9 @@ Item {
             anchors.centerIn: parent
             width: TL.textWidth(pill.width, dp(32))
             horizontalAlignment: Text.AlignHCenter
+            // Plain: a toast is a sentence, never markup. AutoText would render a server or proxy error body such as
+            // "<html>502 Bad Gateway</html>" as rich text; the measure copy above has the same format so the widths agree.
+            textFormat: Text.PlainText
             wrapMode: Text.Wrap
             maximumLineCount: TL.MAX_LINES
             elide: Text.ElideRight

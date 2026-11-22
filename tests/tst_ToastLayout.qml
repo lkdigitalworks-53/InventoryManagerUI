@@ -24,6 +24,14 @@ TestCase {
                 true, false, {}, [], [1], function () { return 1; }];
     }
     function rep(n) { var s = ""; for (var i = 0; i < n; ++i) s += "x"; return s; }
+    // How far in from the pill's side edge the corner curve is, at a distance vpad from the top (or bottom) edge: the text
+    // of the first and last line starts that far in from the pill's side, so the curve cuts the text when this is more than
+    // the side padding. Circle of radius r: inset = r - sqrt(r^2 - (r - vpad)^2); 0 once vpad >= r.
+    function cornerInset(r, vpad) {
+        var d = r - vpad;
+        if (d <= 0) return 0;
+        return r - Math.sqrt(r * r - d * d);
+    }
 
     function test_TLY_01_the_constants_6_lines_5_to_10_seconds_2_s_plus_60_ms_a_chara() {
         eq(TL.MAX_LINES, 6);
@@ -58,6 +66,8 @@ TestCase {
                 ok(isFinite(h) && h >= 0, "pillHeight " + a + "," + b);
                 var y = TL.pillY(pool[a], pool[b], 40, 110, 40);
                 ok(isFinite(y), "pillY " + a + "," + b);
+                var rr = TL.pillRadius(pool[a], pool[b]);
+                ok(isFinite(rr) && rr >= 0, "pillRadius " + a + "," + b);
             }
             var d = TL.dismissMs(pool[a]);
             ok(d >= 5000 && d <= 10000, "dismissMs " + a);
@@ -177,6 +187,38 @@ TestCase {
             ok(Math.abs(top + ph - (layerH - 70 * dpr)) < 1e-6, "bottom edge fixed " + i);
             var ms = TL.dismissMs(rep(Math.floor(r() * 400)));
             ok(ms >= 5000 && ms <= 10000, "dismiss in range " + i);
+            var rd = TL.pillRadius(999 * dpr, 40 * dpr);
+            ok(rd <= ph / 2 + 1e-9, "radius never over half the height " + i);
+            ok(cornerInset(rd, (ph - contentH) / 2) <= 16 * dpr + 1e-9, "corner clear of the text " + i);
+        }
+    }
+
+    function test_TLY_15_radius_a_one_line_pill_is_the_stadium_it_always_was_a_taller() {
+        eq(TL.pillRadius(999, 40), 20);
+        eq(TL.pillRadius(999 * 2.625, 40 * 2.625), 20 * 2.625);
+        eq(TL.pillRadius(8, 40), 8);
+        eq(TL.pillRadius(0, 40), 0);
+        eq(TL.pillRadius(999, 0), 0);
+        eq(TL.pillRadius(-5, 40), 0);
+        // the old effective radius for the one-line pill (Qt clamps 999 to half of 40) is the same number
+        eq(Math.min(999, 40 / 2), TL.pillRadius(999, 40));
+    }
+
+    function test_TLY_16_the_corner_curve_stays_clear_of_the_text_at_every_pill_heigh() {
+        var dprs = [1, 1.3, 2, 3.25];
+        for (var k = 0; k < dprs.length; ++k) {
+            var dpr = dprs[k];
+            var rNew = TL.pillRadius(999 * dpr, 40 * dpr);
+            for (var lines = 1; lines <= 6; ++lines) {
+                var content = lines * 17 * dpr;
+                var h = TL.pillHeight(content, 40 * dpr, 16 * dpr);
+                var vpad = (h - content) / 2;
+                ok(cornerInset(rNew, vpad) <= 16 * dpr + 1e-9, "new radius clear at " + lines + " lines, dpr " + dpr);
+            }
+            // the old radius (the token, clamped by Qt to half the pill height) cut into the text from 5 lines up
+            var h5 = TL.pillHeight(5 * 17 * dpr, 40 * dpr, 16 * dpr);
+            var rOld = Math.min(999 * dpr, h5 / 2);
+            ok(cornerInset(rOld, 8 * dpr) > 16 * dpr, "the old radius did cut the corner at 5 lines, dpr " + dpr);
         }
     }
 }
