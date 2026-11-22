@@ -47,4 +47,4 @@ Two minutes of rapid New Order / complete / delete: no crash, no new warning in 
 The plan itself, the id from the answer, the offline refusal.
 
 ## 5. CI result
-(filled in after the first CI run, see the PR)
+PR #212, READ 2026-11-22 on head `3ddef0c` (after the rebase onto #210; functions 2206/2206 and scripts 1199/1199 re-run locally on the rebased tree): QML Tests success (the new `tst_OrderPlan.qml` and the four widened twins passed on the REAL qmltestrunner), Functions Tests success, Firestore + Storage Rules Tests success, E2E Tests success; Deploy Check, Deploy to Firebase and Record Deployed Commit skipped (nothing to deploy). The first push (`4ed491d`) had a merge conflict with #209/#210 (docs only: KNOWN-ISSUES, Skills, status, checkpoint), so CI did not start; resolved by rebase, my entries renumbered to KNOWN-ISSUES 94-99 and Skill 183.

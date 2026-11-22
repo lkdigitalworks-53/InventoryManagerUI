@@ -16,7 +16,8 @@
 - [x] 5. Hand mutants: 60 -> 12 survivors -> 9 test rows + 3 deleted/simplified lines -> 56/56 killed.
 - [x] 6. QML twins: `tst_OrderPlan.qml` (new) + additions to four files; harness-checked, CI is the oracle.
 - [x] 7. Docs: design, test plan (+ index row), KNOWN-ISSUES 94-88, Skill 183 + index, AGENTS, README, ATOMIC-OPERATIONS-STATUS 19.
-- [ ] 8. Commit, push, open the PR, read CI, fill test plan section 5, final report.
+- [x] 8. Committed, rebased onto main (#209, #210 took the doc numbers: KNOWN-ISSUES 94-99, Skill 183), pushed, PR #212, CI all green on `3ddef0c`, recorded in test plan section 5.
+- [ ] 9. Owner review and merge; answers to Q-NO2-1..3 and the commit email (KNOWN-ISSUES 98, also 93).
 
 ## Next slice (NO3, not started)
 Wire `OrdersStore.addOrder` to `OrderPlan` (design section 3): `recordOperation("createOrder", ..., { awaitServer: true })`, offline refused with a clear text, callback `(ok, id)` from `reflect`, `DataModel` route for `operationApplied/Rejected`, auto-approve after the answer, delete the no-lines branch (KNOWN-ISSUES 97), replace the dormancy guards with a wiring guard. Copy the shape of AP3a (`AddProductFlow.js`, `InventoryStore.addProduct`, `tst_InventoryStore_addProduct.qml`, `addProductWire.test.js`). Ask the owner Q-NO2-1 first.
