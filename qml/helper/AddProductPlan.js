@@ -35,6 +35,11 @@ function _realTime(s) {
     return isFinite(t) && new Date(t).toISOString().substring(0, 19) === s.substring(0, 19)
 }
 
+// The two time checks of every planner (OrderPlan.js uses them too): an ISO instant as Date.toISOString() writes it, and a
+// local date "yyyy-MM-dd", both REAL (see _realTime).
+function isIsoInstant(s) { return typeof s === "string" && _ISO.test(s) && _realTime(s) }
+function isIsoDate(s) { return typeof s === "string" && _DATE.test(s) && _realTime(s + "T00:00:00Z") }
+
 function _refuse(reason) { return { ok: false, reason: reason } }
 function _isNum(n) { return typeof n === "number" && isFinite(n) }
 function _text(v) { return typeof v === "string" ? v : "" }
@@ -88,9 +93,7 @@ function build(input) {
     // Each factor is finite but the product can overflow (1e308 * 5): JSON turns Infinity into null and the stored
     // `total` would break every sum over the history. Whichever factor is the huge one, it is a cost problem.
     if (!_isNum(inp.unitCost) || inp.unitCost < 0 || !_isNum(inp.stock * inp.unitCost)) return _refuse("bad-cost")
-    if (typeof inp.now !== "string" || !_ISO.test(inp.now) || !_realTime(inp.now)
-        || typeof inp.date !== "string" || !_DATE.test(inp.date) || !_realTime(inp.date + "T00:00:00Z"))
-        return _refuse("bad-time")
+    if (!isIsoInstant(inp.now) || !isIsoDate(inp.date)) return _refuse("bad-time")
 
     var sup = inp.supplier
     var supplierId = ""          // what the product, the batch and the history carry

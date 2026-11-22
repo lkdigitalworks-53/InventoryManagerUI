@@ -111,6 +111,27 @@ function forAddProduct(rejection, name) {
     return forRejection(rejection, name)
 }
 
+// Same as forRejection, for a rejected CREATE ORDER operation (atomic-ops NO2). A rejection writes nothing, so every
+// text here may say "nothing was saved". `name` = the typed customer name ("" when unknown). A new order reads no
+// existing record and consumes no stock, so not-found, insufficient-quantity and operation-too-large mean an app bug.
+function forCreateOrder(rejection, name) {
+    var code = (rejection && typeof rejection === "object") ? _str(rejection.error) : ""
+    var who = _str(name)
+    switch (code) {
+    case "conflict":
+        return { kind: "conflict", text: (who ? who + ": " : "") + "another device created an order with the same number at the same time. Nothing was saved. Try again" }
+    case "mint-exhausted":
+        return { kind: "limit", text: "The server could not reserve a new order number. Nothing was saved. Try again in a moment; if it keeps failing, please report it (mint-exhausted)" }
+    case "request-id-in-use":
+        return { kind: "duplicate", text: "This request was already used for a different change. Try again" }
+    case "not-found":
+    case "insufficient-quantity":
+    case "operation-too-large":
+        return _bug(code)
+    }
+    return forRejection(rejection, name)
+}
+
 // The one wording for "the server refused your membership" (HTTP 403 `no-tenant-context`), shared by a
 // stuck write (forWriteError) and a lock acquire (lockState below) so the two can never drift. Never
 // "try again": retrying cannot help until an owner or admin restores the member.

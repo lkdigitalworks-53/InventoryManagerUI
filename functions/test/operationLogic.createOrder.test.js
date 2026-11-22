@@ -413,14 +413,15 @@ test("S-5 (D-NO-5b) monkey: 1500 corruptions of a valid operation; a request is 
     assert.ok(accepted > 0, "the monkey must also hit accepted shapes, or the oracle check proves nothing");
 });
 
-test("G-1 dormancy: no QML sends the createOrder operation yet (NO3 replaces this guard with a wiring guard)", () => {
+test("G-1 dormancy (NO2 widened it): only the helpers (OperationKeys, OrderPlan, DescribeItem) name createOrder; no store, page or dialog sends it yet (NO3 replaces this guard with a wiring guard)", () => {
     const root = path.join(__dirname, "..", "..", "qml");
     const hits = [];
     (function walk(dir) {
         for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
             const p = path.join(dir, e.name);
             if (e.isDirectory()) walk(p);
-            else if (/\.(qml|js)$/.test(e.name) && fs.readFileSync(p, "utf8").indexOf("createOrder") >= 0) hits.push(path.relative(root, p));
+            else if (/\.(qml|js)$/.test(e.name) && !/^(OperationKeys|OrderPlan|DescribeItem)\.js$/.test(e.name)
+                     && fs.readFileSync(p, "utf8").indexOf("createOrder") >= 0) hits.push(path.relative(root, p));
         }
     })(root);
     assert.deepEqual(hits, [], "QML names createOrder in: " + hits.join(", "));

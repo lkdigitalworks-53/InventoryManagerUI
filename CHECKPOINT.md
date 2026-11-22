@@ -17,5 +17,15 @@
 - [x] 6b. PR #215 opened against `main`. CI on head `5f04e7a`: QML Tests, Functions Tests, Firestore + Storage Rules Tests, E2E Tests all success (deploy jobs skipped, as for any PR). Test counts inside the jobs were not read.
 - [x] 7. Final report: done / open / next. NEXT SESSION: S5e-3b (13 text-child buttons, number-field names KI 108, font and theme audit).
 
+## Review sweep 2026-11-23 (PR #215: requesting-code-review + qt-qml-review + ponytail-audit; ONE agent, no sub-agents, as ordered)
+**Commit email for these commits:** `lkdigitalworks@gmail.com` (this session's instruction; git user `Taher (via Claude session)`). PR #215's own earlier commits keep `tsadmin@gmail.com`. History is not rewritten.
+- [x] R0. Cloned through the session proxy, PR head `95aacc9`, base `main` @ `01c0ff5`. Baseline: functions 2249/2249 (matches the PR), new file 24/24.
+- [x] R1. Lint (`qt_qml_lint.py` on the 13 touched QML files, filtered to the 39 changed lines): 1 style hit (`NewOrderDialog.qml:223` ORD-1, the repo's own Layout-first order, not changed). Identifiers used by the new dynamic names all resolve (`dlg._addPartyOpen`, `root._renaming`, `root.workspaceEditMode`, `modelData.status`).
+- [x] R2. FOUND: main had moved on (#212 NO2 took Skill 185 and KNOWN-ISSUES 107-118), so the PR conflicted in 5 doc files and clashed on numbers. Renumbered ours (Skill 185 -> 186, KI 107-110 -> 119-122, commit `341ba54`), merged `origin/main` @ `5948767`, kept both sides, archived main's checkpoint as `docs/superpowers/specs/2026-11-22-no2-merged-prev-CHECKPOINT.md`. After the merge: functions 2283/2283 (2258 on main + 25), scripts 1199/1199, `skills-index.js --check` current.
+- [ ] R3. FOUND (must fix): `IconActionButton` (38 dp, icon only) is used 13 times; 11 icon-only instances have no spoken name and the Dashboard profile button speaks the user's initial. The S5e-3a scanner skips wrapper components by design, so its "zero unnamed" ratchet is blind to them. Fix: `IconActionButton.label`, 12 labels, instance ratchet, root-button-component pin.
+- [ ] R4. FOUND (investigate, no change): `ListCard` and `ActionTile` (root buttons) keep their label only in a child `Text`; log in KNOWN-ISSUES, pin the list of root-button components.
+- [ ] R5. Docs for R3/R4 (KI 97 note, new KIs, Skill 186 rule, README, AGENTS, test plan rows and device checks, plan section 8), then push and read CI.
+- Note on the +25 test count: `node --test` with no arguments also runs every `.js` under `test/`, so the new support file `testSupport/qmlButtonScan.js` counts as one test file (the "+1 not traced" in the plan).
+
 ## If this session is cut off
-Resume at the first unticked step. Re-measure counts before claiming any: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`.
+Resume at the first unticked R step above. Re-measure counts before claiming any: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`, `node .github/scripts/skills-index.js --check`.
