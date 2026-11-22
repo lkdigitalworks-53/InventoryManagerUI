@@ -272,4 +272,16 @@ TestCase {
             verify(typeof d.detail === "string", "shape " + i)
         }
     }
+
+    // ── create order (atomic-ops NO2) ──────────────────────────────────────
+
+    function test_createOrder_label_uses_the_typed_customer_not_a_mint() {
+        var ops = [{ kind: "mint", counter: "order", bind: "ord" },
+                   { kind: "mutation", entity: "order", entityId: "{{ord}}", action: "create", after: { customer: "Asha", orderId: "{{ord}}" } }]
+        var d = DI.describe({ opType: "createOrder", ops: ops })
+        compare(d.title, "New order")
+        compare(d.detail, "Asha")
+        compare(DI.describe({ opType: "createOrder", ops: [{ kind: "mint", counter: "order", bind: "ord" }] }).detail, "")
+        compare(DI.describe({ opType: "createOrder", ops: [] }).title, "New order")
+    }
 }

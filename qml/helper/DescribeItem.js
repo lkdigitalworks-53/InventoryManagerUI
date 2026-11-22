@@ -29,7 +29,7 @@ var NOUN_PLURAL = {
 var VERB = { create: "Added", update: "Edited", "delete": "Deleted" }
 
 // Operation types (Gateway.recordOperation). Unknown ones fall back below.
-var OPERATION = { completeOrder: "Order completion", restock: "Restock", addProduct: "Add product" }
+var OPERATION = { completeOrder: "Order completion", restock: "Restock", addProduct: "Add product", createOrder: "New order" }
 
 function _has(map, key) {
     return typeof key === "string" && Object.prototype.hasOwnProperty.call(map, key)

@@ -563,7 +563,7 @@ test("G-1 wiring (AP3a replaced the dormancy guard): only InventoryStore, the fl
         for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
             const p = path.join(dir, f.name);
             if (f.isDirectory()) walk(p);
-            else if (/\.(qml|js)$/.test(f.name) && !/AddProductPlan\.js$|AddProductFlow\.js$|OperationKeys\.js$|FailureCause\.js$/.test(f.name)
+            else if (/\.(qml|js)$/.test(f.name) && !/AddProductPlan\.js$|AddProductFlow\.js$|OperationKeys\.js$|FailureCause\.js$|OrderPlan\.js$/.test(f.name)
                      && /AddProductPlan|addProductKey|addProductNonce|forAddProduct/.test(fs.readFileSync(p, "utf8"))) hits.push(path.relative(QML_ROOT, p));
         }
     })(QML_ROOT);
