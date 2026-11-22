@@ -337,4 +337,33 @@ TestCase {
         }
         compare(FC.forAddProduct({ error: "brand-new-code" }, "x").kind, "unknown")
     }
+
+    // ── create order (atomic-ops NO2) ──────────────────────────────────────
+
+    function test_N1_forCreateOrder_person_facing_texts() {
+        var c = FC.forCreateOrder({ error: "conflict" }, "Asha")
+        compare(c.kind, "conflict"); compare(c.text.indexOf("Asha: "), 0); verify(c.text.indexOf("Nothing was saved") > 0)
+        compare(FC.forCreateOrder({ error: "conflict" }, "").text.indexOf("Asha"), -1)
+        var m = FC.forCreateOrder({ error: "mint-exhausted" }, "")
+        compare(m.kind, "limit"); verify(m.text.indexOf("order number") > 0)
+        compare(FC.forCreateOrder({ error: "request-id-in-use" }, "").kind, "duplicate")
+    }
+
+    function test_N2_forCreateOrder_app_bugs_name_their_code() {
+        var codes = ["not-found", "insufficient-quantity", "operation-too-large", "invalid-order", "unbound-placeholder"]
+        for (var i = 0; i < codes.length; ++i) {
+            var r = FC.forCreateOrder({ error: codes[i] }, "")
+            compare(r.kind, "bug", codes[i]); verify(r.text.indexOf("(" + codes[i] + ")") > 0, codes[i])
+        }
+    }
+
+    function test_N3_forCreateOrder_never_returns_empty_text_and_unknown_codes_stay_unknown() {
+        var junk = [null, undefined, 0, "", "x", [], {}, { error: 5 }, { error: {} }, { error: "  " }, { error: "brand-new-code" }, { error: "<b>x</b>" }]
+        for (var i = 0; i < junk.length; ++i) {
+            var r = FC.forCreateOrder(junk[i], junk[i])
+            verify(typeof r.text === "string" && r.text.length > 0, "case " + i)
+        }
+        compare(FC.forCreateOrder({ error: "brand-new-code" }, "x").kind, "unknown")
+        compare(FC.forCreateOrder({ error: "<b>x</b>" }, "").text, "The server rejected this change")
+    }
 }

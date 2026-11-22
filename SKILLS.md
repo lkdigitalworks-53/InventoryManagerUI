@@ -5347,3 +5347,17 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 10. Write down what only a device can answer (does the text really wrap, Qt's `contentHeight` timing, the pill over a sheet footer, TalkBack reading the cut text, a toast that is never announced) as numbered device checks and KNOWN-ISSUES items; do not claim it.
 
 **The check:** `node --test functions/test/toastLayout.test.js functions/test/toastHostLayer.test.js`: green; `node functions/test/testSupport/pickerTwin.js --write` changes nothing. On a device: checks 151 to 161.
+## Skill 183: A planner that wraps a doc another function builds must check what holds for ANY correct doc, and prove it against the real builder
+
+**Why:** NO2 (`OrderPlan.js`) takes the order doc `OrdersStore._normalizeOrder` already makes, because a second copy of the discount and tax rules would drift. But the server checks only the STRUCTURE of a `createOrder` (D-NO-5b), so the planner is the last guard on the money of a sale. The answer was invariants, not rules, and a probe that runs the real builder.
+
+**Rules:**
+1. Do not rebuild what another function owns. Take its output, swap the id for the token, copy a WHITELIST of its keys (a drift test compares the key lists with the REAL function), and check invariants that hold for any correct output (items = sum of quantities, subtotal = sum of quantity x price, 0 <= discount <= subtotal, total = subtotal - discount + tax).
+2. Test each invariant with a doc whose OTHER fields stay consistent. A discount of -5 with the old total is refused by the total check, so it proves nothing about the discount bound; set the total to match the bad number. Hand mutants showed this: 5 of 12 survivors were exactly these bounds.
+3. Run the REAL builder in a vm (`extractFunction("model/OrdersStore.qml", ...)`) over thousands of random carts, then the planner, the real validator, the real apply and the reader (P-1, 2500 carts). That is what proves "the planner accepts every doc the app can make"; a hand-written fixture only proves the fixture.
+4. A mutant that survives is one of three things: a missing test (add a row), a redundant line (delete it: `typeof name` was covered by the trimmed-empty check, `results.length` by the mint/create counts), or a true equivalent (simplify: two roundings equal one for whole cents; prove it by search, not by argument).
+5. A new planner that imports another planner for shared functions widens that planner's wiring guard. Two planners sharing three functions is the limit; a third gets its own helper file (KNOWN-ISSUES 99).
+6. Refuse what the server will not check and the UI always guarantees only when its absence would be silent and permanent: a completed create (no stock taken), a fractional quantity, a non-finite money value (JSON turns it into `null`). Keep pure UI wording rules (a 2-character customer) in the UI.
+
+**The check:** `cd functions && node --test test/createOrderPlan.test.js` is 34/34 and P-1 reports no failure over 2500 carts.
+

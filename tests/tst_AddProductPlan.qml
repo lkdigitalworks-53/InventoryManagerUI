@@ -359,4 +359,16 @@ TestCase {
         }
         verify(accepted > 20 && refused > 20, accepted + "/" + refused)
     }
+
+    // ---- the two time checks OrderPlan shares ----
+    function test_isIsoInstant_and_isIsoDate_accept_real_times_only() {
+        var okI = [iso, "2024-02-29T23:59:59Z", "2026-12-31T00:00:00.5Z"]
+        var badI = ["2026-13-45T10:00:00Z", "2026-02-31T10:00:00Z", "2026-06-15T24:00:00Z", "2026-06-15", "", null, 5, undefined]
+        var okD = ["2026-06-15", "2024-02-29", "2026-12-31"]
+        var badD = ["2026-02-29", "2026-13-01", "2026-6-15", iso, "", null, 5]
+        for (var a = 0; a < okI.length; ++a) verify(AP.isIsoInstant(okI[a]), okI[a])
+        for (var b = 0; b < badI.length; ++b) verify(!AP.isIsoInstant(badI[b]), String(badI[b]))
+        for (var c = 0; c < okD.length; ++c) verify(AP.isIsoDate(okD[c]), okD[c])
+        for (var d = 0; d < badD.length; ++d) verify(!AP.isIsoDate(badD[d]), String(badD[d]))
+    }
 }

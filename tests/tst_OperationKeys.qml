@@ -84,4 +84,25 @@ TestCase {
         compare(OK.productAddedActId("PRD-007", "n1"), "act-PRD-007-n1")
         verify(OK.createdTxId("PRD-007", "n1") !== OK.createdTxId("PRD-007", "n2"))
     }
+
+    // ---- create order (atomic-ops NO2) ----
+    function test_createOrderNonce_is_the_restock_nonce() {
+        compare(OK.createOrderNonce(1781000000000, function() { return 0 }), OK.restockNonce(1781000000000, function() { return 0 }))
+        verify(/^1781000000000-[0-9a-z]{12}$/.test(OK.createOrderNonce(1781000000000.9, Math.random)))
+    }
+
+    function test_createOrderKey_accepts_a_plain_token_only() {
+        compare(OK.createOrderKey("1781000000000-abcdefabcdef"), "createOrder:1781000000000-abcdefabcdef")
+        var bad = ["", "a/b", "a~b", "a b", new Array(102).join("x"), null, undefined, 5, {}]
+        for (var i = 0; i < bad.length; ++i) compare(OK.createOrderKey(bad[i]), "", String(bad[i]))
+    }
+
+    function test_isCreateOrderKey_is_not_fooled_by_another_operations_key() {
+        verify(OK.isCreateOrderKey("createOrder:1781000000000-abcdefabcdef"))
+        var bad = ["", "createOrder:", "createOrder:a/b", "restock:1781000000000-abcdefabcdef", "addProduct:1781000000000-abcdefabcdef",
+                   "completeOrder:ORD-001:1", "CreateOrder:1781000000000-abcdefabcdef", null, 5]
+        for (var i = 0; i < bad.length; ++i) verify(!OK.isCreateOrderKey(bad[i]), String(bad[i]))
+        verify(!OK.isRestockKey("createOrder:1781000000000-abcdefabcdef"))
+        verify(!OK.isAddProductKey("createOrder:1781000000000-abcdefabcdef"))
+    }
 }

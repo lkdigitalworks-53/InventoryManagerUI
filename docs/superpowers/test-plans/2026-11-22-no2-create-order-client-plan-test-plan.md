@@ -1,0 +1,50 @@
+# Test plan: NO2, the create-order client plan (pure helpers, dormant)
+
+Branch `feat/2026-11-22-no2-create-order-client-plan`. Design: `specs/2026-11-22-no2-create-order-client-plan-design.md` (D-NO2-1..9) on top of `specs/2026-11-21-create-order-atomic-operation-design.md` (D-NO-5b is the server rule). Standard format (Skill 49).
+Honesty note: no QML component, no rules, no server file changed. Node tests were RUN in the sandbox against the real server code and the real `OrdersStore` normaliser. QML twins (`tests/tst_*.qml`) were run only in a throwaway Node harness (no Qt in the sandbox, by rule); the real qmltestrunner result is CI's (section 5). Data-driven (`_data`) QML functions cannot run in that harness; the ones touched here are not data-driven.
+
+## 1. Unit tests
+| File | Cases | Run? | Covers |
+|---|---|---|---|
+| `functions/test/createOrderPlan.test.js` (new) | 34 | RUN 34/34 | K-1..K-5 keys (nonce, key, `isCreateOrderKey` against every other op's key, other keys unchanged, server accepts the key for `createOrder` and refuses a restock key); T-1 the shared time checks; B-1..B-6 plan shape (mint + one create, bare token, trim, input untouched, key-list DRIFT GUARD vs the real `_normalizeOrder`, extra keys dropped, several lines with mixed tax and both discount types, free item); R-1..R-5 every refusal (47 inputs, 7 reasons, totals kept consistent where only the field bound can refuse), bad-line index, boundaries that ARE allowed, non-objects, 1 MiB; N-1..N-3 braces in every string, through the real server, single braces byte-identical; S-1..S-4 real server (one order doc, counter moves, NO ledger row, NO feed row, replay writes nothing, number not reused after a delete); F-1..F-3 `reflect` refusals; **P-1 chain probe: 2500 random carts through the REAL store normaliser -> planner -> real validator -> real apply -> reflect, stored doc equals the store's doc, 0 failures**; M-1 monkey (3000 inputs, both sides reached, accepted plans always pass the real validator); M-2 monkey (3000 damaged answers); C-1/C-2 `forCreateOrder`; D-1 label; G-1 dormancy |
+| `functions/test/failureCauseCodes.test.js` | C-2 widened | RUN | every server code has a text for completion, restock, add product AND create order, and create order has the add's kind for each code |
+| `functions/test/operationLogic.createOrder.test.js` | G-1 widened | RUN 37/37 | NO1's "no QML names createOrder" guard now allows the three helpers that must |
+| `functions/test/addProductPlan.test.js` | G-1 narrowed | RUN 43/43 | the AP guard skips `OrderPlan.js` (it imports `AddProductPlan.js`) |
+| `tests/tst_OrderPlan.qml` (new, CI) | 13 functions | harness 13/13 | the same cases for the QML engine (regex, number formatting, `Array.join`, rounding) |
+| `tests/tst_OperationKeys.qml`, `tst_DescribeItem.qml`, `tst_FailureCause.qml`, `tst_AddProductPlan.qml` (CI) | +3, +1, +3, +1 | harness green | keys, label, `forCreateOrder`, `isIsoInstant`/`isIsoDate` |
+
+Totals: functions 2183/2183 RUN (2149 on `main` + 34), scripts 1061/1061, `skills-index.js --check` current.
+**Hand mutants of `OrderPlan.js`:** 60 first (48 killed, 12 survived). The 12 led to 9 new test rows (tax below 0, discount below 0 and above the subtotal and tax below 0 each with a CONSISTENT total, tax-row rate and amount below 0, defaults of adjustments and consumption, the id regex anchors) and 3 deletions: `typeof name !== "string"` (the trimmed-empty check already refuses a non-string), `results.length !== 2` (the mint/create counts already force it), and the nested double rounding of the total (equal to one rounding for whole cents, proven by a 2-million-case search that found no difference). Final sweep 56 of 56 killed, plus the "total check removed" mutant (2 tests fail).
+
+## 2. Regression tests
+`addProductPlan.test.js` (43), `operationLogic.createOrder.test.js` (37), `failureCauseCodes.test.js` and the whole functions suite pass unchanged: `AddProductPlan.build` now calls the two exported time checks, so its R-1/R-6 time cases are the regression for that refactor.
+
+## 3. E2E
+None. Nothing sends the operation; NO1's three emulator cases already cover the server. NO3 adds the device-path e2e.
+
+## 4. Rules
+None changed.
+
+## On-device test plan (Taher; NO2 changes nothing visible, so this is a smoke of the build that contains the helpers)
+Prerequisite: a build of this branch (CI builds it; I did not build or run the app).
+### Happy path
+1. Launch, sign in as owner on the dev tenant. Expect: no new toast, no console warning mentioning `OrderPlan`.
+2. New order: customer "Asha", 2 products, Save. Expect: the order appears as `ORD-nnn` with the next number, as before (the OLD path still runs).
+3. Complete it. Expect: stock down, a sale History row, as before.
+### Negative
+- New order with a customer of 1 character or no product: the dialog's own message, nothing saved.
+- Stuck-writes sheet (Settings): existing items still show their labels (a restock reads "Restock", an add "Add product", an order completion "Order completion").
+### Edge cases
+- A customer typed `{{ord}}` through the OLD path is stored EXACTLY as typed (plain writes do no substitution); it changes by one space only once NO3 sends the order as an operation.
+- Auto-approve ON then a new order: created, then completed, as before.
+### Affected areas
+None by design: the helpers are imported by no component.
+### Regression
+Add a product, restock it, edit a product, import a CSV: unchanged.
+### Monkey
+Two minutes of rapid New Order / complete / delete: no crash, no new warning in the console.
+### Not testable on device until NO3
+The plan itself, the id from the answer, the offline refusal.
+
+## 5. CI result
+(filled in after the first CI run, see the PR)

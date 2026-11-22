@@ -96,3 +96,21 @@ function createdTxId(productId, nonce) {
 function productAddedActId(productId, nonce) {
     return "act-" + productId + "-" + nonce
 }
+
+// ---- create order (atomic-ops NO2, design 2026-11-22-no2-create-order-client-plan-design.md) ----
+//
+// Same rules as the add key: made ONCE at the tap, kept with the queued operation, so a resend replays the first
+// result. The server enforces the prefix `createOrder:` for opType createOrder, so no other key can start an order.
+// The order id is minted by the server inside the operation, so (unlike completeOrderKey) the key cannot be
+// derived from the order.
+function createOrderNonce(nowMs, random) {
+    return restockNonce(nowMs, random)
+}
+
+function createOrderKey(nonce) {
+    return _validNonce(nonce) ? "createOrder:" + nonce : ""
+}
+
+function isCreateOrderKey(key) {
+    return typeof key === "string" && key.indexOf("createOrder:") === 0 && createOrderKey(key.substring(12)) === key
+}

@@ -37,12 +37,15 @@ test("C-1 the scan finds the codes it should (so a regex that stops matching can
         assert.ok(codes.has(c), c);
 });
 
-test("C-2 every server code is a known person-facing cause or an app bug, for completion, for restock and for add product", () => {
+test("C-2 every server code is a known person-facing cause or an app bug, for completion, restock, add product and create order", () => {
     for (const code of serverCodes()) {
         const comp = plain(FC.forRejection({ error: code }, "P"));
         const rest = plain(FC.forRestock({ error: code }, "P"));
         const add = plain(FC.forAddProduct({ error: code }, "P"));
-        assert.ok(comp.text && rest.text && add.text, code);
+        const ord = plain(FC.forCreateOrder({ error: code }, "P"));
+        assert.ok(comp.text && rest.text && add.text && ord.text, code);
+        // a new order, like an add, reads no existing record and consumes no stock (NO2): same kind as the add for every code
+        assert.equal(ord.kind, add.kind, "create order " + code);
         if (Object.prototype.hasOwnProperty.call(COMPLETION_KIND, code)) {
             assert.equal(comp.kind, COMPLETION_KIND[code], "completion " + code);
             // an add reads no existing record and consumes no stock: those three are an app bug there (AP2)
