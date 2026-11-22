@@ -68,6 +68,13 @@ function rng(seed) {
     if (s <= 0) s += 2147483646;
     return function() { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
 }
+// Reads a scope index through the public Edit API (an index answers before `original` is looked at).
+// What an index built by scopeOf holds for a product (its sums), read directly: EP.heldAtCompletion now trusts an index only
+// for the rows it was made from (PR #210 sweep, F1), so it is not a way to read a bare index any more.
+function idxQty(index, id) {
+    var k = "k:" + id;
+    return (index && index.sums && Object.prototype.hasOwnProperty.call(index.sums, k)) ? index.sums[k] : 0;
+}
 // QML-PRELUDE-END
 
 test("EOP-01 linesOf: one picker line per row in the same order, quantity renamed qty, discount normalised, junk rows blank, not a list is empty", () => {
@@ -703,4 +710,101 @@ test("EOP-44 lineFields (PR #202 sweep F2): an order that never stored a product
     for (const junk of [undefined, null, 0, "", "true", 1]) eq(EP.lineFields(junk, 0, 0, []), { items: 0, products: [] });
     // a row count that is not a real 0 means there are rows
     for (const n of [undefined, NaN, -1, "0", 3]) eq(EP.lineFields(true, n, 0, []), { items: 0, products: [] });
+});
+
+// ---- S5d (plan 2026-11-21-product-picker-v2-s5d-measure-and-cart-index.md): the per-build scope ----
+test("EOP-45 scopeOf: the cart index always; the held index only for a COMPLETED order; junk ctx and junk lines never throw", () => {
+    const lines = [line("A", 2), line("A", 1), line("B", 4)];
+    const original = [orig("A", 3, false, 0), orig("A", 1, false, 0), orig("C", 2.5, false, 0)];
+    const done = EP.scopeOf(lines, ctx("completed", original));
+    eq(idxQty(done.cart, "A"), 3);
+    eq(idxQty(done.cart, "B"), 4);
+    eq(idxQty(done.held, "A"), 4);
+    eq(idxQty(done.held, "C"), 2.5);
+    eq(idxQty(done.held, "B"), 0);
+    // each index remembers the rows and the key it was made from (the same arrays, not copies)
+    ok(done.cart.rows === lines && done.cart.field === "qty", "cart index: wrong source");
+    ok(done.held.rows === original && done.held.field === "quantity", "held index: wrong source");
+    for (const status of ["pending", "processing", "cancelled", "", undefined]) eq(EP.scopeOf(lines, ctx(status, original)).held, null);
+    eq(idxQty(EP.scopeOf(lines, ctx("pending")).cart, "A"), 3);
+    for (const junk of [undefined, null, 5, "x", {}, { status: "completed" }, { status: "completed", original: "x" }]) {
+        noThrow(() => EP.scopeOf(undefined, junk));
+        noThrow(() => EP.scopeOf("x", junk));
+    }
+    eq(idxQty(EP.scopeOf(lines, { status: "completed" }).held, "A"), 0);
+});
+test("EOP-46 availableFor, ceilingFor and heldAtCompletion answer the same with and without the scope: every status, two lines of one product, a line of 2.5, a product that left the catalog", () => {
+    const original = [orig("A", 3, false, 0), orig("A", 1, false, 0), orig("C", 2.5, false, 0), orig("D", 2, false, 0)];
+    const lines = [line("A", 2), line("A", 1), line("C", 0.5), line("E", 4), line("B", 0), line("B", -1)];
+    const products = [prod("A", 5), prod("B", 0), prod("C", 1.5), prod("D", 3), prod("E", 4), prod("F", 7), null];
+    for (const status of ["pending", "processing", "completed", "cancelled", "", undefined]) {
+        const c = ctx(status, original);
+        const scope = EP.scopeOf(lines, c);
+        for (let i = 0; i < products.length; ++i) {
+            const p = products[i];
+            const id = p ? p.productId : "GONE";
+            eq(EP.availableFor(p, lines, c, scope), EP.availableFor(p, lines, c));
+            eq(EP.ceilingFor(id, p, c, scope), EP.ceilingFor(id, p, c));
+            eq(EP.heldAtCompletion(original, id, scope.held), EP.heldAtCompletion(original, id));
+        }
+    }
+    const c = ctx("completed", original);
+    const scope = EP.scopeOf(lines, c);
+    eq(EP.availableFor(prod("A", 5), lines, c, scope), 6);
+    eq(EP.availableFor(prod("D", 3), lines, c, scope), 5);
+    eq(EP.heldAtCompletion(original, "A", scope.held), 4);
+    // a scope answers only for the very lines and original it was made from: anything else is scanned (PR #210 sweep, F1)
+    eq(EP.heldAtCompletion([], "A", scope.held), 0);
+    eq(EP.heldAtCompletion([orig("A", 100, false, 0)], "A", scope.held), 100);
+    eq(EP.ceilingFor("A", prod("A", 5), ctx("completed", []), scope), 5);
+    eq(EP.ceilingFor("A", prod("A", 5), ctx("completed", [orig("A", 100, false, 0)]), scope), 105);
+    eq(EP.availableFor(prod("A", 5), [], ctx("pending"), scope), 5);
+    eq(EP.availableFor(prod("A", 5), [], ctx("completed", []), scope), 5);
+    eq(EP.availableFor(prod("A", 5), [], ctx("completed", []), { cart: EP.scopeOf([], ctx("pending")).cart, held: scope.held }), 5);
+    // the cart index of a scope never answers for the held key (and the other way round): a swap is refused, not trusted
+    eq(EP.heldAtCompletion(original, "A", scope.cart), 4);
+    // made from these exact arrays, the scope is read and they are not read again: emptied in place AFTER, it still answers
+    const ls = [line("A", 2), line("A", 1)], org = [orig("A", 3, false, 0), orig("A", 1, false, 0)];
+    const c2 = ctx("completed", org), sc = EP.scopeOf(ls, c2);
+    ls.length = 0; org.length = 0;
+    eq(EP.ceilingFor("A", prod("A", 5), c2, sc), 9);
+    eq(EP.availableFor(prod("A", 5), ls, c2, sc), 6);
+    eq(EP.availableFor(prod("A", 5), ls, ctx("pending"), sc), 2);
+});
+test("EOP-47 a scope with no held index on a completed order falls back to the scan: wrong shape, never a wrong number", () => {
+    const original = [orig("A", 3, false, 0)];
+    const c = ctx("completed", original);
+    const lines = [line("A", 1)];
+    const half = { cart: EP.scopeOf(lines, ctx("pending")).cart, held: null };
+    eq(EP.availableFor(prod("A", 5), lines, c, half), EP.availableFor(prod("A", 5), lines, c));
+    eq(EP.ceilingFor("A", prod("A", 5), c, half), 8);
+    for (const junk of [undefined, null, 5, "x", {}, { cart: "x", held: "y" }, { cart: [], held: [] }]) {
+        eq(EP.availableFor(prod("A", 5), lines, c, junk), EP.availableFor(prod("A", 5), lines, c));
+        eq(EP.ceilingFor("A", prod("A", 5), c, junk), 8);
+    }
+});
+test("EOP-48 monkey, seeded: availableFor with a scope equals availableFor without, on random orders of every status (Node only)", () => {
+    const rand = rng(48);
+    const idPool = ["A", "B", "C", 1, "1", "", null, "__proto__"];
+    const qtyPool = [0, 1, 2, 2.5, 0.1, 0.2, -1, NaN, 7, "3", null];
+    const statuses = ["pending", "processing", "completed", "cancelled", ""];
+    for (let round = 0; round < 300; round++) {
+        const mkRows = (key) => {
+            const out = [];
+            const n = Math.floor(rand() * 12);
+            for (let i = 0; i < n; i++) {
+                const r = { productId: idPool[Math.floor(rand() * idPool.length)] };
+                r[key] = qtyPool[Math.floor(rand() * qtyPool.length)];
+                out.push(rand() < 0.05 ? null : r);
+            }
+            return out;
+        };
+        const c = ctx(statuses[Math.floor(rand() * statuses.length)], mkRows("quantity"));
+        const lines = mkRows("qty");
+        const scope = EP.scopeOf(lines, c);
+        for (let k = 0; k < idPool.length; k++) {
+            const p = idPool[k] === null || idPool[k] === "" ? null : prod(idPool[k], [0, 1, 2.5, 9][Math.floor(rand() * 4)]);
+            eq(EP.availableFor(p, lines, c, scope), EP.availableFor(p, lines, c));
+        }
+    }
 });

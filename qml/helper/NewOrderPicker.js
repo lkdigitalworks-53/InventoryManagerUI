@@ -47,10 +47,59 @@ function _productOf(lookup, id) {
     }
 }
 
-// Units of a product already in the cart (all lines of that product).
-function cartQty(lines, productId) {
+// A per-build index of how many units each product holds across `rows` (picker v2, S5d, plan S5d-D1/D3). The sheet
+// asks "how much of this product is already in the order" for EVERY product of the catalog on every rebuild; walking
+// the whole cart each time is N x L work (83% of a 60-line rebuild, measured by scripts/bench/pickerBench.cjs). The
+// dialog builds ONE index when a build starts (the sheet's beginBuild hook) and drops it when the build ends.
+// `field` is the quantity key: "qty" for cart lines, "quantity" for an Edit Order's original lines. The rules are the
+// scan's, line for line: a row that is not an object, a blank id, or a quantity that is not a positive finite number
+// holds nothing; ids match as String(id); sums run in row order, so even a fractional total equals the scan's.
+// Keys carry a "k:" prefix: a product id of "__proto__" must not reach the prototype.
+// The index remembers WHICH rows and WHICH field it was made from (`rows`, `field`): indexFits trusts it only for those,
+// so an index of another list or of the other quantity key (cart `qty` versus original `quantity`) can never answer for
+// this one. A mismatch is not an error: the caller scans, as before S5d (PR #210 sweep, F1).
+function qtyIndex(rows, field) {
+    var sums = {}
+    if (Array.isArray(rows))
+        for (var i = 0; i < rows.length; ++i) {
+            var l = rows[i]
+            if (!l || typeof l !== "object" || _blankId(l.productId)) continue
+            var q = l[field]
+            if (typeof q !== "number" || !isFinite(q) || !(q > 0)) continue
+            var k = "k:" + String(l.productId)
+            sums[k] = (_has(sums, k) ? sums[k] : 0) + q
+        }
+    return { qtyIndex: true, field: field, rows: rows, sums: sums }
+}
+
+// True only for an index made by qtyIndex from exactly THESE rows (the same array, not an equal one) and this quantity
+// key. The rows are compared by identity, so a stale index (the order changed since), an index of another list and an
+// index of the other key are all refused, and the caller scans. Without this, a wrong index answered with a wrong number
+// and the sheet offered MORE stock than there is (PR #210 sweep, F1).
+function indexFits(index, rows, field) {
+    return !!index && typeof index === "object" && index.qtyIndex === true && index.rows === rows && index.field === field
+}
+
+// The units the index holds for this product, or null when `index` is not an index made by qtyIndex (the caller then
+// scans). Junk is never trusted: a string, {}, an array, or an index whose `sums` is an array, as the third argument of
+// cartQty falls back to the scan. Callers check indexFits first (cartQty and heldAtCompletion do).
+function qtyFromIndex(index, productId) {
+    if (!index || typeof index !== "object" || index.qtyIndex !== true) return null
+    if (!index.sums || typeof index.sums !== "object" || Array.isArray(index.sums)) return null
+    if (_blankId(productId)) return 0
+    var k = "k:" + String(productId)
+    return _has(index.sums, k) ? index.sums[k] : 0
+}
+
+// Units of a product already in the cart (all lines of that product). `index` (optional, qtyIndex(lines, "qty")) answers
+// without walking the cart; it is used only when it was made from these very `lines` (indexFits), any other value is
+// ignored and the cart is scanned.
+function cartQty(lines, productId, index) {
     var used = 0
-    if (_blankId(productId) || !Array.isArray(lines)) return used
+    if (_blankId(productId)) return used
+    var fast = indexFits(index, lines, "qty") ? qtyFromIndex(index, productId) : null
+    if (fast !== null) return fast
+    if (!Array.isArray(lines)) return used
     var id = String(productId)
     for (var i = 0; i < lines.length; ++i) {
         var l = lines[i]
@@ -69,9 +118,9 @@ function ceilingOf(product) { return (product && typeof product === "object") ? 
 
 // What NEW lines may still use: the ceiling minus what the cart already holds (units are not deducted until the
 // order completes). Never negative, whole units, 0 for a product that is not a product.
-function availableFor(product, lines) {
+function availableFor(product, lines, index) {
     if (!product || typeof product !== "object" || _blankId(product.productId)) return 0
-    return Math.max(0, ceilingOf(product) - cartQty(lines, product.productId))
+    return Math.max(0, ceilingOf(product) - cartQty(lines, product.productId, index))
 }
 
 // The quantity of a New Order cart row after a tap of + (delta above 0) or - (delta below 0), the same contract as
