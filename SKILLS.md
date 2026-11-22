@@ -5358,6 +5358,7 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 4. A mutant that survives is one of three things: a missing test (add a row), a redundant line (delete it: `typeof name` was covered by the trimmed-empty check, `results.length` by the mint/create counts), or a true equivalent (simplify: two roundings equal one for whole cents; prove it by search, not by argument).
 5. A new planner that imports another planner for shared functions widens that planner's wiring guard. Two planners sharing three functions is the limit; a third gets its own helper file (KNOWN-ISSUES 99).
 6. Refuse what the server will not check and the UI always guarantees only when its absence would be silent and permanent: a completed create (no stock taken), a fractional quantity, a non-finite money value (JSON turns it into `null`). Keep pure UI wording rules (a 2-character customer) in the UI.
+7. The planner is the last guard, so give every value the limit the app already has for it at another entry point (a price is at most `RestockFlow.MAX_UNIT_COST`): a new entry without the cap is the gap, and the limit lives in ONE constant that a test pins (R-3). Found in the NO2 review: New Order's unit-price field had none, so a 20-digit price was finite, consistent and accepted.
 
 **The check:** `cd functions && node --test test/createOrderPlan.test.js` is 34/34 and P-1 reports no failure over 2500 carts.
 
