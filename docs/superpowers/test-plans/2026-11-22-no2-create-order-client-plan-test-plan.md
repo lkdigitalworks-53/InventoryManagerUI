@@ -13,7 +13,7 @@ Honesty note: no QML component, no rules, no server file changed. Node tests wer
 | `tests/tst_OrderPlan.qml` (new, CI) | 13 functions | harness 13/13 | the same cases for the QML engine (regex, number formatting, `Array.join`, rounding) |
 | `tests/tst_OperationKeys.qml`, `tst_DescribeItem.qml`, `tst_FailureCause.qml`, `tst_AddProductPlan.qml` (CI) | +3, +1, +3, +1 | harness green | keys, label, `forCreateOrder`, `isIsoInstant`/`isIsoDate` |
 
-Totals: functions 2206/2206 RUN (2172 on `main` + 34), scripts 1199/1199 (after the rebase and the review fix), `skills-index.js --check` current.
+Totals: functions 2258/2258 RUN (2224 on `main` + 34), scripts 1199/1199 (RUN 2026-11-23 on the branch rebased onto #214, after the review fix), `skills-index.js --check` current.
 **Hand mutants of `OrderPlan.js`:** 60 first (48 killed, 12 survived). The 12 led to 9 new test rows (tax below 0, discount below 0 and above the subtotal and tax below 0 each with a CONSISTENT total, tax-row rate and amount below 0, defaults of adjustments and consumption, the id regex anchors) and 3 deletions: `typeof name !== "string"` (the trimmed-empty check already refuses a non-string), `results.length !== 2` (the mint/create counts already force it), and the nested double rounding of the total (equal to one rounding for whole cents, proven by a 2-million-case search that found no difference). Final sweep 56 of 56 killed, plus the "total check removed" mutant (2 tests fail). The review sweep added one line (unit price limit); its three mutants (`>=`, line removed, limit x10) are killed by R-1 and R-3.
 
 ## 2. Regression tests
@@ -37,7 +37,7 @@ Prerequisite: a build of this branch (CI builds it; I did not build or run the a
 ### Edge cases
 - A customer typed `{{ord}}` through the OLD path is stored EXACTLY as typed (plain writes do no substitution); it changes by one space only once NO3 sends the order as an operation.
 - Auto-approve ON then a new order: created, then completed, as before.
-- A 20-digit unit price typed in New Order still saves through the OLD path (the cap arrives with NO3, KNOWN-ISSUES 101); nothing to check here beyond "no crash".
+- A 20-digit unit price typed in New Order still saves through the OLD path (the cap arrives with NO3, KNOWN-ISSUES 114); nothing to check here beyond "no crash".
 ### Affected areas
 None by design: the helpers are imported by no component.
 ### Regression
@@ -48,11 +48,12 @@ Two minutes of rapid New Order / complete / delete: no crash, no new warning in 
 The plan itself, the id from the answer, the offline refusal.
 
 ## 5. CI result
-PR #212, READ 2026-11-22 on head `3ddef0c` (after the rebase onto #210; functions 2206/2206 and scripts 1199/1199 re-run locally on the rebased tree): QML Tests success (the new `tst_OrderPlan.qml` and the four widened twins passed on the REAL qmltestrunner), Functions Tests success, Firestore + Storage Rules Tests success, E2E Tests success; Deploy Check, Deploy to Firebase and Record Deployed Commit skipped (nothing to deploy). The first push (`4ed491d`) had a merge conflict with #209/#210 (docs only: KNOWN-ISSUES, Skills, status, checkpoint), so CI did not start; resolved by rebase, my entries renumbered to KNOWN-ISSUES 94-99 and Skill 183.
+PR #212, READ 2026-11-22 on head `3ddef0c` (after the rebase onto #210; functions 2206/2206 and scripts 1199/1199 re-run locally on the rebased tree): QML Tests success (the new `tst_OrderPlan.qml` and the four widened twins passed on the REAL qmltestrunner), Functions Tests success, Firestore + Storage Rules Tests success, E2E Tests success; Deploy Check, Deploy to Firebase and Record Deployed Commit skipped (nothing to deploy). The first push (`4ed491d`) had a merge conflict with #209/#210 (docs only: KNOWN-ISSUES, Skills, status, checkpoint), so CI did not start; resolved by rebase, my entries renumbered to KNOWN-ISSUES 94-99 and Skill 183, and again on 2026-11-23 after #213 and #214 (now KNOWN-ISSUES 107-112 and Skill 185).
 
 ## 6. Review sweep (2026-11-22, same branch, commits by `allibaas1998@gmail.com`)
 - Method: `requesting-code-review` + `qt-qml-review` (Phase 1 lint; the six agent domains are empty: no QML component changed) + `ponytail-audit`, one agent, sequentially.
 - Fix: `OrderPlan._line` refuses a unit price above `RestockFlow.MAX_UNIT_COST` (1e9), `bad-line`. R-1 +3 rows (1e9 + 0.01, a 20-digit price, 1e308), R-3 allows exactly 1e9 and pins `AddProductFlow.MAX_MONEY` equal to the limit; the Infinity-overflow row now uses a huge quantity. `tst_OrderPlan.qml` has the same rows.
 - RUN after the fix: functions 2206/2206, scripts 1199/1199 (the full suites, with `npm ci`). QML twin: CI only.
 - CI on the review commits: READ 2026-11-22 on head `c6ac2bc`: QML Tests 3351/3351 (the real qmltestrunner, with the new `tst_OrderPlan.qml` rows), Functions Tests 2206/2206, Firestore + Storage Rules Tests success, E2E Tests success; the bot comment says 5810/5810. Deploy jobs skipped. This note's own commit is docs only; its CI run is not read here.
-- Docs corrected: see CHECKPOINT R4 and KNOWN-ISSUES 100-105.
+- Rebase 2026-11-23 onto `main` @ `01c0ff5` (#213, #214): functions 2258/2258 and scripts 1199/1199 RUN locally on the rebased tree; CI on it: READ pending (see CHECKPOINT R7).
+- Docs corrected: see CHECKPOINT R4 and KNOWN-ISSUES 113-118.
