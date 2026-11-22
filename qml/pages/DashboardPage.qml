@@ -278,6 +278,7 @@ Item {
             IconActionButton {
                 variant: "glass"
                 iconName: "bell"
+                label: badgeText.length > 0 ? qsTr("Notifications, %1 waiting").arg(badgeText) : qsTr("Notifications")
                 // Live count = low-stock products + unread activity entries.
                 // Cleared on notifications-sheet open via ActivityLog.markAllRead().
                 badgeText: {
@@ -288,6 +289,7 @@ Item {
             },
             IconActionButton {
                 variant: "glass"
+                label: qsTr("Profile")
                 text: root._initial()
                 onClicked: root.navigateToProfile()
             }

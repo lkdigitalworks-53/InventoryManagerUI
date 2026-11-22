@@ -91,6 +91,29 @@ function scanButtons(src) {
     return found;
 }
 
+// Instances of a WRAPPER component (`IconActionButton { ... }`): the raw-button scan cannot see these, because the wrapper's own root is the
+// raw button and is skipped. Same depth-1 rules; `ignored` is the "an accessible wrapper above speaks for it" escape (RefreshAction).
+function scanInstances(src, typeName) {
+    const s = stripComments(src), t = blankStrings(s), re = new RegExp("\\b" + typeName + "\\s*\\{", "g");
+    const found = [];
+    let m;
+    while ((m = re.exec(t))) {
+        const open = m.index + m[0].length - 1, close = matchBrace(t, open);
+        const line = t.slice(0, m.index).split("\n").length;
+        if (close < 0) throw new Error("unbalanced braces after " + m[0] + " at line " + line);
+        const bodyT = t.slice(open + 1, close), body = s.slice(open + 1, close), own = flatten(bodyT);
+        found.push({
+            line,
+            body,
+            ownSrc: flatten(bodyT, body),
+            labelled: /(^|[\s;{])label\s*:/.test(own),
+            ignored: /(^|[\s;{])Accessible\.ignored\s*:\s*true/.test(own),
+        });
+        re.lastIndex = open + 1;
+    }
+    return found;
+}
+
 function qmlFiles(dir) {
     const out = [];
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -114,4 +137,4 @@ function scanTree(root) {
     return { iconOnly, textChild };
 }
 
-module.exports = { stripComments, blankStrings, matchBrace, flatten, scanButtons, qmlFiles, scanTree };
+module.exports = { stripComments, blankStrings, matchBrace, flatten, scanButtons, scanInstances, qmlFiles, scanTree };

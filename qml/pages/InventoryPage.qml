@@ -58,11 +58,13 @@ Item {
             IconActionButton {
                 variant: "glass"
                 iconName: "import"
+                label: qsTr("Import products")
                 onClicked: root.importRequested()
             },
             IconActionButton {
                 variant: "glass"
                 iconName: "export"
+                label: qsTr("Export products")
                 onClicked: root.exportRequested()
             }
         ]

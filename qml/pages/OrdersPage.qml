@@ -71,16 +71,19 @@ Item {
             IconActionButton {
                 variant: "glass"
                 iconName: "import"
+                label: qsTr("Import orders")
                 onClicked: root.importRequested()
             },
             IconActionButton {
                 variant: "glass"
                 iconName: "export"
+                label: qsTr("Export orders")
                 onClicked: root.exportRequested()
             },
             IconActionButton {
                 variant: "glass"
                 iconName: "settings"
+                label: badgeText.length > 0 ? qsTr("Filters, active") : qsTr("Filters")
                 // Dot badge when a date filter is active so the user can spot
                 // why the list is shorter than they expected.
                 badgeText: root.dateRange !== "all" && root.dateRange.length > 0 ? "•" : ""

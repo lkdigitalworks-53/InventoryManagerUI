@@ -1,5 +1,5 @@
 "use strict";
-// Picker v2, slice S5e-3a: the icon-only buttons speak, "Manage channels" and the four number fields are big enough. S5E3-01..24.
+// Picker v2, slice S5e-3a: the icon-only buttons speak, "Manage channels" and the four number fields are big enough. S5E3-01..30 (25..30 are the review sweep of PR #215: wrapper components).
 // Plan: docs/superpowers/plans/2026-11-22-product-picker-v2-s5e3a-unnamed-buttons-and-targets.md
 // Like the S5e-1 wiring test these READ the QML text (qmltestrunner cannot load Felgo pages) and RUN the real name
 // expressions in a sandbox, so a typo in a ternary fails here. They pin WIRING, not what Android does with it: whether
@@ -9,7 +9,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-const { stripComments, blankStrings, matchBrace, scanButtons, qmlFiles, scanTree } = require("./testSupport/qmlButtonScan");
+const { stripComments, blankStrings, matchBrace, scanButtons, scanInstances, qmlFiles, scanTree } = require("./testSupport/qmlButtonScan");
 
 const ROOT = path.join(__dirname, "..", "..");
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
@@ -236,4 +236,123 @@ test("S5E3-24 REGRESSION: the files S5e-1 pinned still hold (sheet surface has z
         for (const b of scanButtons(read(rel))) assert.equal(b.named || b.ownText, true, rel + " line " + b.line + " is unnamed");
     }
     for (const f of qmlFiles(path.join(ROOT, "qml"))) scanButtons(fs.readFileSync(f, "utf8")); // throws on unbalanced braces
+});
+
+// ---- review sweep of PR #215: wrapper components ----------------------------------------------------------------
+// The raw-button scan skips a component whose ROOT is the button (FloatingActionButton, IconActionButton, ...), so the icon-only
+// buttons made from such a wrapper were never counted: 11 header and form buttons had no spoken name (KNOWN-ISSUES 97).
+const rel = (f) => path.relative(ROOT, f).split(path.sep).join("/");
+const instancesOf = (type) => {
+    const out = [];
+    for (const f of qmlFiles(path.join(ROOT, "qml"))) {
+        if (f.endsWith("/" + type + ".qml")) continue;
+        for (const i of scanInstances(fs.readFileSync(f, "utf8"), type)) out.push(Object.assign({ file: rel(f) }, i));
+    }
+    return out;
+};
+// qsTr returns a String that has the real `.arg(...)`, so the label expressions run as written.
+const runLabel = (expr, ctx) => String(vm.runInNewContext("(" + expr + ")", Object.assign({
+    qsTr: (x) => Object.assign(new String(x), { arg: (v) => x.replace("%1", v) }),
+}, JSON.parse(JSON.stringify(ctx)))));
+const labelOf = (i) => { const m = /(?:^|[\s;{])label\s*:\s*([^\n]+)/.exec(i.ownSrc); assert.ok(m, "no own label"); return m[1].trim(); };
+
+test("S5E3-25 IconActionButton speaks its `label`, else its `text`, as a Button (the default stays empty)", () => {
+    const b = one(stripComments(read("qml/components/IconActionButton.qml")), (x) => x.root);
+    assert.match(b.ownSrc, /property string label: ""/);
+    assert.match(b.ownSrc, /property string iconName: ""/, "the icon property stays");
+    assert.match(b.ownSrc, /Accessible\.role: Accessible\.Button/);
+    const expr = nameOf(b);
+    assert.equal(run(expr, { root: { label: "Export", text: "J" } }), "Export", "a label wins over the text");
+    assert.equal(run(expr, { root: { label: "", text: "J" } }), "J", "no label: the text, as before");
+    assert.equal(run(expr, { root: { label: "", text: "" } }), "", "neither: silent (the ratchet below stops that)");
+});
+
+// [file, a regex that finds the instance, the badge states that feed the label, the words spoken in each, a handler that must survive]
+const IAB = [
+    ["qml/pages/AddStaffDialog.qml", /iconName: "calendar"/, [{}], ["Pick join date"], "onClicked: joinPicker.open()"],
+    ["qml/pages/DashboardPage.qml", /iconName: "bell"/, [{ badgeText: "" }, { badgeText: "5" }], ["Notifications", "Notifications, 5 waiting"], "onClicked: root.showNotificationsRequested()"],
+    ["qml/pages/DashboardPage.qml", /text: root\._initial\(\)/, [{}], ["Profile"], "onClicked: root.navigateToProfile()"],
+    ["qml/pages/InventoryPage.qml", /iconName: "import"/, [{}], ["Import products"], "onClicked: root.importRequested()"],
+    ["qml/pages/InventoryPage.qml", /iconName: "export"/, [{}], ["Export products"], "onClicked: root.exportRequested()"],
+    ["qml/pages/OrdersPage.qml", /iconName: "import"/, [{}], ["Import orders"], "onClicked: root.importRequested()"],
+    ["qml/pages/OrdersPage.qml", /iconName: "export"/, [{}], ["Export orders"], "onClicked: root.exportRequested()"],
+    ["qml/pages/OrdersPage.qml", /iconName: "settings"/, [{ badgeText: "" }, { badgeText: "\u2022" }], ["Filters", "Filters, active"], "onClicked: root.filtersRequested()"],
+    ["qml/pages/SalesPage.qml", /iconName: "settings"/, [{ badgeText: "" }, { badgeText: "\u2022" }], ["Filters", "Filters, active"], "analysisFilterSheet.open()"],
+    ["qml/pages/SalesPage.qml", /iconName: "export"/, [{}], ["Export analysis"], "root.exportRequested(root.buildAnalysisWorkbook())"],
+    ["qml/pages/StaffPage.qml", /iconName: "staff"/, [{}], ["Manage members"], "onClicked: root.manageMembersClicked()"],
+    ["qml/pages/StaffPage.qml", /iconName: "export"/, [{}], ["Export staff"], "onClicked: root.exportRequested()"],
+];
+IAB.forEach(([file, find, states, expected, handler], i) => {
+    test("S5E3-26." + String(i + 1).padStart(2, "0") + " " + file.split("/").pop() + ": IconActionButton " + JSON.stringify(expected) + " speaks, differs per state, keeps its handler", () => {
+        const hits = scanInstances(read(file), "IconActionButton").filter((x) => find.test(x.body));
+        assert.equal(hits.length, 1, "expected exactly one instance, got " + hits.length);
+        const names = states.map((st) => runLabel(labelOf(hits[0]), st));
+        assert.deepEqual(names, expected);
+        if (names.length > 1) assert.notEqual(names[0], names[1], "both states speak the same: a screen reader user cannot tell a badge is up");
+        assert.ok(hits[0].body.includes(handler), "the handler changed: " + handler);
+    });
+});
+test("S5E3-27 RATCHET: every IconActionButton instance has a label (or a speaking wrapper above it); the list of instances is pinned", () => {
+    const all = instancesOf("IconActionButton"), by = {};
+    for (const i of all) by[i.file] = (by[i.file] || 0) + 1;
+    assert.deepEqual(by, {
+        "qml/components/RefreshAction.qml": 1, "qml/pages/AddStaffDialog.qml": 1, "qml/pages/DashboardPage.qml": 2, "qml/pages/InventoryPage.qml": 2,
+        "qml/pages/OrdersPage.qml": 3, "qml/pages/SalesPage.qml": 2, "qml/pages/StaffPage.qml": 2,
+    }, "a new IconActionButton: give it `label: qsTr(...)` and add it to the IAB table");
+    const bare = all.filter((i) => !i.labelled && !i.ignored);
+    assert.deepEqual(bare.map((i) => i.file + ":" + i.line), [], "unnamed IconActionButton: pass label: qsTr(...) (S5e3a-D4 recipe)");
+    const ignored = all.filter((i) => i.ignored);
+    assert.deepEqual(ignored.map((i) => i.file), ["qml/components/RefreshAction.qml"], "the only instance that may stay silent is the one under RefreshAction's own named wrapper");
+    assert.match(read("qml/components/RefreshAction.qml"), /Accessible\.name: RefreshCaption\.accessibleName\(root\._view\)/, "RefreshAction no longer speaks for its button");
+    assert.equal(all.filter((i) => i.labelled).length, IAB.length, "the IAB table and the labelled instances disagree");
+});
+test("S5E3-28 words of the wrapper labels: qsTr literals only, plain, short, no concatenation, distinct per file, not an icon id", () => {
+    const seen = {};
+    for (const i of instancesOf("IconActionButton").filter((x) => x.labelled)) {
+        const expr = labelOf(i), calls = expr.match(/qsTr\("[^"]*"\)/g) || [];
+        assert.ok(calls.length >= 1, expr + " is not translatable");
+        for (const c of calls) assert.match(c, /^qsTr\("[A-Za-z][A-Za-z ,%1]{2,38}"\)$/, c + " is not a plain short literal");
+        assert.equal(/\+/.test(blankStrings(expr)), false, expr + " builds the label by concatenation");
+        for (const c of calls) {
+            const w = /"([^"]*)"/.exec(c)[1];
+            assert.equal(["import", "export", "settings", "staff", "calendar", "bell"].includes(w.toLowerCase()), false, w + " is an icon id");
+            (seen[i.file] = seen[i.file] || []).push(w);
+        }
+    }
+    for (const [f, words] of Object.entries(seen)) assert.equal(new Set(words).size, words.length, f + " speaks one word for two jobs: " + words);
+});
+test("S5E3-29 RATCHET: the components whose ROOT is a raw button are pinned with what speaks for them (KNOWN-ISSUES 123 for the two unverified)", () => {
+    const roots = qmlFiles(path.join(ROOT, "qml")).filter((f) => scanButtons(fs.readFileSync(f, "utf8")).some((b) => b.root)).map(rel);
+    assert.deepEqual(roots, [
+        "qml/components/ActionTile.qml", "qml/components/AuthPrimaryButton.qml", "qml/components/AuthSecondaryButton.qml", "qml/components/DangerButton.qml",
+        "qml/components/FloatingActionButton.qml", "qml/components/GhostButton.qml", "qml/components/IconActionButton.qml", "qml/components/ListCard.qml",
+        "qml/components/PrimaryButton.qml",
+    ], "a new component whose root is a button: decide what speaks for it (label, text, or a name at each use) and add it here");
+    for (const f of ["AuthPrimaryButton", "AuthSecondaryButton", "DangerButton", "GhostButton", "PrimaryButton"])
+        assert.match(stripComments(read("qml/components/" + f + ".qml")), /text: root\.text/, f + " no longer draws its own `text`, which is what Qt speaks");
+    for (const f of ["FloatingActionButton", "IconActionButton"]) assert.match(read("qml/components/" + f + ".qml"), /Accessible\.name: /, f + " lost its spoken name");
+    // ActionTile (caption) and ListCard (title, subtitle) draw their words only in a child Text and set no name: UNVERIFIED on a device, KI 123.
+    for (const f of ["ActionTile", "ListCard"]) assert.equal(/Accessible\.name/.test(read("qml/components/" + f + ".qml")), false, f + " now has a name: update KNOWN-ISSUES 123 and this pin");
+});
+test("S5E3-30 MONKEY: scanInstances against a generator (300 seeded blocks, decoys in strings, comments, nested blocks; look-alike type names are not instances)", () => {
+    let seed = 20261123;
+    const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+    for (let n = 0; n < 300; n++) {
+        const labelled = rnd() < 0.5, ignored = rnd() < 0.3, nestedLabel = rnd() < 0.3, strDecoy = rnd() < 0.4, comDecoy = rnd() < 0.4, oneLine = rnd() < 0.3;
+        const parts = [];
+        if (labelled) parts.push('label: qsTr("n' + n + '")');
+        if (ignored) parts.push("Accessible.ignored: true");
+        if (strDecoy) parts.push('onClicked: log("label: } { Accessible.ignored: true IconActionButton { ")');
+        if (comDecoy && !oneLine) parts.push("// label: x } Accessible.ignored: true");
+        if (nestedLabel) parts.push('contentItem: Item { label: "deep"; Accessible.ignored: true }');
+        const block = "IconActionButton {" + (oneLine ? " " : "\n    ") + parts.join(oneLine ? "; " : "\n    ") + (oneLine ? " }" : "\n}");
+        const decoys = '// IconActionButton { label: "c" }\nMyIconActionButton { }\nIconActionButtonX { }\nText { text: "IconActionButton { }" }\n';
+        const r = scanInstances("Item {\n" + decoys + block + "\n}\n", "IconActionButton");
+        assert.equal(r.length, 1, "step " + n + " found " + r.length + ": " + block);
+        assert.equal(r[0].labelled, labelled, "labelled, step " + n + ": " + block);
+        assert.equal(r[0].ignored, ignored, "ignored, step " + n + ": " + block);
+        assert.equal(r[0].line, 6, "line, step " + n);
+    }
+    assert.throws(() => scanInstances("Item { IconActionButton { ", "IconActionButton"), /unbalanced/);
+    assert.deepEqual(scanInstances("", "IconActionButton"), []);
 });

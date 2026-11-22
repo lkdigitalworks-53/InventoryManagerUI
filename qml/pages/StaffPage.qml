@@ -70,11 +70,13 @@ Item {
                 visible: root.canInviteMembers
                 variant: "glass"
                 iconName: "staff"
+                label: qsTr("Manage members")
                 onClicked: root.manageMembersClicked()
             },
             IconActionButton {
                 variant: "glass"
                 iconName: "export"
+                label: qsTr("Export staff")
                 onClicked: root.exportRequested()
             }
         ]
