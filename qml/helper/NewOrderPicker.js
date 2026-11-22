@@ -20,8 +20,9 @@
 // every comparison is String(line.productId) === id.
 
 var CANNOT_CHECK_TEXT = "Could not check the size of this order. Try again"
-// The skipped note is a TOAST and the toast pill is one line that does not wrap (ToastHost, KNOWN-ISSUES 26), about 40
-// characters on a phone. So the reasons are short and the note names one product.
+// The skipped note is a TOAST. The pill was one line of about 40 characters when this was written (KNOWN-ISSUES 26), so
+// the reasons are short and the note names one product. The pill wraps now (picker S5e-2, up to 6 lines); the short
+// form stays because it is tested and reads well, and a longer note is KNOWN-ISSUES 105.
 var REASON_TEXT = {
     "invalid": "not added",
     "gone": "no longer listed",

@@ -2,8 +2,14 @@ import QtQuick
 import QtQuick.Controls as QQC
 
 import "../helper"
+import "../helper/ToastLayout.js" as TL
 
 // Toast layer — renders Toast.show(...) requests as a slide-up pill.
+//
+// Wrapping (S5e-2, KNOWN-ISSUES 26). The pill used to be one unwrapped line of a fixed 40 dp, so a message of 80 to 134
+// characters was cut at both edges. Now `measure` (a hidden, unwrapped copy of the text) gives the one-line width, the
+// pill is that wide up to the layer minus 40 dp, the text wraps inside it (at most TL.MAX_LINES, then an ellipsis) and
+// the pill grows upward to fit. The sums are in qml/helper/ToastLayout.js (tested headless); this file only binds them.
 //
 // Layering. Every dialog and bottom sheet is a Popup, and Qt draws all popups in the window's Overlay, which sits
 // above the whole item tree of the window (QQuickOverlay z = 1000001). A pill that stays a child of this host is
@@ -33,6 +39,7 @@ Item {
         pillText.text = msg
         pill.opacity = 1
         slideUp.restart()
+        dismissTimer.interval = TL.dismissMs(msg)
         dismissTimer.restart()
     }
 
@@ -52,13 +59,18 @@ Item {
 
     Rectangle {
         id: pill
+        // 0 = parked below the layer, 1 = resting. The two slides animate THIS property (it has no binding, so nothing
+        // fights the animation) and y is derived from it, so the pill follows a layer that changes height.
+        property real rise: 0
+        // The old single-line height; also the floor of the grown pill.
+        readonly property real _minHeight: dp(40)
         // Above every popup while in the Overlay; no effect while a child of this host.
         z: 10000
         // Not anchors.horizontalCenter: an anchor to `parent` breaks when the pill changes parent.
         x: parent ? (parent.width - width) / 2 : 0
-        y: parent ? parent.height : 600
-        width: Math.min(parent ? parent.width - dp(40) : dp(360), pillText.implicitWidth + dp(32))
-        height: dp(40)
+        y: parent ? TL.pillY(parent.height, rise, height, dp(Constants.tabbarClearance), _minHeight) : 600
+        width: TL.pillWidth(measure.implicitWidth, parent ? parent.width - dp(40) : dp(360), dp(32))
+        height: TL.pillHeight(pillText.contentHeight, _minHeight, dp(16))
         radius: dp(Constants.radiusPill)
         color: Qt.rgba(0.008, 0.024, 0.090, 0.92)
         opacity: 0
@@ -69,24 +81,38 @@ Item {
         NumberAnimation {
             id: slideUp
             target: pill
-            property: "y"
-            to: pill.parent ? pill.parent.height - dp(Constants.tabbarClearance) : 490
+            property: "rise"
+            to: 1
             duration: Constants.durMed
             easing.type: Easing.OutCubic
         }
         NumberAnimation {
             id: slideDown
             target: pill
-            property: "y"
-            to: pill.parent ? pill.parent.height : 600
+            property: "rise"
+            to: 0
             duration: Constants.durMed
             easing.type: Easing.InCubic
             onFinished: host._release()
         }
 
+        // The message on ONE line, only to learn how wide it wants to be. Hidden and never wrapped, so it cannot depend
+        // on the pill (the pill width depends on it: wrapping this one would be a binding loop).
+        Text {
+            id: measure
+            visible: false
+            text: pillText.text
+            font: pillText.font
+        }
+
         Text {
             id: pillText
             anchors.centerIn: parent
+            width: TL.textWidth(pill.width, dp(32))
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+            maximumLineCount: TL.MAX_LINES
+            elide: Text.ElideRight
             color: Constants.textOnBrand
             font.pixelSize: sp(Constants.fsBody)
         }

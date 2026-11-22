@@ -15,13 +15,17 @@
 //   TL-7      monkey: 3000 random operations, invariants after each
 //   TS-1..6   source shape: what the functions rely on is really declared
 //   TS-7      no popup in the tree can out-rank the pill
+//   TL-8..9   (S5e-2) the dismiss time follows the message, per toast, and an ignored toast leaves it alone
+//   TS-8..14  (S5e-2) the wrap: slides animate `rise`, y is derived, the text wraps, the measure copy cannot loop,
+//             every TL.* the file calls exists
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-const { extractFunction } = require("./testSupport/qmlHelpers");
+const { extractFunction, load } = require("./testSupport/qmlHelpers");
+const LAYOUT = load("ToastLayout.js");
 
 const QML = path.join(__dirname, "..", "..", "qml");
 const FILE = "components/ToastHost.qml";
@@ -50,7 +54,8 @@ function rig(layer) {
         host, pill, slideDown,
         pillText: { text: "" },
         slideUp: { restart() { log.push("slideUp.restart"); } },
-        dismissTimer: { restart() { log.push("timer.restart"); } }
+        dismissTimer: { interval: 5000, restart() { log.push("timer.restart"); } },
+        TL: LAYOUT
     };
     vm.createContext(ctx);
     vm.runInContext(SHOW + "\n" + RELEASE, ctx);
@@ -149,6 +154,28 @@ test("TL-6b two toasts in a row keep the pill in the Overlay and restart the tim
     assert.equal(r.ctx.pillText.text, "b");
 });
 
+// ------------------------------------------------------------------ dismiss time (S5e-2)
+
+test("TL-8 the dismiss time is set for THIS message before the timer starts, and is not left over from a longer one", () => {
+    const r = rig(OVERLAY);
+    r.show("x".repeat(134));
+    assert.equal(r.ctx.dismissTimer.interval, 10000);
+    r.show("Saved");
+    assert.equal(r.ctx.dismissTimer.interval, 5000, "a short toast after a long one is short again");
+    r.show("x".repeat(80));
+    assert.equal(r.ctx.dismissTimer.interval, 6800);
+});
+
+test("TL-9 an ignored (empty) toast leaves the dismiss time and the timer alone", () => {
+    const r = rig(OVERLAY);
+    r.show("x".repeat(100));
+    const before = r.ctx.dismissTimer.interval;
+    r.log.length = 0;
+    r.show("");
+    assert.equal(r.ctx.dismissTimer.interval, before);
+    assert.deepEqual(r.log, []);
+});
+
 // ------------------------------------------------------------------ monkey
 
 test("TL-7 monkey: 3000 random operations never leave the pill parentless, wrongly parented or unlit", () => {
@@ -166,6 +193,7 @@ test("TL-7 monkey: 3000 random operations never leave the pill parentless, wrong
         else r.show("n" + i);
         assert.ok(r.pill.parent === r.host || r.pill.parent === OVERLAY, "parent is host or Overlay, step " + i);
         if (op === 0 || op === 6) {
+            assert.equal(r.ctx.dismissTimer.interval, LAYOUT.dismissMs(op === 0 ? "m" + i : "n" + i), "its own dismiss time, step " + i);
             assert.equal(r.pill.opacity, 1, "a shown toast is lit, step " + i);
             assert.equal(r.pill.parent, r.host._layer || r.host, "and drawn in the right layer, step " + i);
         }
@@ -195,7 +223,7 @@ test("TS-4 the pill is centred by a binding, not an anchor (an anchor to parent 
 });
 
 test("TS-5 the pill outranks popups: z is a number above every popup z in the tree", () => {
-    const z = Number((SRC.match(/id: pill\s*\n[^\n]*\n\s+z: (\d+)/) || [])[1]);
+    const z = Number((SRC.match(/id: pill\b[\s\S]*?\n\s+z: (\d+)/) || [])[1]);
     assert.ok(z >= 1000, "pill z is set (" + z + ")");
 });
 
@@ -214,7 +242,7 @@ function walk(dir, out) {
 }
 
 test("TS-7 no popup in the tree sets its own z at the root, so none can out-rank the pill", () => {
-    const pillZ = Number((SRC.match(/id: pill\s*\n[^\n]*\n\s+z: (\d+)/) || [])[1]);
+    const pillZ = Number((SRC.match(/id: pill\b[\s\S]*?\n\s+z: (\d+)/) || [])[1]);
     const popupRoot = /^(QQC\.Dialog|QQC\.Popup|Dialog|Popup|BottomSheet|ConfirmDialog|AlertDialog) \{/m;
     let seen = 0;
     for (const f of walk(QML, [])) {
@@ -225,4 +253,72 @@ test("TS-7 no popup in the tree sets its own z at the root, so none can out-rank
         if (m) assert.ok(Number(m[1]) < pillZ, path.basename(f) + " root z " + m[1] + " must stay below the pill " + pillZ);
     }
     assert.ok(seen >= 20, "the scan found the popup files (" + seen + ")");
+});
+
+// ------------------------------------------------------------------ the wrap (S5e-2, KNOWN-ISSUES 26)
+
+const CODE = SRC.replace(/\/\/.*$/gm, "");
+const block = (from, to) => CODE.substring(CODE.indexOf(from), CODE.indexOf(to, CODE.indexOf(from)));
+
+test("TS-8 the slides animate `rise` (no binding on it), never y; up goes to 1, down to 0 and releases", () => {
+    assert.doesNotMatch(CODE, /property:\s*"y"/, "nothing animates y any more");
+    assert.match(block("id: slideUp", "NumberAnimation {\n            id: slideDown"), /property: "rise"\s+to: 1\b/);
+    assert.match(block("id: slideDown", "Text {"), /property: "rise"\s+to: 0\b[\s\S]*onFinished: host\._release\(\)/);
+    assert.match(CODE, /property real rise: 0\b/, "rise is a plain property with a constant start");
+});
+
+test("TS-9 y is derived from rise and the pill's own height by TL.pillY, and nothing else writes y", () => {
+    assert.match(CODE, /^\s+y: parent \? TL\.pillY\(parent\.height, rise, height, dp\(Constants\.tabbarClearance\), _minHeight\) : 600$/m);
+    assert.doesNotMatch(CODE, /\b(pill\.)?y\s*=[^=]/, "no imperative y write");
+});
+
+test("TS-10 width and height come from TL: no fixed 40 dp height is left, and the old one-line height is the floor", () => {
+    assert.match(CODE, /^\s+width: TL\.pillWidth\(measure\.implicitWidth, parent \? parent\.width - dp\(40\) : dp\(360\), dp\(32\)\)$/m);
+    assert.match(CODE, /^\s+height: TL\.pillHeight\(pillText\.contentHeight, _minHeight, dp\(16\)\)$/m);
+    assert.match(CODE, /readonly property real _minHeight: dp\(40\)/);
+    assert.doesNotMatch(CODE, /^\s+height: dp\(40\)/m);
+});
+
+test("TS-11 the text wraps at the pill's inner width, at most TL.MAX_LINES, then an ellipsis, centred", () => {
+    const t = block("id: pillText", "\n        }\n    }");
+    assert.match(t, /width: TL\.textWidth\(pill\.width, dp\(32\)\)/);
+    assert.match(t, /wrapMode: Text\.Wrap\b/, "Text.Wrap, not WordWrap: one long unbroken name must still break");
+    assert.match(t, /maximumLineCount: TL\.MAX_LINES/);
+    assert.match(t, /elide: Text\.ElideRight/);
+    assert.match(t, /horizontalAlignment: Text\.AlignHCenter/);
+    assert.match(t, /anchors\.centerIn: parent/);
+});
+
+test("TS-12 no binding loop: the measure copy is hidden and unwrapped, the pill width reads only it, the text never reads its own size", () => {
+    const m = block("id: measure", "Text {\n            id: pillText");
+    assert.match(m, /visible: false/);
+    assert.match(m, /text: pillText\.text/);
+    assert.match(m, /font: pillText\.font/);
+    assert.doesNotMatch(m, /wrapMode|width:|height:|anchors|elide|maximumLineCount/, "the copy must stay one free line");
+    const pill = block("id: pill", "Behavior on opacity");
+    assert.doesNotMatch(pill, /pillText\.(implicit|content)Width/, "pill width must not read the wrapped text's width");
+    const t = block("id: pillText", "\n        }\n    }");
+    assert.doesNotMatch(t, /implicit|content(Width|Height)|pill\.height/, "the text must not read its own size or the pill height");
+});
+
+test("TS-13 _showInternal sets the dismiss time from the message, then restarts the timer, and only there", () => {
+    assert.match(SHOW, /dismissTimer\.interval = TL\.dismissMs\(msg\);?\s*\n\s*dismissTimer\.restart\(\)/);
+    assert.equal((CODE.match(/dismissTimer\.interval\s*=/g) || []).length, 1);
+});
+
+test("TS-14 every TL.* the file calls exists in ToastLayout.js, and the import is the one tested", () => {
+    assert.match(SRC, /^import "\.\.\/helper\/ToastLayout\.js" as TL$/m);
+    const used = new Set([...CODE.matchAll(/\bTL\.(\w+)/g)].map((m) => m[1]));
+    assert.ok(used.size >= 6, "pillY pillWidth pillHeight textWidth dismissMs MAX_LINES: " + [...used]);
+    for (const name of used) assert.ok(name in LAYOUT, "TL." + name + " is not defined in ToastLayout.js");
+});
+
+test("TS-15 the longest toast in the app wraps inside the line cap on a 360 dp phone at normal and 1.3x font (glyph width estimated at 0.52 em, the sums are the real ones)", () => {
+    // 134 chars is the longest literal today (OrdersStore import message). Average glyph = 0.52 em at 13 sp.
+    for (const scale of [1, 1.3]) {
+        const glyph = 13 * 0.52 * scale;
+        const textW = LAYOUT.textWidth(LAYOUT.pillWidth(134 * glyph, 360 - 40, 32), 32);
+        const lines = Math.ceil((134 * glyph) / textW);
+        assert.ok(lines <= LAYOUT.MAX_LINES, "lines " + lines + " at scale " + scale);
+    }
 });

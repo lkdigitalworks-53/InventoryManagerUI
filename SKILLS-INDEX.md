@@ -191,3 +191,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 181: Build a Felgo page as painting only: pure page glue, the page's own function bodies run in Node, and mutants run under a non-UTC zone
 - 182: Measure a slow path with the real code before tuning it; replace an N x L scan with a per-build index behind a scope that always has the slow answer as fallback
 - 183: Give every control of a sheet a name, a role, an action and a 48 dp target, put the spoken words in a tested pure helper, and prove a control's hit area from source before anyone runs a screen reader
+- 184: Animate a progress value, not a position, when the size it depends on is laid out later; put an overlay's sums in a pure helper; and measure wrapped text with a hidden unwrapped copy that nothing feeds back into
