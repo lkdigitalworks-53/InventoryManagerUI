@@ -18,7 +18,7 @@
 - [x] 8. Findings (plan section 9): R1 corner radius 999 cuts the text of a tall pill (FIXED: `TL.pillRadius`), R2 `AutoText` would render a markup-looking error body (FIXED: `Text.PlainText` on pill and measure copy), R3 stale test header and counts (FIXED). Open and owner-only: KNOWN-ISSUES 103 to 106. Commit address mismatch flagged (this file says `taher.lkdw@gmail.com`, project instructions say `lkdwtaher@gmail.com`).
 - [x] 9. Tests: `toastLayout.test.js` TLY-15, TLY-16 (+ TLY-04 and TLY-14 lines), `toastHostLayer.test.js` TS-16, TS-17; twin regenerated (`pickerTwin.js --write`, only `tst_ToastLayout.qml` changed). 5 hand mutants, 5 killed. Measured: functions 2224/2224 (+4), scripts 1199/1199.
 - [x] 10. Docs: plan section 9, test plan (check 161, rows, counts), Skill 184 rules 11 and 12, SKILLS-INDEX regenerated (`--check` current), AGENTS, README, KNOWN-ISSUES 26 note, this file.
-- [ ] 11. Commit (message carries the address) and push to the same branch; read CI on the new head (REST check-runs). Expected QML count 3359 (twin +2), everything else as measured above; CI is the oracle, do not claim before it is read.
+- [x] 11. Committed `8fcf7b1` (message carries `lkdwtaher@gmail.com`) and pushed to the same branch. CI read on `8fcf7b1` (REST check-runs + the PR comment): green. QML 3359, Functions 2224, Rules 129, E2E 124 = 5836/5836 (QML +2 = the two new twin bodies, as predicted). PR `mergeable: true`, state `clean`.
 - [ ] 12. Final report to Taher: done / open decisions (Q1 to Q3, plan section 7; KI 103 design choice; commit address) / device checks 151 to 161 / next (device pass, then S5e-3, S5e-4; NO2 waits on Q-NO-1).
 
 ## If this session is cut off
