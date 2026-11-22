@@ -54,5 +54,5 @@ PR #212, READ 2026-11-22 on head `3ddef0c` (after the rebase onto #210; function
 - Method: `requesting-code-review` + `qt-qml-review` (Phase 1 lint; the six agent domains are empty: no QML component changed) + `ponytail-audit`, one agent, sequentially.
 - Fix: `OrderPlan._line` refuses a unit price above `RestockFlow.MAX_UNIT_COST` (1e9), `bad-line`. R-1 +3 rows (1e9 + 0.01, a 20-digit price, 1e308), R-3 allows exactly 1e9 and pins `AddProductFlow.MAX_MONEY` equal to the limit; the Infinity-overflow row now uses a huge quantity. `tst_OrderPlan.qml` has the same rows.
 - RUN after the fix: functions 2206/2206, scripts 1199/1199 (the full suites, with `npm ci`). QML twin: CI only.
-- CI on the review commits: READ pending (recorded here by the next session if this line still says pending).
+- CI on the review commits: READ 2026-11-22 on head `c6ac2bc`: QML Tests 3351/3351 (the real qmltestrunner, with the new `tst_OrderPlan.qml` rows), Functions Tests 2206/2206, Firestore + Storage Rules Tests success, E2E Tests success; the bot comment says 5810/5810. Deploy jobs skipped. This note's own commit is docs only; its CI run is not read here.
 - Docs corrected: see CHECKPOINT R4 and KNOWN-ISSUES 100-105.
