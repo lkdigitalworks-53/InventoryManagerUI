@@ -28,7 +28,7 @@ One sheet rebuild (`PickerSheetModel.build`), no dry run, 3 cart lines, empty qu
 **S5d-D2. The hooks stay plain closures.** Two new OPTIONAL hooks, `beginBuild` and `endBuild`. A throwing or missing one is ignored (the hooks then scan, as before). `endBuild` runs in a `finally`, so a build that throws still closes the scope.
 **S5d-D3. The index is a tagged object** `{ qtyIndex: true, sums: { "k:<id>": n } }`. `cartQty(lines, id, index)` uses it only when the tag is there; a junk third argument (a string, `{}`, an array) is ignored and the scan runs. `"k:"` keys because a product id of `__proto__` must not touch the prototype.
 **S5d-D4. Edit Order snapshots ONCE per build**: `_pickerLinesNow()` and `_pickerCtx()` are read in `beginBuild`, and the scope also holds `held`, the index of what a completed order held (`heldAtCompletion`). The ListModel is read once per build instead of twice per product.
-**S5d-D5. No partial rebuild for a stepper tap.** A tap changes one row, yet `build` re-classifies the catalog. A delta path is a different design (what else a tap can change: totals, canCommit, draft clamp, the line limit for every disabled row) with a wide blast radius. Left as KNOWN-ISSUES 75, with the number that decides whether it is ever needed (the new bench row).
+**S5d-D5. No partial rebuild for a stepper tap.** A tap changes one row, yet `build` re-classifies the catalog. A delta path is a different design (what else a tap can change: totals, canCommit, draft clamp, the line limit for every disabled row) with a wide blast radius. Left as KNOWN-ISSUES 84, with the number that decides whether it is ever needed (the new bench row).
 **S5d-D6. A regression gate that does not read a clock.** CI machines are noisy; a time threshold would flake. The gate counts cart-line reads: they must not grow with the catalog (S5D-04, S5D-05). The bench script is a tool, not a gate; it cross-checks that the indexed and the scanned build return identical views and exits non-zero if they do not.
 **S5d-D7. No change to what a person sees.** Same rows, same reasons, same totals. A sheet-level equality test (S5D-03) pins it across states (pending, completed, fractional quantity, numeric ids).
 
@@ -38,7 +38,7 @@ One sheet rebuild (`PickerSheetModel.build`), no dry run, 3 cart lines, empty qu
 3. `PickerSheetModel.build` opens and closes the scope around its work.
 4. Both dialogs: `beginBuild` / `endBuild`, hooks read the scope. NOW-03 and EOW-03 (they pin the old hook text) are updated ON PURPOSE.
 5. `scripts/bench/pickerBench.cjs`.
-6. Tests, test plan (checks 134 to 140), KNOWN-ISSUES, Skill 180, AGENTS, README, checkpoint.
+6. Tests, test plan (checks 134 to 140), KNOWN-ISSUES, Skill 182, AGENTS, README, checkpoint.
 
 NOT in S5d: a debounce change, a categories cache, a dry run cache, a delta rebuild, windowing of a huge list, any change to what a row says or allows, any layout change.
 
@@ -60,8 +60,8 @@ One rebuild, ms, Node. "Before" = the scan hooks as they were at `main` @ `68afa
 | 5 000 x 60 | 127.1 | 34.6 | 158.2 | 34.7 | 38.2 |
 | 20 000 x 60 | 514.0 | 135.5 | 639.5 | 141.4 | 149.8 |
 
-Read it as: the part that grew with the cart is gone (after is flat across 3, 20, 60 lines). What is left is the floor that grows with the catalog (about 6 to 7 ms per 1 000 products): KNOWN-ISSUES 74. Dry run 0.1 to 7 ms and `categories` 0.7 to 6 ms confirmed small (items 25 and 19c).
-A second cost found while measuring and NOT fixed: the per-product scan of the outbox (`hasQueuedRestock`), 85 ms at 5 000 products with 3 000 queued items: KNOWN-ISSUES 78.
+Read it as: the part that grew with the cart is gone (after is flat across 3, 20, 60 lines). What is left is the floor that grows with the catalog (about 6 to 7 ms per 1 000 products): KNOWN-ISSUES 83. Dry run 0.1 to 7 ms and `categories` 0.7 to 6 ms confirmed small (items 25 and 19c).
+A second cost found while measuring and NOT fixed: the per-product scan of the outbox (`hasQueuedRestock`), 85 ms at 5 000 products with 3 000 queued items: KNOWN-ISSUES 87.
 
 ## Built
 Code `73ae111`: `NewOrderPicker.qtyIndex` / `qtyFromIndex` / `cartQty` / `availableFor`, `EditOrderPicker.scopeOf` / `heldAtCompletion` / `ceilingFor` / `availableFor`, `PickerSheetModel.build` scope, both dialogs, `scripts/bench/pickerBench.cjs`. 22 new Node tests (NOP-38..42, EOP-45..48, SHEET-45..47, S5D-01..10), three twins regenerated, NOW-03, EOW-03, EOW-11 updated on purpose. Functions suite 2130/2130 (main 2108), scripts 1061/1061. 32 hand mutants: 30 killed, 2 equivalent (NP-10, PM-5), 1 real gap found and closed (NP-3). CI NOT read yet.
