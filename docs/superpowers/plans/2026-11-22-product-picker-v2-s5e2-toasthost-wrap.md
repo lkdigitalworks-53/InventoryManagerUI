@@ -49,4 +49,4 @@ In: `qml/helper/ToastLayout.js` (new, pure), `qml/components/ToastHost.qml`, one
 - **Q3.** A toast cannot be dismissed early (104): worth a tap-to-dismiss slice? Recommendation: not now; wait for the device pass.
 
 ## 8. Result (2026-11-22)
-Functions 2220/2220 (main @ `4217032` measured 2196: +14 TLY, +10 in `toastHostLayer`), scripts 1199/1199. 32 hand mutants, 32 killed. Lint: see section 5. CI result is recorded in `CHECKPOINT.md` and the PR.
+Functions 2220/2220 (main @ `4217032` measured 2196: +14 TLY, +10 in `toastHostLayer`), scripts 1199/1199. 32 hand mutants, 32 killed. Lint: see section 5. **CI on PR #214 head `b109b7e`: QML 3357, Functions 2220, Rules 129, E2E 124 = 5830/5830, all green; PR mergeable, state clean.** The QML number includes the new twin `tst_ToastLayout` running in the real QML engine.

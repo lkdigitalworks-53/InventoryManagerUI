@@ -12,8 +12,8 @@
 - [x] 2. Code: `qml/helper/ToastLayout.js` (new, pure), `qml/components/ToastHost.qml` (measure copy, wrap, `rise`, derived `y`, dismiss time), stale comment in `qml/helper/NewOrderPicker.js`.
 - [x] 3. Tests: `functions/test/toastLayout.test.js` TLY-01..14 (+ derived twin `tests/tst_ToastLayout.qml`, registered in `pickerTwin.js`), `functions/test/toastHostLayer.test.js` +TL-8, TL-9, TS-8..15 (TS-5 and TS-7 find `z` by search). Functions 2220/2220 (main 2196), scripts 1199/1199. 32 hand mutants, 32 killed. Lint: one real ORD-1 fixed, one BND-2 false positive written down (plan section 5).
 - [x] 4. Docs: plan, test plan (S5e-2 rows, checks 151 to 160, affected area, verification row), KNOWN-ISSUES (26 fixed, the `y` lead removed by construction, footer note updated, new 103 to 106), Skill 184 + index (generator output identical), AGENTS, README, this file.
-- [x] 5. Committed and pushed (code + tests, then docs).
-- [ ] 6. Read CI on the PR head (QML 3341+, Functions, Rules, E2E; new twin `tst_ToastLayout`); fix if red; record the counts here and in the PR body.
+- [x] 5. Committed (one commit `b109b7e`, code + tests + docs) and pushed; PR #214 opened against `main`.
+- [x] 6. CI read on `b109b7e` (REST check-runs + the PR comment): green. QML 3357, Functions 2220, Rules 129, E2E 124 = 5830/5830 (includes the new twin `tst_ToastLayout`). PR `mergeable: true`, state `clean`.
 - [ ] 7. Final report to Taher: done / open decisions (Q1 to Q3, plan section 7) / device checks 151 to 160 / next (device pass, then S5e-3, S5e-4; NO2 waits on Q-NO-1).
 
 ## If this session is cut off
