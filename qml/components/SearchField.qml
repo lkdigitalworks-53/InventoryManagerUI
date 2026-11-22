@@ -23,7 +23,7 @@ Rectangle {
     RowLayout {
         anchors.fill: parent
         anchors.leftMargin: dp(12)
-        anchors.rightMargin: dp(6)
+        anchors.rightMargin: 0
         spacing: dp(8)
 
         Icon {
@@ -40,13 +40,18 @@ Rectangle {
             font.pixelSize: sp(Constants.fsBody)
             background: Item {}
             verticalAlignment: TextInput.AlignVCenter
+            Accessible.name: input.placeholderText    // S5e-1: named by what it searches, whatever the page set
             onAccepted: root.accepted()
         }
 
+        // S5e-1 (KNOWN-ISSUES 94): was an unnamed 28 dp button. Now named, and as tall as the field (44 dp; the field
+        // height is shared by five pages, so 48 would change them all). The icon is centred in the wider target.
         QQC.AbstractButton {
             visible: input.text.length > 0
-            implicitWidth: dp(28)
-            implicitHeight: dp(28)
+            implicitWidth: dp(44)
+            implicitHeight: dp(44)
+            Accessible.role: Accessible.Button
+            Accessible.name: qsTr("Clear search")
             contentItem: Icon {
                 name: "close"
                 anchors.centerIn: parent

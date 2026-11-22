@@ -27,6 +27,7 @@ const TWINS = [
     { node: "cartStepperGeometry.test.js", qml: "tst_CartStepperGeometry.qml", name: "CartStepperGeometry", helper: "CartStepperGeometry.js", alias: "CG" },
     { node: "pickerGuards.test.js", qml: "tst_PickerGuards.qml", name: "PickerGuards", helper: "PickerGuards.js", alias: "GD" },
     { node: "backRouter.test.js", qml: "tst_BackRouter.qml", name: "BackRouter", helper: "BackRouter.js", alias: "BR" },
+    { node: "pickerSpeech.test.js", qml: "tst_PickerSpeech.qml", name: "PickerSpeech", helper: "PickerSpeech.js", alias: "SP" },
 ];
 
 function slug(title) {
