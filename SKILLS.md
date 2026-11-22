@@ -5270,7 +5270,7 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 7. Dormancy guard: walk `qml/` for the op name; NO3 replaces it with a wiring guard.
 8. Hand mutants: back up the sources, apply one change, run the related files, restore, repeat; check `git diff --stat lib` shows only the intended change at the end.
 
-**The check:** `grep -rn "createOrder" qml` is empty until NO3; `cd functions && node --test test/operationLogic.createOrder.test.js` is 37/37.
+**The check:** `grep -rln "createOrder" qml` names only `OperationKeys.js`, `OrderPlan.js` and `DescribeItem.js` until NO3; `cd functions && node --test test/operationLogic.createOrder.test.js` is 37/37.
 9. A rollback test must not depend on the validator letting a bad op through. When a stricter validator removes the way to provoke a rejection, validate the extra ops under a looser op type and apply under the real one (`runUnchecked`), so the engine's atomicity stays proven on its own.
 
 
