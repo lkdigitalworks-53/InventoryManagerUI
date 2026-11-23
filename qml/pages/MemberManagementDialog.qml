@@ -133,6 +133,8 @@ BottomSheet {
                     id: card
                     // Rows the actor may not change show their role read-only and no Suspend/Remove (D-1 b).
                     readonly property bool manageable: MemberPolicy.canManageMember(root.actorRole, modelData.role || "")
+                    // Who the Suspend/Activate/Remove buttons speak for (KNOWN-ISSUES 124).
+                    readonly property string memberLabel: modelData.displayName || modelData.email || qsTr("member")
                     Layout.fillWidth: true
                     visible: root._matchesFilter(modelData)
                     title: modelData.displayName || "(No name)"
@@ -176,7 +178,7 @@ BottomSheet {
                             Layout.preferredWidth: dp(32)
                             Layout.preferredHeight: dp(32)
                             Accessible.role: Accessible.Button
-                            Accessible.name: modelData.status === "suspended" ? qsTr("Activate member") : qsTr("Suspend member")
+                            Accessible.name: modelData.status === "suspended" ? qsTr("Activate %1").arg(card.memberLabel) : qsTr("Suspend %1").arg(card.memberLabel)
                             enabled: !root.busy
                             background: Rectangle {
                                 radius: dp(Constants.radiusPill)
@@ -202,7 +204,7 @@ BottomSheet {
                             Layout.preferredWidth: dp(32)
                             Layout.preferredHeight: dp(32)
                             Accessible.role: Accessible.Button
-                            Accessible.name: qsTr("Remove member")
+                            Accessible.name: qsTr("Remove %1").arg(card.memberLabel)
                             enabled: !root.busy
                             background: Rectangle {
                                 radius: dp(Constants.radiusPill)

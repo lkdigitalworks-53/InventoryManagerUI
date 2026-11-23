@@ -332,6 +332,7 @@ BottomSheet {
                             }
                             QQC.TextField {
                                 id: linePriceField
+                                Accessible.name: qsTr("Price of %1").arg(modelData.name)
                                 Layout.minimumHeight: dp(48)
                                 Layout.preferredWidth: dp(72)
                                 text: InventoryStore.formatCurrency(modelData.price)
@@ -378,6 +379,7 @@ BottomSheet {
                             }
                             QQC.TextField {
                                 id: lineDiscField
+                                Accessible.name: modelData.discountType === "percent" ? qsTr("Discount of %1, percent").arg(modelData.name) : qsTr("Discount of %1, flat amount").arg(modelData.name)
                                 Layout.minimumHeight: dp(48)
                                 Layout.fillWidth: true
                                 text: String(modelData.discountValue || 0)

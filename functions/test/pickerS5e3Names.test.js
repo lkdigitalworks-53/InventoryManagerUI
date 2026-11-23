@@ -68,17 +68,15 @@ test("S5E3-06 the one allowed exception stays dead: nothing instantiates OrderRo
             f + " now uses OrderRow: name its two icon buttons first and drop the exception in S5E3-05");
     }
 });
-test("S5E3-07 RATCHET (S5e-3b to-do): buttons whose label lives only in a child Text, pinned by file and count", () => {
+test("S5E3-07 RATCHET: buttons whose label lives only in a child Text and that have no name, pinned by file (13 at S5e-3a, 2 after S5e-3b)", () => {
     const { textChild } = scanTree(ROOT);
     const by = {};
     for (const b of textChild) by[b.file] = (by[b.file] || 0) + 1;
-    assert.deepEqual(by, {
-        "qml/components/FloatingTabbar.qml": 1, "qml/helper/SegmentedNav.qml": 1, "qml/pages/AddProductDialog.qml": 1,
-        "qml/pages/DashboardPage.qml": 1, "qml/pages/InventoryPage.qml": 1, "qml/pages/ManageCategoriesDialog.qml": 2,
-        "qml/pages/ManageOrderChannelsDialog.qml": 2, "qml/pages/NotificationsSheet.qml": 1, "qml/pages/ProfilePage.qml": 2,
-        "qml/pages/SalesPage.qml": 1,
-    }, "a new text-child button, or one fixed in S5e-3b: update this list on purpose (13 at S5e-3a)");
-    assert.equal(textChild.length, 13);
+    // S5e-3b named the other 11 (pickerS5e3bNames.test.js). Left on purpose: InventoryPage's ProductCard is a card that holds other buttons
+    // (KNOWN-ISSUES 123 class: decide on a device, checks 176 to 179); SegmentedNav is dead code (KNOWN-ISSUES 121 class, nothing uses it).
+    assert.deepEqual(by, { "qml/helper/SegmentedNav.qml": 1, "qml/pages/InventoryPage.qml": 1 },
+        "a new text-child button, or one of these two fixed: update this list on purpose");
+    assert.equal(textChild.length, 2);
 });
 
 // ---- the ten buttons --------------------------------------------------------------------------------------------
@@ -92,11 +90,15 @@ const TEN = [
     ["qml/pages/RestockDialog.qml", (b) => /id: addPartyToggle/.test(b.body), [dlgOpen(false), dlgOpen(true)], ["Add new supplier", "Close new supplier"], "dlg._addPartyOpen = !dlg._addPartyOpen"],
     ["qml/pages/EditProductDialog.qml", (b) => /id: renamePartyToggle/.test(b.body), [{ root: { _renaming: false } }, { root: { _renaming: true } }], ["Rename supplier", "Cancel renaming supplier"], "root._renaming = !root._renaming"],
     ["qml/pages/ProfileSettingsDialog.qml", (b) => /id: editButton/.test(b.body), [{ root: { workspaceEditMode: false } }, { root: { workspaceEditMode: true } }], ["Rename workspace", "Cancel renaming workspace"], "root.workspaceEditMode = true"],
-    ["qml/pages/MemberManagementDialog.qml", (b) => /\"pause-status\"/.test(b.body), [{ modelData: { status: "active" } }, { modelData: { status: "suspended" } }], ["Suspend member", "Activate member"], "root._openConfirm(\"status\""],
-    ["qml/pages/MemberManagementDialog.qml", (b) => /\"Remove member\"/.test(b.body) && /Constants\.danger/.test(b.body), [{}], ["Remove member"], "root._openConfirm(\"remove\""],
+    // S5e-3b (KNOWN-ISSUES 124): the three member buttons say WHICH member ("Suspend Asha"); S5e-3a spoke "Suspend member" for every card.
+    ["qml/pages/MemberManagementDialog.qml", (b) => /\"pause-status\"/.test(b.body), [{ modelData: { status: "active" }, card: { memberLabel: "Asha" } }, { modelData: { status: "suspended" }, card: { memberLabel: "Asha" } }], ["Suspend Asha", "Activate Asha"], "root._openConfirm(\"status\""],
+    ["qml/pages/MemberManagementDialog.qml", (b) => /\"Remove member\"/.test(b.body) && /Constants\.danger/.test(b.body), [{ card: { memberLabel: "Asha" } }], ["Remove Asha"], "root._openConfirm(\"remove\""],
 ];
 const nameOf = (b) => { const m = /(?:^|[\s;{])Accessible\.name\s*:\s*([^\n]+)/.exec(b.ownSrc); assert.ok(m, "no own Accessible.name"); return m[1].trim(); };
-const run = (expr, ctx) => vm.runInNewContext("(" + expr + ")", Object.assign({ qsTr: (s) => s }, JSON.parse(JSON.stringify(ctx))));
+// qsTr returns a String with the real `.arg(...)`, so expressions run as written (S5e-3b: names with %1).
+const run = (expr, ctx) => String(vm.runInNewContext("(" + expr + ")", Object.assign({
+    qsTr: (s) => Object.assign(new String(s), { arg: (v) => s.replace("%1", () => String(v)) }),
+}, JSON.parse(JSON.stringify(ctx)))));
 
 TEN.forEach(([file, find, states, expected, handler], i) => {
     test("S5E3-" + String(8 + i).padStart(2, "0") + " " + file.split("/").pop() + ": button #" + (i + 1) + " is a Button with the name " + JSON.stringify(expected) + " and keeps its handler", () => {
@@ -193,11 +195,11 @@ test("S5E3-22 every added name is qsTr with literals only, plain ASCII, short, n
     for (const expr of all) {
         const calls = expr.match(/qsTr\([^)]*\)/g) || [];
         assert.ok(calls.length >= 1, expr + " is not translatable");
-        for (const c of calls) assert.match(c, /^qsTr\("[A-Za-z][A-Za-z ]{2,38}"\)$/, c + " is not a plain short literal");
+        for (const c of calls) assert.match(c, /^qsTr\("[A-Za-z][A-Za-z %1]{2,38}"\)$/, c + " is not a plain short literal");
         assert.equal(/\+/.test(blankStrings(expr)), false, expr + " builds the name by concatenation (translators cannot reorder it)");
     }
     const spoken = ["Add new supplier", "Close new supplier", "Rename supplier", "Cancel renaming supplier", "Rename workspace",
-        "Cancel renaming workspace", "Suspend member", "Activate member", "Remove member", "Back"];
+        "Cancel renaming workspace", "Suspend %1", "Activate %1", "Remove %1", "Back"];
     assert.equal(new Set(spoken).size, spoken.length);
     for (const w of spoken) assert.equal(["add", "close", "edit", "check", "pause-status"].includes(w.toLowerCase()), false, w + " is an icon id (Back is a real word and the icon is named back: allowed)");
 });

@@ -118,6 +118,7 @@ Item {
                     visible: AuthStore.uid.length > 0
                     QQC.AbstractButton {
                         id: uidBtn
+                        Accessible.name: qsTr("Copy user ID")
                         anchors.horizontalCenter: parent.horizontalCenter
                         padding: dp(6)
                         contentItem: Row {
@@ -309,6 +310,8 @@ Item {
         property string label: ""
         property string trailingText: ""
         property bool last: false
+        // One stop: "Language, English". The two Texts below are ignored so the row is not read twice.
+        Accessible.name: trailingText.length > 0 ? label + ", " + trailingText : label
         Layout.fillWidth: true
         implicitHeight: dp(52)
 
@@ -341,6 +344,7 @@ Item {
             }
 
             Text {
+                Accessible.ignored: true
                 text: parent.parent.label
                 color: Constants.textPrimary
                 font.pixelSize: sp(Constants.fsBodyLg)
@@ -348,6 +352,7 @@ Item {
             }
 
             Text {
+                Accessible.ignored: true
                 visible: parent.parent.trailingText.length > 0
                 text: parent.parent.trailingText
                 color: Constants.textMuted

@@ -745,9 +745,9 @@ App {
         z: 50
         currentIndex: navigation.currentIndex
         tabs: [
-            { iconName: "home", label: "Home" },
-            { iconName: "orders", label: "Orders" },
-            { iconName: "products", label: "Stock" },
+            { iconName: "home", label: qsTr("Home") },
+            { iconName: "orders", label: qsTr("Orders") },
+            { iconName: "products", label: qsTr("Stock") },
             { iconName: "analysis", label: qsTr("Analysis") }
         ]
         onTabChanged: function(idx) {

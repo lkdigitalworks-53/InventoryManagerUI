@@ -58,6 +58,7 @@ BottomSheet {
             }
             QQC.AbstractButton {
                 visible: (ActivityLog.notifications || []).length > 0
+                Accessible.name: clearAllLabel.text
                 implicitHeight: dp(28)
                 leftPadding: dp(10); rightPadding: dp(10)
                 topPadding: 0; bottomPadding: 0
@@ -68,6 +69,8 @@ BottomSheet {
                     border.width: 1
                 }
                 contentItem: Text {
+                    id: clearAllLabel
+                    Accessible.ignored: true
                     text: qsTr("Clear all")
                     color: Constants.danger
                     font.pixelSize: sp(Constants.fsCaption)

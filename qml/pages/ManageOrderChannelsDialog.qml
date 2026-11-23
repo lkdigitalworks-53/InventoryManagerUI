@@ -85,6 +85,7 @@ BottomSheet {
                         QQC.AbstractButton {
                             id: defaultBtn
                             visible: modelData !== OrderChannelStore.defaultChannel
+                            Accessible.name: qsTr("Set %1 as default").arg(modelData)
                             implicitHeight: dp(28)
                             implicitWidth: starTxt.implicitWidth + dp(20)
                             padding: 0
@@ -108,6 +109,7 @@ BottomSheet {
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                                 Text {
+                                    Accessible.ignored: true
                                     text: qsTr("Default")
                                     color: Constants.textSecondary
                                     font.pixelSize: sp(Constants.fsCaption)
@@ -123,6 +125,7 @@ BottomSheet {
                             // The picker requires at least one channel to
                             // remain — guard the last entry from removal.
                             enabled: OrderChannelStore.channels.length > 1
+                            Accessible.name: qsTr("Remove %1").arg(modelData)
                             implicitHeight: dp(28)
                             implicitWidth: removeTxt.implicitWidth + dp(20)
                             padding: 0
@@ -140,6 +143,7 @@ BottomSheet {
                             }
                             contentItem: Text {
                                 id: removeTxt
+                                Accessible.ignored: true
                                 text: qsTr("Remove")
                                 color: Constants.danger
                                 font.pixelSize: sp(Constants.fsCaption)

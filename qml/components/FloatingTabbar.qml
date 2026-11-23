@@ -69,6 +69,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     readonly property bool isActive: index === root.currentIndex
+                    Accessible.name: tabLabel.text
 
                     background: Rectangle {
                         radius: dp(14)
@@ -86,6 +87,8 @@ Item {
                             size: sp(24)
                         }
                         Text {
+                            id: tabLabel
+                            Accessible.ignored: true
                             Layout.alignment: Qt.AlignHCenter
                             text: modelData.label
                             color: tab.isActive ? Constants.brand2 : Constants.textSecondary

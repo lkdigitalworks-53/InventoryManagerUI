@@ -726,6 +726,7 @@ BottomSheet {
                       // per row, so seeding `text` from model.price is safe.
                       QQC.TextField {
                           id: priceField
+                          Accessible.name: qsTr("Price of %1").arg(model.name)
                           Layout.minimumHeight: dp(48)
                           Layout.preferredWidth: dp(64)
                           Layout.alignment: Qt.AlignVCenter
@@ -831,6 +832,7 @@ BottomSheet {
                       }
                       QQC.TextField {
                           id: lineDiscountField
+                          Accessible.name: row.lineDiscType === "percent" ? qsTr("Discount of %1, percent").arg(model.name) : qsTr("Discount of %1, flat amount").arg(model.name)
                           Layout.minimumHeight: dp(48)
                           Layout.fillWidth: true
                           text: String(row.lineDiscValue || 0)

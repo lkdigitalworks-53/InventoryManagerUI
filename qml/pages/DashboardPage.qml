@@ -426,12 +426,16 @@ Item {
                         font.bold: true
                     }
                     QQC.AbstractButton {
+                        id: seeAllActivityBtn
+                        text: qsTr("See all")
+                        Accessible.name: text
                         implicitHeight: dp(28)
                         leftPadding: dp(8); rightPadding: dp(8)
                         topPadding: 0; bottomPadding: 0
                         background: Rectangle { color: "transparent" }
                         contentItem: Text {
-                            text: qsTr("See all  ›")
+                            Accessible.ignored: true
+                            text: seeAllActivityBtn.text + "  ›"
                             color: Constants.brand2
                             font.pixelSize: sp(Constants.fsCaption)
                             font.bold: true
