@@ -413,18 +413,21 @@ test("S-5 (D-NO-5b) monkey: 1500 corruptions of a valid operation; a request is 
     assert.ok(accepted > 0, "the monkey must also hit accepted shapes, or the oracle check proves nothing");
 });
 
-test("G-1 dormancy (NO2 widened it): only the helpers (OperationKeys, OrderPlan, DescribeItem) name createOrder; no store, page or dialog sends it yet (NO3 replaces this guard with a wiring guard)", () => {
+test("G-1 wiring (NO3a replaced the dormancy guard): the helpers, OrderFlow, OrdersStore and DataModel name createOrder; no page or dialog does, and the two that send and route it say so", () => {
     const root = path.join(__dirname, "..", "..", "qml");
     const hits = [];
     (function walk(dir) {
         for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
             const p = path.join(dir, e.name);
             if (e.isDirectory()) walk(p);
-            else if (/\.(qml|js)$/.test(e.name) && !/^(OperationKeys|OrderPlan|DescribeItem)\.js$/.test(e.name)
-                     && fs.readFileSync(p, "utf8").indexOf("createOrder") >= 0) hits.push(path.relative(root, p));
+            else if (/\.(qml|js)$/.test(e.name) && fs.readFileSync(p, "utf8").indexOf("createOrder") >= 0) hits.push(path.relative(root, p).split(path.sep).join("/"));
         }
     })(root);
-    assert.deepEqual(hits, [], "QML names createOrder in: " + hits.join(", "));
+    assert.deepEqual(hits.sort(), ["helper/DescribeItem.js", "helper/OperationKeys.js", "helper/OrderFlow.js", "helper/OrderPlan.js", "model/DataModel.qml", "model/OrdersStore.qml"]);
+    const read = (f) => fs.readFileSync(path.join(root, f), "utf8");
+    assert.match(read("model/OrdersStore.qml"), /Gateway\.recordOperation\("createOrder", plan\.ops, plan\.key, \{ awaitServer: true \}/);
+    assert.match(read("model/DataModel.qml"), /opType === "createOrder"\) dataModel\._autoApproveNewOrder\(OrdersStore\.onCreateOrderApplied\(requestId, results, replay\)\)/);
+    assert.match(read("model/DataModel.qml"), /opType === "createOrder"\) \{\s*var orderFailure = OrdersStore\.onCreateOrderRejected\(requestId, rejection\)/);
 });
 
 test("G-2 source pins: the order counter, the op type list and the feed's op types are where the design says", () => {

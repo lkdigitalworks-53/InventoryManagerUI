@@ -24,7 +24,7 @@ BottomSheet {
     signal manageChannelsRequested()
 
     // In-flight guard — see ASYNC-REENTRANCY-BUGS.md C-2. `orderCreated` is a fire-and-forget signal into Main.qml ->
-    // logic.addOrder -> DataModel -> OrdersStore.addOrder, which sends ONE createOrder operation and waits for the server (NO3a).
+    // logic.addOrder -> DataModel -> OrdersStore.addOrder, which sends ONE atomic order operation and waits for the server (NO3a).
     // Without this, a double-tap on "Place order" would send two operations and make two orders — and if autoApproveEnabled is
     // on, double-deduct stock via the completion too. There is no DataModel-layer guard for creation the way
     // _completingOrderIds guards completion, so the UI entry point below is the ONLY thing standing between this and a

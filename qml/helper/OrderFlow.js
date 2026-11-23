@@ -42,7 +42,7 @@ function refusalText(reason, index, names) {
     case "bad-customer": return "Enter a valid customer name"
     case "too-large": return TOO_LARGE_TEXT
     case "bad-line":
-        if (typeof index !== "number" || index < 0) return "Add at least one product"
+        if (typeof index !== "number" || !(index >= 0)) return "Add at least one product"
         var n = Array.isArray(names) && typeof names[index] === "string" && names[index].length > 0 ? names[index] : ""
         return "Line " + (index + 1) + (n ? " (" + n + ")" : "")
             + ": the quantity must be a whole number of 1 or more, and the price, tax and discount must be valid. A price can be at most "
