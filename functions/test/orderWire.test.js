@@ -30,7 +30,7 @@ function sandbox(opts) {
     const log = { gateway: [], resync: 0, counts: 0, warn: [] };
     const ctx = {
         OrderPlan: OP, OrderFlow: OF, FailureCause: FC, console: { warn: (...a) => log.warn.push(a.join(" ")) },
-        Qt: { formatDate: () => "2026-06-15" }, orders: o.orders, revision: 0, _serverBase: {}, _internalOrdersWrite: false,
+        Qt: { formatDate: () => "2000-01-01" }, orders: o.orders, revision: 0, _serverBase: {}, _internalOrdersWrite: false,
         createOfflineMessage: OF.OFFLINE_TEXT, _createSettled: {}, _createNames: {},
         AuthService: { isOnline: o.online },
         InventoryStore: { getById: (id) => INV[id] || null },
@@ -93,6 +93,7 @@ test("W-1 online, answered in time: (true, id, undefined, 'applied'); the server
     assert.deepEqual([plain(h.ctx._createSettled), plain(h.ctx._createNames)], [{}, {}], "the settled flag is consumed by the signal, the name dropped");
     assert.equal(server.customer, "Asha", "typed text is trimmed (KNOWN-ISSUES 108)");
     assert.equal(server.status, "pending");
+    assert.equal(server.date, "2026-06-15", "the day the caller gave, in local time (not the store's fallback)");
     assert.deepEqual([server.subtotal, server.tax, server.total, server.items], [59.97, 10.79, 70.76, 3], "totals come from the store's own computeOrderTotals (tax from inventory, 18%)");
 });
 
@@ -165,6 +166,12 @@ test("W-6 offline: refused at once with the connection text, nothing queued, no 
     h2.ctx.AuthService = undefined;
     const t2 = tap(h2);
     assert.equal(t2.calls[0].refusal, OF.OFFLINE_TEXT, "no AuthService at all reads as offline, never as online");
+    for (const odd of [undefined, null, "yes", 1, {}]) {
+        const h3 = sandbox();
+        h3.ctx.AuthService = { isOnline: odd };
+        assert.equal(tap(h3).calls[0].refusal, OF.OFFLINE_TEXT, "only a real `true` is online: " + String(odd));
+        assert.equal(h3.log.gateway.length, 0);
+    }
 });
 
 test("W-7 a bad value is refused with ITS OWN text even offline (pure checks come before the connection check); an oversize doc says so", () => {
@@ -191,7 +198,7 @@ test("W-7 a bad value is refused with ITS OWN text even offline (pure checks com
 test("W-8 a bad date is not invented: the store falls back to today as it always did, so the planner never sees it, and the order is made", async () => {
     const h = sandbox();
     const t = tap(h, { date: new Date(NaN) });
-    assert.equal(t.call.ops[1].after.date, "2026-06-15");
+    assert.equal(t.call.ops[1].after.date, "2000-01-01", "the store's own fallback (today), not an invented day");
     const { answer } = await serve(t.call);
     finish(h, t.call, answer, true);
     assert.equal(t.calls[0].status, "applied");
@@ -287,4 +294,53 @@ test("W-13 source pins: pure checks before the online check, the settled flag be
     assert.ok(body.indexOf("nextOrderId") < 0, "the number is minted by the server");
     assert.ok(/status: "pending"/.test(body) && !/\bitems:|\btotal:|\bsubtotal:/.test(body), "one author for every total: _normalizeOrder");
     assert.ok(/function addOrder\(customer, date, email, phone, orderProducts, orderChannel, staffId, callback\)/.test(STORE_SRC));
+});
+
+// ---------------------------------------------------------------------------- the DataModel half (real bodies, fakes around them)
+
+const DM_SRC = fs.readFileSync(path.join(HELPER_DIR, "..", "model", "DataModel.qml"), "utf8");
+function dmSandbox(o) {
+    const opt = Object.assign({ autoApprove: true, orders: { "ORD-001": { orderId: "ORD-001" } }, completes: true }, o || {});
+    const log = { emitted: [], completed: [], synced: 0, store: [] };
+    const ctx = {
+        dispatcher: { orderCreationFailed: (m) => log.emitted.push(["failed", m]), orderCreationDeferred: (s) => log.emitted.push(["deferred", s]),
+            orderAdded: (id) => log.emitted.push(["added", id]), orderCompletionFailed: (id, m) => log.emitted.push(["completionFailed", id, m]) },
+        dataModel: { stockErrorMsg: "no stock" },
+        OrdersStore: { autoApproveEnabled: opt.autoApprove, getById: (id) => opt.orders[id] || null,
+            addOrder: (...a) => { log.store.push(a.slice(0, 7)); log.cb = a[7]; } },
+        _syncOrdersModel: () => { log.synced++; },
+        _tryCompleteOrder: (id, cb) => { log.completed.push(id); cb(opt.completes); },
+    };
+    vm.createContext(ctx);
+    const grab = (name) => { const at = DM_SRC.indexOf("function " + name + "("); const open = DM_SRC.indexOf("{", DM_SRC.indexOf(")", at)); let d = 0, i = open; for (; i < DM_SRC.length; i++) { if (DM_SRC[i] === "{") d++; else if (DM_SRC[i] === "}" && --d === 0) break; } return DM_SRC.substring(at, i + 1); };
+    vm.runInContext(grab("_autoApproveNewOrder"), ctx);
+    vm.runInContext(grab("onAddOrder"), ctx);
+    return { ctx, log };
+}
+
+test("W-14 DataModel.onAddOrder: the callback's four outcomes reach the dialog as the right signal; auto-approve starts only after an applied answer", () => {
+    const run = (res, o) => { const d = dmSandbox(o); d.ctx.onAddOrder("Asha", new Date(0), "e", "p", [LINE], "Online", "S-1"); assert.equal(d.log.completed.length, 0, "nothing completes before the answer"); d.log.cb(...res); return d.log; };
+    assert.deepEqual(run([false, "", "No."]).emitted, [["failed", "No."]]);
+    assert.deepEqual(run([false, "", undefined]).emitted, [["failed", "Could not add order — try again"]]);
+    for (const st of ["queued", "unconfirmed"]) {
+        const l = run([true, "", undefined, st]);
+        assert.deepEqual(l.emitted, [["deferred", st]]);
+        assert.deepEqual([l.completed, l.synced], [[], 0]);
+    }
+    const ok = run([true, "ORD-001", undefined, "applied"]);
+    assert.deepEqual(ok.emitted, [["added", "ORD-001"]]);
+    assert.deepEqual([ok.completed, ok.synced], [["ORD-001"], 1]);
+    assert.deepEqual(dmSandbox().log.store, []);
+    const d = dmSandbox(); d.ctx.onAddOrder("Asha", new Date(0), "e", "p", [LINE], "Online", "S-1");
+    assert.deepEqual(plain(d.log.store[0]).slice(0, 1).concat(plain(d.log.store[0]).slice(2)), ["Asha", "e", "p", plain([LINE]), "Online", "S-1"], "the argument order the store expects");
+});
+
+test("W-15 DataModel._autoApproveNewOrder: only for a known id, only when the setting is on, only when the order is in the list; a refused completion is announced with its text", () => {
+    const calls = (id, o) => { const d = dmSandbox(o); d.ctx._autoApproveNewOrder(id); return d.log; };
+    for (const id of ["", undefined, null]) assert.deepEqual(calls(id).completed, [], String(id));
+    assert.deepEqual(calls("ORD-001", { autoApprove: false }).completed, []);
+    assert.deepEqual(calls("ORD-009").completed, [], "an order that is not in the list (replay, unconfirmed) is never completed");
+    const ok = calls("ORD-001");
+    assert.deepEqual([ok.completed, ok.emitted], [["ORD-001"], []]);
+    assert.deepEqual(calls("ORD-001", { completes: false }).emitted, [["completionFailed", "ORD-001", "no stock"]]);
 });
