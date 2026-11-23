@@ -457,14 +457,15 @@ TestCase {
         compare(result[1].customer, "Already Has Customer") // left alone
     }
 
-    function test_addOrder_dispatches_without_throwing() {
-        // addOrder is fully async (nextOrderId -> FirebaseService.mintCounterValue
-        // is its first step) -- real outcome needs the emulator (E2E slice),
-        // this only confirms the synchronous portion before that call doesn't throw.
-        OrdersStore.addOrder(
-            "New Customer", 0, 0, "pending", new Date(), "", "", [], "", "",
-            function(ok, id) {}
-        )
-        verify(true)
+    function test_addOrder_refuses_an_empty_cart_before_anything_is_sent() {
+        // NO3a: addOrder is one awaited createOrder operation (tst_OrdersStore_addOrder.qml has the full cases). The pure refusal
+        // is synchronous and queues nothing, so it is the part this file can pin without a server.
+        var got = null
+        OrdersStore.addOrder("New Customer", new Date(), "", "", [], "", "",
+            function(ok, id, refusal) { got = { ok: ok, id: id, refusal: refusal } })
+        verify(got !== null)
+        compare(got.ok, false)
+        compare(got.refusal, "Add at least one product")
+        compare(OutboxStore.items.length, 0)
     }
 }

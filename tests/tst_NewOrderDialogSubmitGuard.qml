@@ -7,7 +7,7 @@ import QtTest
 // to the original order-completion double-submit bug (SKILLS Skill 61),
 // reached via order CREATION instead of order approval. A plain double-tap
 // on "Place order" (no slow connection or special reopen steps needed) mints
-// two separate orders via OrdersStore.nextOrderId's real, server-coordinated
+// two separate orders via OrdersStore.addOrder's real, server-coordinated createOrder
 // round trip, and — if autoApproveEnabled is on — double-deducts stock too,
 // since both duplicate orders get auto-completed.
 //
@@ -31,7 +31,7 @@ TestCase {
 
     // ── A minimal model of the dialog's new guarded trySubmit(). ──
     // `mintCalls` counts how many times the stand-in for
-    // logic.addOrder(...) -> OrdersStore.nextOrderId's real network mint
+    // logic.addOrder(...) -> OrdersStore.addOrder's real createOrder operation
     // would have actually fired — the number that matters for the bug
     // (does a double-tap mint one order or two), not just the dialog's own
     // busy flag.
@@ -44,7 +44,7 @@ TestCase {
 
             // Stand-in for the fire-and-forget `orderCreated(...)` emit ->
             // Main.qml -> logic.addOrder(...) -> DataModel.onAddOrder ->
-            // OrdersStore.addOrder -> nextOrderId's real round trip. Doesn't
+            // OrdersStore.addOrder -> the createOrder operation's real round trip. Doesn't
             // resolve on its own — the test drives resolution explicitly via
             // onOrderAdded/onOrderCreationFailed, same as production where
             // resolution arrives asynchronously off a real network response.
