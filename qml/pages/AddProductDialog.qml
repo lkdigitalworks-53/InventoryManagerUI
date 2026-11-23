@@ -429,6 +429,8 @@ BottomSheet {
                             Layout.preferredHeight: dp(44)
                             implicitWidth: dp(44)
                             implicitHeight: dp(44)
+                            Accessible.role: Accessible.Button
+                            Accessible.name: dlg._addPartyOpen ? qsTr("Close new supplier") : qsTr("Add new supplier")
                             padding: 0
                             topPadding: 0; bottomPadding: 0; leftPadding: 0; rightPadding: 0
                             background: Rectangle {

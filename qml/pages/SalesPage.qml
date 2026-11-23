@@ -210,6 +210,7 @@ Item {
             IconActionButton {
                 variant: "glass"
                 iconName: "settings"
+                label: badgeText.length > 0 ? qsTr("Filters, active") : qsTr("Filters")
                 // Dot badge when any filter has moved off its default — the
                 // user can tell at a glance that the on-screen numbers are
                 // narrowed without expanding the sheet.
@@ -246,6 +247,7 @@ Item {
             IconActionButton {
                 variant: "glass"
                 iconName: "export"
+                label: qsTr("Export analysis")
                 // Multi-sheet workbook: one sheet per report view (bug 11).
                 onClicked: root.exportRequested(root.buildAnalysisWorkbook())
             }

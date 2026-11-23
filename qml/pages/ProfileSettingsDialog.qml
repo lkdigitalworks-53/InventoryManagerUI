@@ -149,6 +149,8 @@ BottomSheet {
                         Layout.preferredHeight: dp(28)
                         implicitWidth: dp(28)
                         implicitHeight: dp(28)
+                        Accessible.role: Accessible.Button
+                        Accessible.name: root.workspaceEditMode ? qsTr("Cancel renaming workspace") : qsTr("Rename workspace")
                         padding: 0
                         topPadding: 0; bottomPadding: 0; leftPadding: 0; rightPadding: 0
                         visible: root.canRenameWorkspace

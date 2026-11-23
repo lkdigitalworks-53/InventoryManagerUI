@@ -147,6 +147,7 @@ BottomSheet {
                     }
                     IconActionButton {
                         iconName: "calendar"
+                        label: qsTr("Pick join date")
                         onClicked: joinPicker.open()
                     }
                     InlineDatePicker { id: joinPicker; onAccepted: function(d) { joinDateField.text = Qt.formatDate(d, "dd/MM/yyyy") } }

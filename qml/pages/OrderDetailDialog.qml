@@ -726,12 +726,14 @@ BottomSheet {
                       // per row, so seeding `text` from model.price is safe.
                       QQC.TextField {
                           id: priceField
+                          Layout.minimumHeight: dp(48)
                           Layout.preferredWidth: dp(64)
                           Layout.alignment: Qt.AlignVCenter
                           text: OrdersStore.formatCurrency(model.price)
                           inputMethodHints: Qt.ImhFormattedNumbersOnly
                           font.pixelSize: sp(Constants.fsBody)
                           horizontalAlignment: Text.AlignRight
+                          verticalAlignment: TextInput.AlignVCenter
                           selectByMouse: true
                           padding: 0
                           leftPadding: dp(6)
@@ -829,11 +831,13 @@ BottomSheet {
                       }
                       QQC.TextField {
                           id: lineDiscountField
+                          Layout.minimumHeight: dp(48)
                           Layout.fillWidth: true
                           text: String(row.lineDiscValue || 0)
                           inputMethodHints: Qt.ImhFormattedNumbersOnly
                           font.pixelSize: sp(Constants.fsBody)
                           horizontalAlignment: Text.AlignRight
+                          verticalAlignment: TextInput.AlignVCenter
                           selectByMouse: true
                           padding: 0
                           leftPadding: dp(6); rightPadding: dp(6)

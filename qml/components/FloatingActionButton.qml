@@ -10,6 +10,8 @@ QQC.AbstractButton {
     id: root
 
     property string iconName: "add"
+    // Spoken name (TalkBack). Every instance passes one: the icon alone would be read as "add".
+    property string label: ""
     property var palette: ({ start: Constants.brand1, end: Constants.brand3 })
 
     implicitWidth: dp(56)
@@ -19,6 +21,9 @@ QQC.AbstractButton {
     bottomPadding: 0
     leftPadding: 0
     rightPadding: 0
+
+    Accessible.role: Accessible.Button
+    Accessible.name: root.label
 
     background: Rectangle {
         radius: dp(Constants.radiusLg)

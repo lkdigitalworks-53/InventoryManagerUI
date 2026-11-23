@@ -11,11 +11,16 @@ QQC.Button {
     property string variant: "default"  // "default" | "ghost" | "glass"
     property string iconName: ""
     property string badgeText: ""
+    // Spoken name (TalkBack). An icon-only instance passes one: the icon alone is "unlabeled button" (a bell has no `text`).
+    property string label: ""
 
     implicitWidth: dp(38)
     implicitHeight: dp(38)
     flat: true
     padding: 0
+
+    Accessible.role: Accessible.Button
+    Accessible.name: root.label.length > 0 ? root.label : root.text
 
     background: Rectangle {
         radius: dp(Constants.radiusSm + 2)
