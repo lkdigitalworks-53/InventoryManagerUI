@@ -5398,3 +5398,20 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 11. A name built from ROW DATA (`.arg(modelData.name)`) needs a fallback for empty data, in the same expression: `.arg(model.name || qsTr("item"))`, the word the activity text of the same dialog already uses. Without it an imported or legacy line speaks "Price of ". The monkey test must feed an EMPTY name and assert the fallback; `out.includes("")` is true for any string and proves nothing (PR #216 sweep F-1).
 
 **The check:** `node --test functions/test/pickerS5e3bNames.test.js functions/test/pickerS5e3Names.test.js`: green (70 cases). `node --test .github/scripts/__tests__/*.test.js`: green. On a device: checks 180 to 192.
+
+## Skill 187: A wire slice copies the proven shape, returns the outcome as a status, and tests the route bodies it touches
+
+**Why:** NO3a wired `OrdersStore.addOrder` to the `createOrder` operation the way AP3a wired add product. Three things were new: the answer can arrive AFTER the dialog closed and still has to trigger a follow-up (auto-approve), a replayed answer must not be trusted, and the first mutant run left three survivors that were all in `DataModel`, which no test touched.
+
+**Rules:**
+1. Copy the AP3a shape: pure refusals first (their own text even offline), then the connection check, then ONE `recordOperation(..., { awaitServer: true })`; a `_settled[key]` flag set by the waiter and consumed by the Gateway signal so one answer is applied once; `_names[key]` for rejection texts; `onXApplied/onXRejected` as the only entry for a late answer.
+2. The callback is `(ok, id, refusal, status)` with `status` in `applied | queued | unconfirmed`. A boolean cannot say "saved, not confirmed", and a plain retry after `unconfirmed` is a second order. Give the deferred outcomes their own dispatcher signal (`orderCreationDeferred`) so the dialog can close with a toast instead of an error.
+3. The store stays data-only: `onCreateOrderApplied` RETURNS the new id (or `""` for a settled, replayed or unreadable answer) and `DataModel` decides to auto-approve. A replay or an unreadable answer returns `""`, so nothing is completed on data that may be stale.
+4. Delete arguments that lie. `items`, `total` and `status` were ignored or refused once the planner existed; removing them touched five files, but a source pin (`items:`/`total:` absent from the store's doc) keeps them out.
+5. Delete a loop another function already does, after proving it: W-2 compares `qty` and `quantity` lines and the inventory tax path.
+6. Test every DataModel body the slice adds by extracting it from the `Connections` block (`extractFunction("model/DataModel.qml", "onAddOrder")` works for `function onX(` handlers) and running it with fakes. Mutants that touch only DataModel survive otherwise.
+7. A "no page names X" guard also fails on a COMMENT that names X. Say "an atomic order operation" in a dialog comment.
+8. A fix to an e2e helper that flips `AuthService.isOnline` must capture and restore the fixture token (`init()` wipes it); one `_withOnline` per file, safe to nest, with a source guard.
+9. Check a pure helper's edge inputs with a mutant, not by eye: `index < 0` let `NaN` through as "Line NaN"; `!(index >= 0)` does not.
+
+**The check:** `cd functions && node --test test/orderWire.test.js test/orderFlow.test.js test/orderE2eHelpers.guard.test.js` is 15 + 7 + 10 green and the 28 hand mutants listed in the test plan are all killed.
