@@ -13,7 +13,7 @@
 - [x] 3. QML (14 files): 11 text-child buttons named, 3 member buttons say the member, 4 order fields named, 3 tab labels `qsTr`.
 - [x] 4. Tests: `pickerS5e3bNames.test.js` (27), `pickerS5e3Names.test.js` re-pinned (S5E3-07, 15, 16, 22), `scanFields` in the support module, one loose guard tightened (`completionsSyncingWiring.test.js`, KI 126). 33 hand mutants, 33 killed (one lived on the first run: `TextArea`, fixed by `S5E3B-27`).
 - [x] 5. Docs: test plan (slice row, unit table, checks 180 to 192, affected areas, verification row), KNOWN-ISSUES (97, 120, 124 updated; 126 to 130 new), Skill 187 + index (188 skills), AGENTS, README, this file.
-- [ ] 6. Commit, push, open PR, read CI on the head.
+- [x] 6. Committed `58881af`, pushed, PR #216 opened. CI on the head: QML 3382, Functions 2327, Rules 129, E2E 124 = 5962/5962, green.
 - [ ] 7. Owner: veto or accept D1 to D9, answer Q1 to Q3 of the plan, write the device results down.
 
 ## Measured (this session, by running it)
