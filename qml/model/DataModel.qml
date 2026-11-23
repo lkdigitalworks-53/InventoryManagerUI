@@ -117,9 +117,11 @@ Item {
         }
 
         // ── Orders ────────────────────────────────────────────────────────────
-        function onAddOrder(customer, items, total, status, date, email, phone, products, orderChannel, staffId) {
-            OrdersStore.addOrder(customer, items, total, status, date, email, phone, products, orderChannel, staffId,
-                function(ok, newOrderId) {
+        // NO3a: the order is ONE createOrder operation; the callback says how it ended (OrdersStore.addOrder). Auto-approve
+        // starts only after the server has answered (a completion needs the order to exist), never before.
+        function onAddOrder(customer, date, email, phone, products, orderChannel, staffId) {
+            OrdersStore.addOrder(customer, date, email, phone, products, orderChannel, staffId,
+                function(ok, newOrderId, refusal, status) {
                     if (!ok) {
                         // Dedicated signal (not the generic errorOccurred bus) so
                         // NewOrderDialog can reset its own busy state precisely on
@@ -127,18 +129,19 @@ Item {
                         // unrelated errorOccurred firing elsewhere while it happens
                         // to be open — mirrors orderCompletionFailed's role for the
                         // completion flow. See ASYNC-REENTRANCY-BUGS.md C-2.
-                        dispatcher.orderCreationFailed("Could not add order — try again")
+                        // `refusal` is the cause in words (nothing was saved).
+                        dispatcher.orderCreationFailed(refusal || "Could not add order — try again")
+                        return
+                    }
+                    if (status === "queued" || status === "unconfirmed") {
+                        // Saved but not confirmed to this caller: the sheet closes with a toast saying so; a queued order
+                        // arrives (and auto-approves) through the Gateway signal below.
+                        dispatcher.orderCreationDeferred(status)
                         return
                     }
                     _syncOrdersModel()
                     dispatcher.orderAdded(newOrderId)
-
-                    if (OrdersStore.autoApproveEnabled) {
-                        _tryCompleteOrder(newOrderId, function(success) {
-                            if (!success)
-                                dispatcher.orderCompletionFailed(newOrderId, dataModel.stockErrorMsg)
-                        })
-                    }
+                    _autoApproveNewOrder(newOrderId)
                 })
         }
 
@@ -674,6 +677,8 @@ Item {
             else if (opType === "restock") InventoryStore.onRestockApplied(requestId, results, replay)
             // AP3a: an add confirmed after its caller left (slow link, relaunch, replay).
             else if (opType === "addProduct") InventoryStore.onAddProductApplied(requestId, results, replay)
+            // NO3a: an order confirmed after its caller left (queued, slow link, relaunch). A replay adds nothing (the list is re-read).
+            else if (opType === "createOrder") dataModel._autoApproveNewOrder(OrdersStore.onCreateOrderApplied(requestId, results, replay))
         }
         function onOperationRejected(requestId, opType, rejection) {
             var open = dataModel._openCompletions[requestId]
@@ -687,6 +692,11 @@ Item {
                 var addFailure = InventoryStore.onAddProductRejected(requestId, rejection)
                 if (addFailure.length > 0 && dispatcher && typeof dispatcher.errorOccurred === "function")
                     dispatcher.errorOccurred("inventory", addFailure)
+            }
+            else if (opType === "createOrder") {
+                var orderFailure = OrdersStore.onCreateOrderRejected(requestId, rejection)
+                if (orderFailure.length > 0 && dispatcher && typeof dispatcher.errorOccurred === "function")
+                    dispatcher.errorOccurred("order", orderFailure)
             }
         }
         // A write got parked, or Retry/Discard/prune un-parked one: the caption must follow.
@@ -838,6 +848,16 @@ Item {
     function _closeOpen(key) {
         delete _openCompletions[key]
         _refreshSyncing()
+    }
+
+    // Auto-approve for a NEW order, after the server's answer (NO3a, D-NO-6). "" = nothing to approve (a replayed or unreadable
+    // answer, a settled-live call, or the order is not in the list). The completion refusal is announced like a manual approve.
+    function _autoApproveNewOrder(orderId) {
+        if (!orderId || !OrdersStore.autoApproveEnabled || !OrdersStore.getById(orderId)) return
+        _tryCompleteOrder(orderId, function(success) {
+            if (!success)
+                dispatcher.orderCompletionFailed(orderId, dataModel.stockErrorMsg)
+        })
     }
 
     function _tryCompleteOrder(orderId, callback) {

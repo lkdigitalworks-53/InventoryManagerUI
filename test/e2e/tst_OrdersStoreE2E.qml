@@ -22,6 +22,7 @@ TestCase {
     readonly property string realFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutation"
     readonly property string realBatchFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordMutationsBatch"
     readonly property string realDeltaFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordDelta"
+    readonly property string realOperationFunctionUrl: "https://asia-south1-inventorymanager-48392.cloudfunctions.net/recordOperation"
     readonly property string fixtureUrl: Qt.resolvedUrl("../../test/e2e/.fixture.json")
 
     property var fixture: null
@@ -72,6 +73,8 @@ TestCase {
         Gateway.functionUrl = emulatorFunctionsBase + "/recordMutation"
         Gateway.batchFunctionUrl = emulatorFunctionsBase + "/recordMutationsBatch"
         Gateway.deltaFunctionUrl = emulatorFunctionsBase + "/recordDelta"
+        // NO3a: addOrder is the createOrder operation, sent through recordOperation.
+        Gateway.operationFunctionUrl = emulatorFunctionsBase + "/recordOperation"
         AuthStore.idToken = fixture.idToken
         AuthStore.tenantId = fixture.tenantId
         SupplierStore.suppliers = [{ supplierId: fixture.supplierId, name: fixture.supplierName }]
@@ -95,6 +98,7 @@ TestCase {
         Gateway.functionUrl = realFunctionUrl
         Gateway.batchFunctionUrl = realBatchFunctionUrl
         Gateway.deltaFunctionUrl = realDeltaFunctionUrl
+        Gateway.operationFunctionUrl = realOperationFunctionUrl
         AuthStore.idToken = ""
         AuthStore.tenantId = ""
     }
@@ -104,21 +108,35 @@ TestCase {
     // Same shape as tst_OrdersE2E.qml's _addOrder — deliberately duplicated
     // rather than shared, to avoid touching that already-passing file as
     // part of this slice.
+    // NO3a: a new order is ONE awaited operation (OrdersStore.addOrder) and needs a connection, as adding a product does (AP3a).
+    // These files set the fixture token by hand, and going "online" runs AuthService.init() -> AuthStore.loadSession() -> clear(),
+    // which wipes it, so the fixture is captured first and put back right after the flip. Online is put back in a finally.
+    // Safe to nest (a flip to the value it already has changes nothing). CI is the oracle for this seam.
+    function _withOnline(fn) {
+        var wasOnline = AuthService.isOnline
+        var savedAuth = { idToken: AuthStore.idToken, uid: AuthStore.uid, tenantId: AuthStore.tenantId }
+        AuthService.isOnline = true
+        AuthStore.idToken = savedAuth.idToken
+        AuthStore.uid = savedAuth.uid
+        AuthStore.tenantId = savedAuth.tenantId
+        try { return fn() } finally { AuthService.isOnline = wasOnline }
+    }
+
     function _addOrder(customer, qty, price, idToken) {
         var products = [{
             productId: "", name: "OrdersStoreE2E Widget", price: price, quantity: qty,
             taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0
         }]
-        var totals = OrdersStore.computeOrderTotals(products)
         if (idToken !== undefined) AuthStore.idToken = idToken
         var createdId = ""
         var done = false
-        OrdersStore.addOrder(
-            customer, totals.itemCount, totals.total, "pending", new Date(),
-            "", "", products, "e2e", "",
-            function(ok, id) { done = true; createdId = ok ? id : "" }
-        )
-        tryVerify(function() { return done }, 5000, "addOrder callback never fired")
+        _withOnline(function() {
+            OrdersStore.addOrder(
+                customer, new Date(), "", "", products, "e2e", "",
+                function(ok, id) { done = true; createdId = ok ? id : "" }
+            )
+            tryVerify(function() { return done }, 5000, "addOrder callback never fired")
+        })
         verify(createdId.length > 0, "addOrder did not return an orderId")
         return createdId
     }
@@ -139,34 +157,33 @@ TestCase {
             productId: "", name: "Concurrent Widget", price: 50, quantity: 1,
             taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0
         }]
-        var totals = OrdersStore.computeOrderTotals(products)
 
         var firstDone = false, firstId = ""
         var secondDone = false, secondId = ""
 
         // Fired back-to-back, deliberately not awaited between calls --
-        // both nextOrderId->mintCounterValue requests are in flight at the
-        // same time. A naive max(existing)+1 approach would be prone to
-        // exactly this race; mintCounterValue's whole reason for existing
-        // is to not be.
-        OrdersStore.addOrder(
-            "Concurrent Customer A", totals.itemCount, totals.total, "pending", new Date(),
-            "", "", products, "e2e", "",
-            function(ok, id) { firstDone = true; firstId = ok ? id : "" }
-        )
-        OrdersStore.addOrder(
-            "Concurrent Customer B", totals.itemCount, totals.total, "pending", new Date(),
-            "", "", products, "e2e", "",
-            function(ok, id) { secondDone = true; secondId = ok ? id : "" }
-        )
+        // both createOrder operations are in flight at the same time and the
+        // server mints each number inside its own transaction. A naive
+        // max(existing)+1 approach would be prone to exactly this race; the
+        // server's transaction counter exists to prevent exactly that.
+        _withOnline(function() {
+            OrdersStore.addOrder(
+                "Concurrent Customer A", new Date(), "", "", products, "e2e", "",
+                function(ok, id) { firstDone = true; firstId = ok ? id : "" }
+            )
+            OrdersStore.addOrder(
+                "Concurrent Customer B", new Date(), "", "", products, "e2e", "",
+                function(ok, id) { secondDone = true; secondId = ok ? id : "" }
+            )
 
-        tryVerify(function() { return firstDone && secondDone }, 10000,
-                   "one or both concurrent addOrder callbacks never fired")
+            tryVerify(function() { return firstDone && secondDone }, 10000,
+                       "one or both concurrent addOrder callbacks never fired")
+        })
         verify(firstId.length > 0, "first concurrent addOrder did not return an orderId")
         verify(secondId.length > 0, "second concurrent addOrder did not return an orderId")
         verify(firstId !== secondId,
                "concurrent addOrder calls minted the SAME orderId (" + firstId
-               + ") -- mintCounterValue's collision-avoidance failed under real concurrency")
+               + ") -- the server's counter failed under real concurrency")
 
         // Both orders must actually exist in the emulator under their
         // distinct ids, not just have returned distinct-looking strings
@@ -459,9 +476,12 @@ TestCase {
         // satisfy by coincidence.
         var seedCount = 55
         var lastId = ""
-        for (var i = 0; i < seedCount; ++i) {
-            lastId = _addOrder("Pagination Customer " + i, 1, 10)
-        }
+        // One online window for all 55 (each _addOrder would otherwise flip it and re-run AuthService.init()).
+        _withOnline(function() {
+            for (var i = 0; i < seedCount; ++i) {
+                lastId = _addOrder("Pagination Customer " + i, 1, 10)
+            }
+        })
         var lastDocPath = "tenants/" + fixture.tenantId + "/orders/" + lastId
         _pollEmulatorDoc(lastDocPath, lastId, function(d) { return d !== null }, 10000,
                           "last seeded order never appeared before starting the sync")

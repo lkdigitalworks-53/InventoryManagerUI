@@ -33,8 +33,7 @@ Item {
     signal memberInviteFailed(string reason)
 
     // ── Orders ────────────────────────────────────────────────────────────────
-    signal addOrder(var customer, int items, var total, string status, var date,
-                    string email, string phone, var products,
+    signal addOrder(var customer, var date, string email, string phone, var products,
                     string orderChannel, string staffId)
     signal updateOrder(string orderId, var fields)
     signal adjustOrder(string orderId, var newLines, string reason, string condition, string note)
@@ -44,6 +43,8 @@ Item {
     // ── Orders feedback (DataModel → UI) ─────────────────────────────────────
     signal orderAdded(string orderId)
     signal orderCreationFailed(string errorMessage)
+    // NO3a: the order is saved but the server's answer is not in yet ("queued") or could not be read ("unconfirmed").
+    signal orderCreationDeferred(string status)
     signal orderUpdated(string orderId)
     signal orderDeleted(string orderId)
     signal orderCompletionFailed(string orderId, string errorMessage)

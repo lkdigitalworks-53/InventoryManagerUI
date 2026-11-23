@@ -5,6 +5,9 @@ import QtCore
 import "../components"
 
 import "../helper/SettingsPath.js" as SettingsPath
+import "../helper/OrderPlan.js" as OrderPlan
+import "../helper/OrderFlow.js" as OrderFlow
+import "../helper/FailureCause.js" as FailureCause
 
 QtObject {
     id: root
@@ -722,6 +725,8 @@ QtObject {
 
     // Async — see FirebaseService.mintCounterValue for why max(existing)+1
     // isn't safe (id reuse after delete, concurrent-add collisions).
+    // NO3a: addOrder no longer calls this (the server mints the number inside the createOrder operation). It stays only because
+    // functions/test/operationLogic.createOrder.test.js R-1 pins the server counter's id format to this body; delete both together.
     function nextOrderId(callback) {
         var seedMax = 0;
         for (var i = 0; i < orders.length; ++i) {
@@ -917,59 +922,122 @@ QtObject {
     // pipeline" need shows up later, it should be designed on purpose, not
     // resurrected from here.
 
-    // `orderChannel` (e.g. "Online" / "In-store" / "Direct") and `staffId`
-    // (the salesperson) are optional — empty strings are persisted when the
-    // caller doesn't supply them, so the Analysis page can detect
-    // "(unspecified)" rows and bucket them out of per-channel/per-staff
-    // breakdowns.
-    function addOrder(customer, items, total, status, date, email, phone, orderProducts, orderChannel, staffId, callback) {
-        nextOrderId(function(id) {
-            if (!id) {
-                console.warn("[OrdersStore] could not mint an orderId — add aborted")
-                if (callback) callback(false, "")
+    // atomic-ops NO3a (design 2026-11-23-no3a-create-order-wire-design.md). One tap = ONE atomic server operation: the order number
+    // is minted and the order created in one transaction (opType createOrder), so a refused or repeated tap burns no number and
+    // leaves no half-made order. Needs a connection (decided by Taher, NO1 Q-NO-3): offline there is no number to show.
+    // Nothing is shown locally before the server answers (no optimistic order: its id does not exist yet).
+    readonly property string createOfflineMessage: OrderFlow.OFFLINE_TEXT
+    function createDoneMessage(status) { return OrderFlow.doneText(status) }
+    // key -> true while a live callback has already settled the operation, so the Gateway signal that always follows
+    // (onCreateOrderApplied/Rejected) does not repeat the effects. key -> customer is this launch only (rejection texts).
+    property var _createSettled: ({})
+    property var _createNames: ({})
+
+    // `orderChannel` (e.g. "Online" / "In-store" / "Direct") and `staffId` (the salesperson) are optional: empty strings are
+    // persisted when the caller does not supply them, so the Analysis page can detect "(unspecified)" rows and bucket them out of
+    // per-channel/per-staff breakdowns. `orderProducts` lines are { productId, name, price, qty (or quantity), taxable?,
+    // taxPercent?, discountType?, discountValue? }; _normalizeOrder resolves tax from inventory and computes every total, so the
+    // totals have ONE author. The order is always created pending (stock is taken by the completion operation, D-NO-6).
+    // callback(ok, orderId, refusal, status), exactly once:
+    //   (true,  id, undefined, "applied")      the server created it; the order is in the local list (a replayed answer is NOT
+    //                                          added from the answer, it may be stale: the list is re-read)
+    //   (true,  "", undefined, "queued")       saved but not answered yet (slow link); the order appears when the server answers
+    //   (true,  "", undefined, "unconfirmed")  the server answered but the answer could not be read: the list is re-read and NO retry
+    //                                          is offered (a new tap is a new key, so a second order)
+    //   (false, "", message)                   nothing was saved; `message` is the cause, show it instead of "try again"
+    function addOrder(customer, date, email, phone, orderProducts, orderChannel, staffId, callback) {
+        function finish(ok, id, refusal, status) { if (callback) callback(ok, id, refusal, status) }
+        var now = new Date()
+        var doc = _normalizeOrder({ orderId: "", customer: customer, status: "pending", date: OrderFlow.localDay(date), notes: "",
+                                    email: email || "", phone: phone || "", orderChannel: orderChannel || "", staffId: staffId || "",
+                                    updatedAt: now.toISOString(), products: orderProducts || [] })
+        // Pure checks first: a refusal queues nothing, burns no key and shows its own text even when offline.
+        var plan = OrderPlan.build({ key: OrderFlow.newKey(now.getTime(), Math.random), order: doc })
+        if (!plan.ok) {
+            console.warn("[OrdersStore] create order refused:", plan.reason)
+            var names = []
+            for (var i = 0; i < doc.products.length; ++i) names.push(doc.products[i].name)
+            finish(false, "", OrderFlow.refusalText(plan.reason, plan.index, names))
+            return
+        }
+        var online = (typeof AuthService !== "undefined" && AuthService) ? AuthService.isOnline === true : false
+        if (!online) { finish(false, "", createOfflineMessage); return }
+
+        _createNames[plan.key] = doc.customer
+        Gateway.recordOperation("createOrder", plan.ops, plan.key, { awaitServer: true }, function(res) {
+            var kind = OrderFlow.classify(res)
+            if (kind === "queued") { finish(true, "", undefined, "queued"); return }
+            _createSettled[plan.key] = true
+            if (kind === "applied") {
+                var out = _applyCreateOrder(plan.key, res.results, res.idempotentReplay === true)
+                if (out.ok) finish(true, out.orderId, undefined, "applied")
+                else finish(true, "", undefined, "unconfirmed")
                 return
             }
-            var iso = Qt.formatDate(date, 'yyyy-MM-dd');
-            var arr = _clone();
-            var prods = [];
-            if (orderProducts) {
-                for (var k = 0; k < orderProducts.length; ++k) {
-                    var pp = orderProducts[k];
-                    var inv = pp.productId ? InventoryStore.getById(pp.productId) : null;
-                    var taxable = pp.taxable !== undefined ? !!pp.taxable : (inv ? !!inv.taxable : false);
-                    var taxPercent = pp.taxPercent !== undefined && pp.taxPercent !== null
-                        ? Number(pp.taxPercent)
-                        : (inv && taxable ? Number(inv.taxPercent || 0) : 0);
-                    prods.push({
-                        productId: pp.productId || "",
-                        name: pp.name,
-                        price: pp.price,
-                        quantity: pp.qty !== undefined ? pp.qty : (pp.quantity || 0),
-                        taxable: taxable,
-                        taxPercent: isNaN(taxPercent) ? 0 : taxPercent,
-                        discountType: pp.discountType === "percent" ? "percent" : "flat",
-                        discountValue: parseCurrency(pp.discountValue)
-                    });
-                }
-            }
-            var totals = computeOrderTotals(prods);
-            var newOrder = _normalizeOrder({ orderId: id, customer: customer,
-                       items: prods.length > 0 ? totals.itemCount : items,
-                       subtotal: totals.subtotal,
-                       discount: totals.discount,
-                       tax: totals.tax,
-                       taxBreakdown: totals.taxBreakdown,
-                       total: prods.length > 0 ? totals.total : total,
-                       status: status, date: iso, notes: "",
-                       email: email || "", phone: phone || "",
-                       orderChannel: orderChannel || "",
-                       staffId: staffId || "",
-                       updatedAt: new Date().toISOString(),
-                       products: prods });
-            arr.push(newOrder);
-            _commit(arr, newOrder, "create", null);
-            if (callback) callback(true, id)
+            finish(false, "", _createFailureText(plan.key, res))
         })
+    }
+
+    function _createFailureText(key, rejection) {
+        var customer = _createNames[key] || ""
+        delete _createNames[key]
+        if (rejection && rejection.discarded === true) return OrderFlow.DISCARDED_TEXT
+        return FailureCause.forCreateOrder(rejection, customer).text
+    }
+
+    // The ONE place a confirmed create reaches the local list, whether the answer arrived to a waiting caller or later through
+    // Gateway.operationApplied (queued, await window over, relaunch, replay). A replayed answer carries the order as of the FIRST
+    // application (it may have been completed or edited since), so a replay adds nothing and the list is re-read instead. An answer
+    // that cannot be read as exactly one create ({ ok: false }) changes nothing locally and re-reads the list (the server may
+    // have committed it: never offer a plain retry).
+    function _applyCreateOrder(key, results, replay) {
+        delete _createNames[key]
+        var out = applyCreateOrderResults(results, { replay: replay })
+        if (out.ok && !replay) return out
+        syncFromFirebase()
+        return out
+    }
+
+    // Reflects a server-confirmed create into the local list WITHOUT sending anything. Returns OrderPlan.reflect's outcome; when
+    // the answer is not exactly one create ({ ok: false }) NOTHING is applied. Idempotent: an order a sync already landed is kept.
+    function applyCreateOrderResults(results, opts) {
+        var out = OrderPlan.reflect(results)
+        if (!out.ok) {
+            console.warn("[OrdersStore] create order results not applied:", out.detail)
+            return out
+        }
+        if (!(opts && opts.replay === true)) _addLocalOrder(out.order)
+        return out
+    }
+
+    // Adds the server's order to the list as the CAS base, without a write (the server already has it). Same bookkeeping as
+    // _commit and applyRemoteOrder.
+    function _addLocalOrder(doc) {
+        if (findIndexById(doc.orderId) >= 0) return false
+        var arr = _clone()
+        arr.push(_normalizeOrder(Object.assign({}, doc)))
+        _rememberBase(doc.orderId, doc)
+        _setOrders(arr)
+        revision++
+        _refreshCounts()
+        return true
+    }
+
+    // DataModel routes Gateway.operationApplied / operationRejected for opType "createOrder" here. Both are no-ops when the live
+    // callback already settled the same key.
+    // -> the new order's id when THIS call added it from a first (not replayed) answer, so the caller can auto-approve it; else "".
+    function onCreateOrderApplied(requestId, results, replay) {
+        if (_createSettled[requestId]) { delete _createSettled[requestId]; return "" }
+        var out = _applyCreateOrder(requestId, results, replay === true)
+        return (out.ok && replay !== true) ? out.orderId : ""
+    }
+
+    // -> the message to announce, or "" (settled live already, or the person discarded it on purpose). Nothing exists server-side
+    // after a rejection and nothing was applied locally, so there is nothing to undo.
+    function onCreateOrderRejected(requestId, rejection) {
+        if (_createSettled[requestId]) { delete _createSettled[requestId]; return "" }
+        var text = _createFailureText(requestId, rejection)
+        return (rejection && rejection.discarded === true) ? "" : "A queued order was not placed. " + text
     }
 
     function deleteOrder(orderId) {
