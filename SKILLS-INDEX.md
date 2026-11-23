@@ -195,3 +195,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 185: A planner that wraps a doc another function builds must check what holds for ANY correct doc, and prove it against the real builder
 - 186: Count unnamed controls with a scan that reads only a button's own properties, and give a button one translated word that the picture reuses
 - 187: Name a button that draws its words in a child Text by pointing at that Text and hiding it, name the row when a word repeats, and scope every wiring guard to one block
+- 188: A wire slice copies the proven shape, returns the outcome as a status, and tests the route bodies it touches

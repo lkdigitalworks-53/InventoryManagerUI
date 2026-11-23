@@ -18,9 +18,9 @@ NO3 (wire) = NO3a (this branch: store + DataModel + dialog callback + helper tex
 - [x] 5. e2e: `_withOnline` in OrdersE2E, ReturnAfterMetadataEditE2E, OrdersStoreE2E (+ operation URL); guard `orderE2eHelpers.guard.test.js`.
 - [x] 6. Tests: `orderWire` 15, `orderFlow` 7, e2e guard 10, QML twins `tst_OrderFlow`, `tst_OrdersStore_addOrder`, smoke test updated; both dormancy guards became wiring guards.
 - [x] 7. Hand mutants: 28 -> 3 survivors (DataModel guards, online type) -> W-6 odd values, W-14, W-15 -> 28/28 killed.
-- [x] 8. Docs: test plan (+ index row), KNOWN-ISSUES 119-124 (110 and 115 closed), Skill 186 + index, AGENTS, README, STATUS 20.
-- [x] 9. Functions 2290/2290 RUN, scripts 1199/1199 RUN, skills index current. Committed; push + PR below.
-- [ ] 10. CI read on the pushed head (QML twins, the three rewired e2e suites are the unproven part: KNOWN-ISSUES 121); owner review, merge, Q-NO3-1..3.
+- [x] 8. Docs: test plan (+ index row), KNOWN-ISSUES 126-131 (110 and 115 closed), Skill 187 + index, AGENTS, README, STATUS 20.
+- [x] 9. Functions 2332/2332 RUN, scripts 1199/1199 RUN, skills index current. Committed; push + PR below.
+- [ ] 10. CI read on the pushed head (QML twins, the three rewired e2e suites are the unproven part: KNOWN-ISSUES 128); owner review, merge, Q-NO3-1..3.
 
 ## Next slice (NO3b, not started)
-`NewOrderDialog._setLinePrice` cap at `RestockFlow.MAX_UNIT_COST` with a visible message (KNOWN-ISSUES 114); then NO4 (Taher's device pass, test plan steps 1-19); then design `_tryAdjustOrder` first (Q-NO3-1). If CI is red on the e2e suites, read the first `addOrder callback never fired` (KNOWN-ISSUES 121).
+`NewOrderDialog._setLinePrice` cap at `RestockFlow.MAX_UNIT_COST` with a visible message (KNOWN-ISSUES 114); then NO4 (Taher's device pass, test plan steps 1-19); then design `_tryAdjustOrder` first (Q-NO3-1). If CI is red on the e2e suites, read the first `addOrder callback never fired` (KNOWN-ISSUES 128).
