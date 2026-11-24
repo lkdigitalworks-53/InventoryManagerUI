@@ -54,7 +54,7 @@ QQC.Popup {
             Layout.topMargin: 8
             Layout.leftMargin: 16
             text: "Set product photo"
-            font.pixelSize: 16
+            font.pixelSize: sp(Constants.fsTitle)
             font.bold: true
             color: "#111827"
         }
@@ -68,7 +68,7 @@ QQC.Popup {
             radius: 10
             color: cameraTap.pressed ? "#f3f4f6" : "#ffffff"
             border.color: Constants.borderColor
-            implicitHeight: 56
+            implicitHeight: Math.max(56, camLabels.implicitHeight + 20)
 
             Row {
                 anchors.fill: parent
@@ -76,10 +76,11 @@ QQC.Popup {
                 spacing: 12
                 Icon { name: "camera"; size: 20; anchors.verticalCenter: parent.verticalCenter; color: Constants.textPrimary }
                 Column {
+                    id: camLabels
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 2
-                    Text { text: "Take photo"; color: "#111827"; font.pixelSize: 14; font.bold: true }
-                    Text { text: "Use the camera"; color: "#6b7280"; font.pixelSize: 11 }
+                    Text { text: "Take photo"; color: "#111827"; font.pixelSize: sp(Constants.fsBodyLg); font.bold: true }
+                    Text { text: "Use the camera"; color: "#6b7280"; font.pixelSize: sp(Constants.fsCaption) }
                 }
             }
             MouseArea {
@@ -104,7 +105,7 @@ QQC.Popup {
             radius: 10
             color: galleryTap.pressed ? "#f3f4f6" : "#ffffff"
             border.color: Constants.borderColor
-            implicitHeight: 56
+            implicitHeight: Math.max(56, galLabels.implicitHeight + 20)
 
             Row {
                 anchors.fill: parent
@@ -112,10 +113,11 @@ QQC.Popup {
                 spacing: 12
                 Icon { name: "gallery"; size: 20; anchors.verticalCenter: parent.verticalCenter; color: Constants.textPrimary }
                 Column {
+                    id: galLabels
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 2
-                    Text { text: "Choose from gallery"; color: "#111827"; font.pixelSize: 14; font.bold: true }
-                    Text { text: "Pick an existing image"; color: "#6b7280"; font.pixelSize: 11 }
+                    Text { text: "Choose from gallery"; color: "#111827"; font.pixelSize: sp(Constants.fsBodyLg); font.bold: true }
+                    Text { text: "Pick an existing image"; color: "#6b7280"; font.pixelSize: sp(Constants.fsCaption) }
                 }
             }
             MouseArea {
@@ -154,7 +156,7 @@ QQC.Popup {
             radius: 10
             color: removeTap.pressed ? "#fef2f2" : "#ffffff"
             border.color: Constants.borderColor
-            implicitHeight: 56
+            implicitHeight: Math.max(56, remLabels.implicitHeight + 20)
 
             Row {
                 anchors.fill: parent
@@ -162,10 +164,11 @@ QQC.Popup {
                 spacing: 12
                 Icon { name: "delete"; size: 20; anchors.verticalCenter: parent.verticalCenter; color: Constants.textPrimary }
                 Column {
+                    id: remLabels
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 2
-                    Text { text: "Remove photo"; color: "#b91c1c"; font.pixelSize: 14; font.bold: true }
-                    Text { text: "Clear the existing image"; color: "#6b7280"; font.pixelSize: 11 }
+                    Text { text: "Remove photo"; color: "#b91c1c"; font.pixelSize: sp(Constants.fsBodyLg); font.bold: true }
+                    Text { text: "Clear the existing image"; color: "#6b7280"; font.pixelSize: sp(Constants.fsCaption) }
                 }
             }
             MouseArea {

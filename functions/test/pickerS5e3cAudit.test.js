@@ -91,10 +91,10 @@ test("S5E3C-09 the picker arc has no bare pixel size and no colour literal (all 
     assert.ok(T.scanPixelSizes(ROOT).filter((p) => ARC.includes(p.file)).length >= 60, "the arc's own sizes were all read");
 });
 
-test("S5E3C-10 ratchet: 7 bare pixel sizes left, all on the live photo sheet (18 in five dead helpers went with the helpers in S5f; KI 143)", () => {
+test("S5E3C-10 ratchet: NO bare pixel size left anywhere (18 went with the five dead helpers, the 7 on the photo sheet go through sp() since S5f; KI 143 closed)", () => {
     const by = {};
     T.scanPixelSizes(ROOT).filter((p) => p.raw).forEach((p) => { by[p.file] = (by[p.file] || 0) + 1; });
-    assert.deepEqual(by, { "qml/components/PhotoSourceSheet.qml": 7 });
+    assert.deepEqual(by, {});
     assert.deepEqual(users("PhotoSourceSheet").sort(), ["EditProductDialog", "Main"]);
 });
 

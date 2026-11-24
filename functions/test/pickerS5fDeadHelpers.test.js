@@ -92,3 +92,57 @@ test("S5F-08 monkey: 300 seeded random trees with decoys agree with the set know
         assert.deepEqual(deadQmlFiles(tree(files)), expected, "round " + round + ": " + JSON.stringify(files));
     }
 });
+
+// ---- commit B: PhotoSourceSheet font sizes through sp(), rows grow with their text ------------------------------------------------
+const { scanPixelSizes } = require("./testSupport/qmlThemeScaleScan");
+const SHEET = "qml/components/PhotoSourceSheet.qml";
+const sheet = () => fs.readFileSync(path.join(ROOT, SHEET), "utf8");
+const TOKENS = (() => { const o = {}; for (const m of fs.readFileSync(path.join(ROOT, "qml/helper/Constants.qml"), "utf8").matchAll(/readonly property int (fs\w+):\s*(\d+)/g)) o[m[1]] = +m[2]; return o; })();
+
+test("S5F-09 PhotoSourceSheet: no bare pixel size; its 7 sizes are sp() of a font token, and each token still equals the old number (same look at scale 1.0)", () => {
+    const sizes = scanPixelSizes(ROOT).filter((p) => p.file === SHEET);
+    assert.equal(sizes.length, 7);
+    assert.deepEqual(sizes.filter((p) => p.raw || !p.scaled), []);
+    const lines = sheet().split("\n").filter((l) => /font\.pixelSize/.test(l));
+    assert.equal(lines.length, 7);
+    const want = [["fsTitle", 16], ["fsBodyLg", 14], ["fsCaption", 11], ["fsBodyLg", 14], ["fsCaption", 11], ["fsBodyLg", 14], ["fsCaption", 11]];
+    lines.forEach((l, i) => {
+        const m = /font\.pixelSize:\s*sp\(Constants\.(fs\w+)\)/.exec(l);
+        assert.ok(m, "line " + i + " is not sp(Constants.fs*): " + l.trim());
+        assert.equal(m[1], want[i][0]);
+        assert.equal(TOKENS[m[1]], want[i][1], m[1] + " no longer equals the old pixel size " + want[i][1] + ": the look changed");
+    });
+});
+
+test("S5F-10 PhotoSourceSheet: the three rows grow with their label column and never go below 56 (the old fixed height)", () => {
+    const src = sheet();
+    assert.equal(/implicitHeight:\s*56\b/.test(src), false, "a fixed 56 row would clip big text again");
+    const rows = [...src.matchAll(/implicitHeight:\s*(Math\.max\(56,\s*(\w+)\.implicitHeight\s*\+\s*20\))/g)];
+    assert.deepEqual(rows.map((r) => r[2]), ["camLabels", "galLabels", "remLabels"]);
+    for (const r of rows) assert.equal(new RegExp("id:\\s*" + r[2] + "\\b").test(src), true, r[2] + " has no Column with that id");
+    assert.equal((src.match(/Column \{\s*\n\s*id: (camLabels|galLabels|remLabels)/g) || []).length, 3, "each id sits on the label Column");
+});
+
+test("S5F-11 monkey: the row formula on 500 seeded text heights is never below 56, always holds the text plus 20, and is 56 for any text up to 36", () => {
+    const expr = /implicitHeight:\s*(Math\.max\(56,\s*camLabels\.implicitHeight\s*\+\s*20\))/.exec(sheet())[1];
+    const f = new Function("camLabels", "Math", "return " + expr + ";");
+    let seed = 1124;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    let prev = -1;
+    for (const h of [0, 1, 32.2, 36, 36.01, 100, 1e6]) { const v = f({ implicitHeight: h }, Math); assert.ok(v >= 56 && v >= h + 20 && v >= prev); prev = v; }
+    for (let i = 0; i < 500; i++) {
+        const h = rnd() * 200, v = f({ implicitHeight: h }, Math);
+        assert.ok(v >= 56 && v >= h + 20, "h=" + h);
+        if (h <= 36) assert.equal(v, 56, "h=" + h);
+        else assert.equal(v, h + 20);
+    }
+    assert.equal(f({ implicitHeight: 32.2 }, Math), 56, "two lines at 14 and 11 px (about 32) keep the old 56 row");
+});
+
+test("S5F-12 regression: the sheet's six labels, its three signals and its 15 colour literals are unchanged", () => {
+    const src = sheet();
+    for (const s of ["Set product photo", "Take photo", "Use the camera", "Choose from gallery", "Pick an existing image", "Remove photo", "Clear the existing image"]) assert.ok(src.includes('"' + s + '"'), s);
+    assert.match(src, /root\.removeRequested\(\)/);
+    assert.match(src, /NativeUtils\.displayCameraPicker\(\)/);
+    assert.equal((src.match(/#[0-9a-fA-F]{6}\b/g) || []).length, 15, "colour literals stay KI 143's, not touched here");
+});

@@ -9,7 +9,7 @@
 ## Steps
 - [x] 0. Cloned fresh, memory + repo docs read, roadmap read: picker v2 S1 to S5e-3c merged (#218). Left on the roadmap: KI 143 cleanup slice (this), S5e-4 device pass (phone job, not code).
 - [x] 1. Recon by grep: CardKPI, OrderRow, PlaceholderPage, SegmentedNav, StatusBadge have no user outside tests/docs (StatusBadge only used by OrderRow); no qmldir/CMake/qrc entry (CMake globs `qml/*.qml`); `qml/tests` none. PhotoSourceSheet has 7 bare sizes: 16, 14 x3, 11 x3 = tokens fsTitle, fsBodyLg, fsCaption.
-- [ ] 2. Commit A: delete the 5 files, fix the ratchets that name them (S5E3-05/06, S5E3b-21 area, S5E3C-08/10/12).
+- [x] 2. Commit A done: 5 files deleted, ratchets fixed (S5E3-05/06/07, S5E3B-21, S5E3C-08/10/12), new `pickerS5fDeadHelpers.test.js` (S5F-01..08) + `testSupport/deadQmlScan.js`. Scanner also found 3 more unused QML files: AuthPrimaryButton, AuthSecondaryButton (dead, new KI 146, NOT deleted: out of scope) and AnalysisService (dormant on purpose, README says so).
 - [ ] 3. Commit B (own commit, revertable alone): PhotoSourceSheet 7 sizes -> `sp(Constants.fs*)`; ratchet S5E3C-10 -> zero bare sizes.
 - [ ] 4. Docs: plan, test plan row + device checks, KNOWN-ISSUES (close 121, 128, shrink 143), Skill + index, AGENTS (helper list), README (tree), checkpoint.
 - [ ] 5. Measure by running: functions suite, scripts suite, skills-index --check.
