@@ -5429,6 +5429,6 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 4. Fix what is inside the slice's scope; ratchet the rest with the reason for every entry (login fields, dead helpers), so the next person's fix fails a test and forces the doc update. Dead code is deleted, not fixed.
 5. A scan counts only the block's OWN depth-1 properties (`border.color` and a child `Rectangle { color }` are not the field's colour); decoys for each are in the scanner tests, and a seeded monkey of 300 generated blocks checks the scanner against its generator.
 6. Run the mutants BEFORE believing the tests: three of 17 needed work (a no-op mutant that proved nothing, a raw-size check that `13 + extra` now catches, a wrong escape in the mutant itself).
-7. Say what the source cannot prove, in the same PR: clipping at 2.0x, the real dark scheme on Felgo, the switch paint. They are device checks 194 to 202 and KI 135, 138, marked UNVERIFIED.
+7. Say what the source cannot prove, in the same PR: clipping at 2.0x, the real dark scheme on Felgo, the switch paint. They are device checks 194 to 202 and KI 142, 145, marked UNVERIFIED.
 
 **The check:** `node --test functions/test/pickerS5e3cAudit.test.js`: green (22 cases). `node .github/scripts/skills-index.js --check`: current. On a device: checks 194 to 202.

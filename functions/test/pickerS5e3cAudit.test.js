@@ -55,10 +55,10 @@ test("S5E3C-06 no typed-text control of the picker arc leaves its colour to the 
     assert.match(inArc.find((f) => f.id === "qtyField").own, /(^|[\s;{])color\s*:\s*Constants\./m, "the quantity box colour is a Constants token");
 });
 
-test("S5E3C-07 ratchet: the only typed-text controls left to the palette are the two login fields (KI 135)", () => {
+test("S5E3C-07 ratchet: the only typed-text controls left to the palette are the two login fields (KI 142)", () => {
     const left = fields().filter((f) => !f.colored).map((f) => f.file);
     assert.deepEqual(left, ["qml/components/AuthPasswordField.qml", "qml/components/AuthTextField.qml"]);
-    for (const f of left) assert.match(read(f), /color:\s*input\.enabled\s*\?\s*"#ffffff"/, f + ": the fill is a fixed white, so the palette risk is real (KI 135)");
+    for (const f of left) assert.match(read(f), /color:\s*input\.enabled\s*\?\s*"#ffffff"/, f + ": the fill is a fixed white, so the palette risk is real (KI 142)");
 });
 
 test("S5E3C-08 ratchet: the 3 Text/Label blocks with no colour are invisible or dead (nothing a user reads)", () => {
@@ -76,7 +76,7 @@ test("S5E3C-09 the picker arc has no bare pixel size and no colour literal (all 
     assert.ok(T.scanPixelSizes(ROOT).filter((p) => ARC.includes(p.file)).length >= 60, "the arc's own sizes were all read");
 });
 
-test("S5E3C-10 ratchet: 25 bare pixel sizes, 7 on a live photo sheet and 18 in dead helpers (KI 136)", () => {
+test("S5E3C-10 ratchet: 25 bare pixel sizes, 7 on a live photo sheet and 18 in dead helpers (KI 143)", () => {
     const by = {};
     T.scanPixelSizes(ROOT).filter((p) => p.raw).forEach((p) => { by[p.file] = (by[p.file] || 0) + 1; });
     assert.deepEqual(by, {
@@ -96,7 +96,7 @@ test("S5E3C-11 every pixel size that is neither bare nor sp()/dp() is AvatarBadg
     assert.equal((line.match(/\d+/g) || []).length, 4, "no number outside sp()");
 });
 
-test("S5E3C-12 ratchet: colour literals by file (Constants.qml is where they belong; the rest are KI 136)", () => {
+test("S5E3C-12 ratchet: colour literals by file (Constants.qml is where they belong; the rest are KI 143)", () => {
     assert.deepEqual(T.scanHex(ROOT), {
         "qml/components/AlertDialog.qml": 2, "qml/components/AuthPasswordField.qml": 16, "qml/components/AuthPrimaryButton.qml": 1,
         "qml/components/AuthSecondaryButton.qml": 6, "qml/components/AuthTextField.qml": 8, "qml/components/PhotoSourceSheet.qml": 15,
@@ -108,7 +108,7 @@ test("S5E3C-12 ratchet: colour literals by file (Constants.qml is where they bel
 });
 
 // ---- C. contrast of the text tokens ---------------------------------------------------------------------------------------
-test("S5E3C-13 text tokens on the four light surfaces: primary and secondary pass 4.5, muted does not (KI 137)", () => {
+test("S5E3C-13 text tokens on the four light surfaces: primary and secondary pass 4.5, muted does not (KI 144)", () => {
     const bg = ["cardBg", "screenBg", "appBg", "subtleBg"].map((n) => TOK[n]);
     assert.deepEqual(["cardBg", "screenBg", "appBg", "subtleBg"].filter((n) => !TOK[n]), [], "a surface token is no longer a plain hex");
     for (const b of bg) {
@@ -125,7 +125,7 @@ test("S5E3C-14 ratchet: Text coloured `textMuted` in the picker arc (the 2.56:1 
 });
 
 // ---- D. fixed-height rows -------------------------------------------------------------------------------------------------------
-test("S5E3C-15 ratchet: two fixed 48 dp rows hold unwrapped text in the arc, one line each (not a defect, a device look, KI 138)", () => {
+test("S5E3C-15 ratchet: two fixed 48 dp rows hold unwrapped text in the arc, one line each (not a defect, a device look, KI 145)", () => {
     const r = T.scanFixedHeightText(ROOT, ARC);
     assert.deepEqual(r.map((x) => x.file + ":" + x.prop + "=" + x.expr + " texts=" + x.texts), [
         "qml/components/ProductPickerSheet.qml:Layout.preferredHeight=dp(48) texts=1",

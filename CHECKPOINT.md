@@ -11,7 +11,7 @@
 - [x] 1. Recon by script: 347 Text/Label (3 without `color`, all invisible), 378 `pixelSize` (19 not via `sp()`, all outside the picker arc), picker arc has 0 hex literals; 5 typed-text fields in the arc with NO colour (SearchField, 2 in New Order, 2 in Edit Order) on fixed light fills.
 - [x] 2. QML: 5 `color:` pins (+ `placeholderTextColor` on SearchField). 11 lines, 3 files.
 - [x] 3. Scanner `functions/test/testSupport/qmlThemeScaleScan.js` + `pickerS5e3cAudit.test.js` (22 cases). 17 hand mutants, all killed (2 survived first run, test hardened).
-- [x] 4. Docs: plan (D1 to D8, Q1 to Q4), test plan (row, unit table, checks 194 to 202, affected area, verification row), KNOWN-ISSUES 135 to 138, Skill 188 + index (189 skills), AGENTS, README.
+- [x] 4. Docs: plan (D1 to D8, Q1 to Q4), test plan (row, unit table, checks 194 to 202, affected area, verification row), KNOWN-ISSUES 142 to 145, Skill 189 + index (190 skills), AGENTS, README.
 - [x] 5a. Measured by running: functions 2352/2352, scripts 1199/1199, skills-index current.
 - [x] 5b. Committed `3238f90`, pushed, PR #218 opened. CI on that head: QML, Functions, Rules, E2E all success (counts not read, only verdicts); Deploy steps skipped.
 - [x] 6. Final report given. NEXT (owner): answer plan Q1 to Q4, run device checks 194 to 202 (194 and 201 first, on a phone set to dark).
@@ -23,4 +23,4 @@ functions 2352/2352; scripts 1199/1199; `skills-index.js --check` current. Not r
 ## If this session is cut off
 Resume at the first unticked step. Re-measure counts before claiming any: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`, `node .github/scripts/skills-index.js --check`.
 
-NEXT SLICES: (1) login fields + Restock SpinBox colour pins (KI 135, owner Q2), (2) dead-helper cleanup (KI 136, owner Q3), (3) S5e-4 curated device pass (not code) and KI 29 with a number.
+NEXT SLICES: (1) login fields + Restock SpinBox colour pins (KI 142, owner Q2), (2) dead-helper cleanup (KI 143, owner Q3), (3) S5e-4 curated device pass (not code) and KI 29 with a number.
