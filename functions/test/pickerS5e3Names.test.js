@@ -56,27 +56,26 @@ test("S5E3-04 scanner helpers: stripComments keeps strings, blankStrings keeps l
 });
 
 // ---- the ratchet ------------------------------------------------------------------------------------------------
-test("S5E3-05 RATCHET: no icon-only raw button under qml/ lacks a spoken name (only the dead OrderRow helper is listed)", () => {
+test("S5E3-05 RATCHET: no icon-only raw button under qml/ lacks a spoken name (no exception left: the dead OrderRow helper was deleted in S5f)", () => {
     const { iconOnly } = scanTree(ROOT);
-    assert.deepEqual(iconOnly.map((b) => b.file), ["qml/helper/OrderRow.qml", "qml/helper/OrderRow.qml"],
+    assert.deepEqual(iconOnly.map((b) => b.file), [],
         "a new unnamed icon button: give it Accessible.role and Accessible.name (S5e3a-D2). Found: " + JSON.stringify(iconOnly));
 });
-test("S5E3-06 the one allowed exception stays dead: nothing instantiates OrderRow (KNOWN-ISSUES 121)", () => {
+test("S5E3-06 the old exception is gone for good: OrderRow.qml is deleted and no QML file names it (KNOWN-ISSUES 121, closed in S5f)", () => {
+    assert.equal(fs.existsSync(path.join(ROOT, "qml", "helper", "OrderRow.qml")), false, "OrderRow came back: its two icon buttons need a spoken name first");
     for (const f of qmlFiles(path.join(ROOT, "qml"))) {
-        if (f.endsWith("OrderRow.qml")) continue;
-        assert.equal(/\bOrderRow\s*\{/.test(stripComments(fs.readFileSync(f, "utf8"))), false,
-            f + " now uses OrderRow: name its two icon buttons first and drop the exception in S5E3-05");
+        assert.equal(/\bOrderRow\b/.test(stripComments(fs.readFileSync(f, "utf8"))), false, f + " names OrderRow");
     }
 });
-test("S5E3-07 RATCHET: buttons whose label lives only in a child Text and that have no name, pinned by file (13 at S5e-3a, 2 after S5e-3b)", () => {
+test("S5E3-07 RATCHET: buttons whose label lives only in a child Text and that have no name, pinned by file (13 at S5e-3a, 2 after S5e-3b, 1 after S5f)", () => {
     const { textChild } = scanTree(ROOT);
     const by = {};
     for (const b of textChild) by[b.file] = (by[b.file] || 0) + 1;
-    // S5e-3b named the other 11 (pickerS5e3bNames.test.js). Left on purpose: InventoryPage's ProductCard is a card that holds other buttons
-    // (KNOWN-ISSUES 123 class: decide on a device, checks 176 to 179); SegmentedNav is dead code (KNOWN-ISSUES 121 class, nothing uses it).
-    assert.deepEqual(by, { "qml/helper/SegmentedNav.qml": 1, "qml/pages/InventoryPage.qml": 1 },
-        "a new text-child button, or one of these two fixed: update this list on purpose");
-    assert.equal(textChild.length, 2);
+    // S5e-3b named 11 (pickerS5e3bNames.test.js); S5f deleted the dead SegmentedNav (KNOWN-ISSUES 128). Left on purpose: InventoryPage's ProductCard
+    // is a card that holds other buttons (KNOWN-ISSUES 123 class: decide on a device, checks 176 to 179).
+    assert.deepEqual(by, { "qml/pages/InventoryPage.qml": 1 },
+        "a new text-child button, or the ProductCard one fixed: update this list on purpose");
+    assert.equal(textChild.length, 1);
 });
 
 // ---- the ten buttons --------------------------------------------------------------------------------------------
