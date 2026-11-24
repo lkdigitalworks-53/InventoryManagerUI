@@ -13,9 +13,9 @@
 - [x] 5. Pass D: docs read (test plan diff, KNOWN-ISSUES numbering 97/120-130, Skill 187, AGENTS, README). Numbering consistent. Plan doc and root CHECKPOINT only skimmed.
 - [x] 6. Baseline measured on PR head: functions 2327/2327, scripts 1199/1199, skills-index current.
 - [x] 7a. F-1 fixed (fallback `|| qsTr("item")` on 4 field names), S5E3B-24 hardened, S5E3B-28/29 added, 6/6 mutants killed, docs updated (test plan row + check 193, Skill 187 rule 11, KI 131-134, AGENTS, README).
-- [ ] 7b. Remaining pass: ponytail lean read of the PR (deletes/merges), root CHECKPOINT.md, plan doc note.
-- [ ] 8. Push, read CI.
-- [ ] 9. Final report: done / next.
+- [x] 7b. Ponytail lean read done: nothing to delete. One merge candidate NOT done: `run` and `nameOf` helpers are copied in pickerS5e3Names.test.js and pickerS5e3bNames.test.js (same qsTr mock, must change together). Root CHECKPOINT.md updated.
+- [x] 8. Pushed `842ea90`. CI on it: Functions, Rules, QML, E2E success; Deploy skipped; PR summary comment job was still running when read. Counts not read.
+- [x] 9. Final report given. NEXT (owner): decide KI 130 (tab selected state), KI 129 (five dead Profile rows announced as buttons), check 193 on a device, answer plan Q1 to Q3.
 
 ## Findings log
 Session 2 (account B) started at step 2, repo cloned fresh, remote URL clean, git user tsadmin@gmail.com.
