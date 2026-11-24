@@ -6,6 +6,7 @@ import "../components"
 import "../helper"
 import "../model"
 import "../helper/NewOrderPicker.js" as Picker
+import "../helper/OrderFlow.js" as OrderFlow
 
 // Mobile-first New Order sheet — bottom sheet with customer fields and a
 // product picker. Public contract preserved: signal `orderCreated(order)`.
@@ -256,6 +257,9 @@ BottomSheet {
                 model: dlg.selectedProducts
                 delegate: Rectangle {
                     id: cartRow
+                    // Why the last price edit was refused ("" = none). Delegate-local: a refusal changes no line, so the row
+                    // stays; the next committed change rebuilds the rows and the message goes with the reverted field.
+                    property string priceError: ""
                     Layout.fillWidth: true
                     Layout.preferredHeight: cartCol.implicitHeight + dp(Constants.space3 * 2)
                     radius: dp(Constants.radius)
@@ -329,6 +333,7 @@ BottomSheet {
                             QQC.TextField {
                                 id: linePriceField
                                 Accessible.name: qsTr("Price of %1").arg(modelData.name || qsTr("item"))
+                                Accessible.description: cartRow.priceError
                                 Layout.minimumHeight: dp(48)
                                 Layout.preferredWidth: dp(72)
                                 text: InventoryStore.formatCurrency(modelData.price)
@@ -345,15 +350,16 @@ BottomSheet {
                                 background: Rectangle {
                                     radius: dp(8)
                                     color: linePriceField.enabled ? Constants.cardBg : Constants.subtleBg
-                                    border.color: linePriceField.activeFocus ? Constants.primaryBlue : Constants.borderColor
-                                    border.width: linePriceField.activeFocus ? 2 : 1
+                                    border.color: cartRow.priceError.length > 0 ? Constants.danger : (linePriceField.activeFocus ? Constants.primaryBlue : Constants.borderColor)
+                                    border.width: (linePriceField.activeFocus || cartRow.priceError.length > 0) ? 2 : 1
                                 }
                                 onActiveFocusChanged: {
-                                    if (activeFocus) { text = String(modelData.price); selectAll() }
+                                    if (activeFocus) { cartRow.priceError = ""; text = String(modelData.price); selectAll() }
                                     else { text = InventoryStore.formatCurrency(modelData.price) }
                                 }
                                 function _commitPrice() {
-                                    dlg._setLinePrice(index, text)
+                                    var msg = dlg._setLinePrice(index, text)
+                                    if (msg !== null) cartRow.priceError = msg
                                     var cur = dlg.selectedProducts[index]
                                     text = InventoryStore.formatCurrency(cur ? cur.price : modelData.price)
                                 }
@@ -405,6 +411,15 @@ BottomSheet {
                                 onEditingFinished: _commitDiscount()
                                 onAccepted: _commitDiscount()
                             }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: cartRow.priceError.length > 0
+                            text: cartRow.priceError
+                            color: Constants.danger
+                            font.pixelSize: sp(Constants.fsSmall)
+                            wrapMode: Text.Wrap
                         }
                     }
                 }
@@ -511,16 +526,20 @@ BottomSheet {
         selectedProducts = arr
     }
 
-    // Commit an edited per-line unit price. Mirrors _setLineDiscount: immutable
-    // array replace so _totalsCache recomputes.
-    // Rejects empty / NaN / negative by keeping the existing price.
+    // Commit an edited per-line unit price (NO3b). Immutable array replace so _totalsCache recomputes. One reading of the text
+    // (OrderFlow.priceEdit: a plain decimal up to the app's price limit); a refusal keeps the old price.
+    // -> the text to show under the field when the edit was refused, "" when a price was set, null when there was nothing to commit
+    // (the field still shows what it showed: Enter fires accepted AND editingFinished, and the second call must not wipe the message).
     function _setLinePrice(idx, value) {
-        if (idx < 0 || idx >= selectedProducts.length) return
-        var v = parseFloat(String(value).replace(/[^0-9.]/g, ""))
-        if (isNaN(v) || v < 0) return
+        if (!(idx >= 0 && idx < selectedProducts.length) || Math.floor(idx) !== idx) return null   // NaN, undefined, "0", 1.5: no such row
+        var cur = selectedProducts[idx]
+        var r = OrderFlow.priceEdit(value, cur.price, InventoryStore.formatCurrency(cur.price))
+        if (r.kind === "refused") return OrderFlow.priceText(r.reason)
+        if (r.kind !== "set" || r.price === cur.price) return null
         var arr = selectedProducts.slice()
-        arr[idx] = Object.assign({}, arr[idx], { price: v })
+        arr[idx] = Object.assign({}, cur, { price: r.price })
         selectedProducts = arr
+        return ""
     }
 
     function changeQty(idx, delta) {

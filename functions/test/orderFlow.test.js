@@ -70,3 +70,60 @@ test("F-7 the fixed texts are plain (no brace placeholders, no trailing space) a
     assert.equal(new Set(t).size, t.length);
     for (const x of t) assert.ok(!/[{}]/.test(x) && x === x.trim() && x.length > 10);
 });
+
+// ---------------------------------------------------------------------------------------------------------------------
+// NO3b: the unit-price field (design 2026-11-24-no3b-order-price-cap-design.md). priceEdit / priceText.
+// ---------------------------------------------------------------------------------------------------------------------
+
+const MAX = RF.MAX_UNIT_COST;
+
+test("F-8 priceEdit: a plain decimal in 0..MAX is a price (leading zeros, '5.', '.5', padding all read as typed)", () => {
+    const rows = [["250", 250], ["0", 0], ["007", 7], ["19.99", 19.99], [".5", 0.5], ["5.", 5], ["  42  ", 42], ["0.0", 0], ["1000000000", MAX], ["999999999.99", 999999999.99]];
+    for (const [t, n] of rows) assert.deepEqual(plain(OF.priceEdit(t, 1, "₹1")), { kind: "set", price: n }, t);
+});
+
+test("F-9 priceEdit: junk is refused as 'invalid' and never read as a different number (the old parser read these as 5, 15, 12, 1.2, 15)", () => {
+    for (const t of ["-5", "+5", "1e5", "1E5", "12abc", "1.2.3", "1,5", "1,200", "abc", "--1", "Infinity", "NaN", "0x10", "٣٣", "5 0", "₹120x", "1_000", "."])
+        assert.deepEqual(plain(OF.priceEdit(t, 1, "₹1")), { kind: "refused", reason: "invalid" }, JSON.stringify(t));
+});
+
+test("F-10 priceEdit: blank and non-string text are 'blank'; above the limit (and an overflowing paste) are 'large'", () => {
+    for (const t of ["", "   ", "\n\t", undefined, null, 5, {}, []]) assert.deepEqual(plain(OF.priceEdit(t, 1, "₹1")), { kind: "refused", reason: "blank" }, String(t));
+    for (const t of ["1000000000.01", "1000000001", "99999999999999999999", "9".repeat(400), "1" + "0".repeat(30) + ".5"])
+        assert.deepEqual(plain(OF.priceEdit(t, 1, "₹1")), { kind: "refused", reason: "large" }, t.slice(0, 20));
+});
+
+test("F-11 priceEdit: text that is what the field already shows is 'unchanged' (no parse, no message), including the formatted display", () => {
+    assert.deepEqual(plain(OF.priceEdit("120", 120, "₹120")), { kind: "unchanged" });
+    assert.deepEqual(plain(OF.priceEdit("  120 ", 120, "₹120")), { kind: "unchanged" });
+    assert.deepEqual(plain(OF.priceEdit("₹1,20,000", 120000, "₹1,20,000")), { kind: "unchanged" });
+    assert.deepEqual(plain(OF.priceEdit("19.99", 19.99, "₹20")), { kind: "unchanged" });
+    // the formatted text of ANOTHER price is not "unchanged": it is junk
+    assert.deepEqual(plain(OF.priceEdit("₹1,20,000", 5, "₹5")), { kind: "refused", reason: "invalid" });
+    // a non-string `shown` is ignored, never matched against
+    for (const shown of [undefined, null, 5, {}]) assert.deepEqual(plain(OF.priceEdit("7", 1, shown)), { kind: "set", price: 7 }, String(shown));
+    // `shown` is compared trimmed, like the typed text (a padded display still reads back as unchanged)
+    assert.deepEqual(plain(OF.priceEdit("₹120", 120, "  ₹120 ")), { kind: "unchanged" });
+    // a typed value equal to the stored one in another spelling is a set (the dialog then sees no change)
+    assert.deepEqual(plain(OF.priceEdit("120.0", 120, "₹120")), { kind: "set", price: 120 });
+});
+
+test("F-12 priceText: one wording per reason, the limit comes from RestockFlow, an unknown reason is ''", () => {
+    assert.equal(OF.priceText("blank"), "Enter the price of one unit, 0 or more");
+    assert.equal(OF.priceText("invalid"), "Price must be a plain number, like 120 or 99.5");
+    assert.equal(OF.priceText("large"), "Price is too large. Enter the price of ONE unit, up to " + MAX);
+    for (const r of ["x", "", undefined, null, 5, "bad-line", "set", "unchanged"]) assert.equal(OF.priceText(r), "", String(r));
+    const t = ["blank", "invalid", "large"].map(OF.priceText);
+    assert.equal(new Set(t).size, 3);
+    for (const x of t) assert.ok(!/[{}]/.test(x) && x === x.trim() && x.length > 10);
+});
+
+test("F-13 priceEdit never throws and always answers one of three kinds, for any value", () => {
+    for (const t of [undefined, null, 0, NaN, Infinity, true, {}, [], () => 1, Symbol.iterator.toString(), "\u0000", "\uD800"])
+        for (const cur of [undefined, null, NaN, 0, "x", {}]) for (const shown of [undefined, null, "", "₹0", 7]) {
+            const r = plain(OF.priceEdit(t, cur, shown));
+            assert.ok(["unchanged", "set", "refused"].includes(r.kind));
+            if (r.kind === "set") assert.ok(Number.isFinite(r.price) && r.price >= 0 && r.price <= MAX);
+            if (r.kind === "refused") assert.ok(["blank", "invalid", "large"].includes(r.reason));
+        }
+});

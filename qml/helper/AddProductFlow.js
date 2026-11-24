@@ -136,6 +136,9 @@ function _wholeState(text) {
 // -> a number in 0..MAX_MONEY, or NaN (blank, junk, negative, an exponent, too large).
 function moneyFromText(text) { return _moneyState(text).n }
 
+// The same reading with its reason, for a caller that shows its own message (New Order's price field, NO3b): { n, state } as _moneyState.
+function moneyState(text) { return _moneyState(text) }
+
 // -> a whole number in 0..MAX_STOCK, or NaN. "2.5" is NaN, not 2: parseInt cut it silently (D-AP3b-2).
 function wholeFromText(text) { return _wholeState(text).n }
 
