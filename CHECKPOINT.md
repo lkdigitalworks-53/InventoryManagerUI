@@ -10,9 +10,9 @@
 - [x] 0. Cloned fresh, memory + repo docs read, roadmap read: picker v2 S1 to S5e-3c merged (#218). Left on the roadmap: KI 143 cleanup slice (this), S5e-4 device pass (phone job, not code).
 - [x] 1. Recon by grep: CardKPI, OrderRow, PlaceholderPage, SegmentedNav, StatusBadge have no user outside tests/docs (StatusBadge only used by OrderRow); no qmldir/CMake/qrc entry (CMake globs `qml/*.qml`); `qml/tests` none. PhotoSourceSheet has 7 bare sizes: 16, 14 x3, 11 x3 = tokens fsTitle, fsBodyLg, fsCaption.
 - [x] 2. Commit A done: 5 files deleted, ratchets fixed (S5E3-05/06/07, S5E3B-21, S5E3C-08/10/12), new `pickerS5fDeadHelpers.test.js` (S5F-01..08) + `testSupport/deadQmlScan.js`. Scanner also found 3 more unused QML files: AuthPrimaryButton, AuthSecondaryButton (dead, new KI 146, NOT deleted: out of scope) and AnalysisService (dormant on purpose, README says so).
-- [ ] 3. Commit B (own commit, revertable alone): PhotoSourceSheet 7 sizes -> `sp(Constants.fs*)`; ratchet S5E3C-10 -> zero bare sizes.
-- [ ] 4. Docs: plan, test plan row + device checks, KNOWN-ISSUES (close 121, 128, shrink 143), Skill + index, AGENTS (helper list), README (tree), checkpoint.
-- [ ] 5. Measure by running: functions suite, scripts suite, skills-index --check.
+- [x] 3. Commit B `b5e36b2` (own commit, revertable alone): PhotoSourceSheet 7 sizes -> `sp(Constants.fs*)` (tokens equal old numbers), 3 rows `Math.max(56, labelColumn.implicitHeight + 20)`; S5E3C-10 pins zero bare sizes; S5F-09..12. 11 hand mutants, all killed (one no-op redone; a mutant loop once reverted uncommitted work, redone from the committed state).
+- [x] 4. Docs: plan `docs/superpowers/plans/2026-11-24-product-picker-v2-s5f-dead-helper-cleanup.md` (D1..D6, Q1..Q4), test plan (row, unit table, checks 203 to 208, affected areas, verification row), KNOWN-ISSUES (121, 128 fixed, 143 shrunk, new 146, 147), Skill 190 + index (191 skills), AGENTS (helper list, status), README (tree, status).
+- [x] 5. Measured by running: functions 2404/2404 (main was 2391), scripts 1199/1199, skills-index current.
 - [ ] 6. Push, PR, read CI verdicts.
 - [ ] 7. Owner: veto D1/D2, device check of the photo sheet at normal and 2.0x font, merge.
 

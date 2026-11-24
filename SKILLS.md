@@ -5433,3 +5433,20 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 8. Audit EVERY control type, not the one you already know. The first pass listed `TextField`, `Switch`, `SpinBox` and missed a live popup that is wholly palette-driven (`InlineDatePicker`); and it advised `color:` for a `SpinBox`, which has no `color` (typed text comes from `palette.text`, so QML would refuse the file). Before writing a fix for a control, read the control's own source (Qt `basic/<Control>.qml`) for the property it reads, and pin it with a test that also fails on the wrong property name (`S5E3C-23`).
 
 **The check:** `node --test functions/test/pickerS5e3cAudit.test.js`: green (23 cases). `node .github/scripts/skills-index.js --check`: current. On a device: checks 194 to 202.
+
+## Skill 190: Delete dead code only after a scanner proves it dead, take its test exceptions with it, and let a font change grow its container
+
+**Why:** S5e-3c left a list of five dead helpers (245 lines, no user) that still cost four ratchet exceptions, 18 bare pixel sizes, 44 colour literals and the app's only unnamed icon buttons. S5f deleted them. The same slice moved the last live screen with bare text sizes (`PhotoSourceSheet`) onto `sp()`, and a scaled font next to a fixed 56 row would have clipped.
+
+**The rules:**
+1. Prove "dead" with a whole-word scan over `qml/`, `main.cpp`, `src/` (not `3rdparty`), `CMakeLists.txt`, every `qmldir` and `tests/`, with COMMENTS STRIPPED (`deadQmlScan.js`). A mention in a comment is not a use. The first, comment-blind grep listed two unused files; the stripped scan listed three, and the third (`AnalysisService`) is dormant on purpose, a documented state, not dead code. Dead and dormant go in the same ratchet, each with its reason.
+2. Delete in the same commit as the tests that carried exceptions for the file (`S5E3-05` list empty, `S5E3-07` down to one, `S5E3C-10`, `S5E3C-12`): an exception for a file that no longer exists is a lie that hides the next one.
+3. Replace "this file stays dead" guards with ONE generic ratchet (`S5F-03`: the exact set of unused QML files) so the NEXT dead file fails a test, and keep one tiny guard that the deleted names are not mentioned anywhere (`S5F-02`).
+4. Two commits, so the visual one reverts alone: A deletes, B changes a look. The owner can veto B without losing A.
+5. A size moved from a bare number to `sp()` uses a TOKEN whose value equals the old number, and a test reads the token (`S5F-09`): the look at scale 1.0 is unchanged by construction, and the test fails if someone retunes the token.
+6. A fixed height next to text that now scales becomes `Math.max(old, content + pad)`. The floor keeps today's look; the row grows only when the text needs it. Test the formula by EVALUATING the expression read from the file on seeded random heights (`S5F-11`), not by matching its text alone.
+7. Commit before you run mutants. A mutant loop that ends in `git checkout <file>` throws away uncommitted work (it did, once; redone). A mutant that changes a value but not a count is a no-op against a count ratchet: add a literal instead of editing one.
+8. Say what the source cannot prove: a type loaded from a computed string, and how `sp()` paints on a real phone. They are checks 207 and 203 to 205, and KI 147.
+
+**The check:** `node --test functions/test/pickerS5fDeadHelpers.test.js`: green (12 cases). `node .github/scripts/skills-index.js --check`: current. On a device: checks 203 to 208.
+
