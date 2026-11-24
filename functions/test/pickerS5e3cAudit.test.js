@@ -55,10 +55,26 @@ test("S5E3C-06 no typed-text control of the picker arc leaves its colour to the 
     assert.match(inArc.find((f) => f.id === "qtyField").own, /(^|[\s;{])color\s*:\s*Constants\./m, "the quantity box colour is a Constants token");
 });
 
-test("S5E3C-07 ratchet: the only typed-text controls left to the palette are the two login fields (KI 142)", () => {
-    const left = fields().filter((f) => !f.colored).map((f) => f.file);
-    assert.deepEqual(left, ["qml/components/AuthPasswordField.qml", "qml/components/AuthTextField.qml"]);
-    for (const f of left) assert.match(read(f), /color:\s*input\.enabled\s*\?\s*"#ffffff"/, f + ": the fill is a fixed white, so the palette risk is real (KI 142)");
+test("S5E3C-07 ratchet: no TextField or TextArea in the app leaves its typed-text colour to the system palette (login fields pinned in the PR review)", () => {
+    const left = fields().filter((f) => !f.colored).map((f) => f.file + ":" + f.line);
+    assert.deepEqual(left, [], "a new typed-text control needs a pinned `color` (KI 142)");
+    for (const file of ["qml/components/AuthPasswordField.qml", "qml/components/AuthTextField.qml"]) {
+        const f = one(file, "input");
+        assert.match(f.own, /(^|[\s;{])color\s*:\s*input\.enabled\s*\?\s*Constants\.textPrimary\s*:\s*Constants\.textMuted\s*$/m, file + ": typed text");
+        assert.match(f.own, /(^|[\s;{])placeholderTextColor\s*:\s*Constants\.textSecondary\s*$/m, file + ": hint");
+        assert.match(read(file), /color:\s*input\.enabled\s*\?\s*"#ffffff"\s*:\s*"#f9fafb"/, file + ": the fill is a fixed white / near-white, which is why the text is pinned");
+    }
+    // The pins are readable on the two fills the login boxes paint (enabled "#ffffff", disabled "#f9fafb"); the disabled text is muted by design.
+    for (const fill of ["#ffffff", "#f9fafb"]) assert.ok(T.contrast(TOK.textPrimary, fill) >= 4.5 && T.contrast(TOK.textSecondary, fill) >= 4.5, fill);
+});
+
+test("S5E3C-23 the Restock SpinBox pins its typed text through palette.text (a SpinBox has no `color`), and no SpinBox in the app sets `color`", () => {
+    const boxes = T.scanColors(ROOT, ["SpinBox"]);
+    assert.deepEqual(boxes.map((b) => b.file + ":" + b.id), ["qml/pages/RestockDialog.qml:qtyField"], "a new SpinBox needs the same pin (KI 142)");
+    assert.equal(boxes[0].colored, false, "`color:` on a SpinBox is a non-existent property (QML error): use palette.text");
+    assert.match(boxes[0].own, /(^|[\s;{])palette\.text\s*:\s*qtyField\.enabled\s*\?\s*Constants\.textPrimary\s*:\s*Constants\.textMuted\s*$/m);
+    assert.match(read("qml/pages/RestockDialog.qml"), /id:\s*qtyField\b[\s\S]*?background:\s*Rectangle\s*\{[\s\S]*?color:\s*Constants\.cardBg/, "the fill is the Constants.cardBg token, readable under textPrimary");
+    assert.ok(T.contrast(TOK.textPrimary, TOK.cardBg) >= 4.5);
 });
 
 test("S5E3C-08 ratchet: the 3 Text/Label blocks with no colour are invisible or dead (nothing a user reads)", () => {

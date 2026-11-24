@@ -72,6 +72,9 @@ ColumnLayout {
             anchors.bottom: parent.bottom
             anchors.leftMargin: dp(4)
             font.pixelSize: sp(13)
+            // S5e-3c review: the fill is a fixed white, so the typed text and the hint are pinned, not left to the system palette (KI 142)
+            color: input.enabled ? Constants.textPrimary : Constants.textMuted
+            placeholderTextColor: Constants.textSecondary
             leftPadding: dp(8)
             rightPadding: dp(4)
             selectByMouse: true
