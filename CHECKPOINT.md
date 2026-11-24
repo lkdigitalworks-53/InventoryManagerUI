@@ -19,7 +19,8 @@
 - [x] 8. Review fixes, code (`25ea4e4`): login fields pin `color` + `placeholderTextColor`; Restock SpinBox pins `palette.text` (KI 142 had advised `color:`, invalid on a SpinBox); `S5E3C-07` now zero-left, `S5E3C-23` new; 5 hand mutants killed; QML linter 0 findings; functions 2391/2391.
 - [x] 9. Review fixes, docs (this commit): KI 142 and 145 rewritten (145 line ref 219 to 215 after the rebase), plan D2/D5/D8, test plan rows and check 201, Skill 189 rule 8, AGENTS, README, counts.
 - [x] 10. Ponytail pass: one cut (`luminance` export, only `contrast` uses it); nothing else to delete (every scanner export has a caller, the archived prev-CHECKPOINT follows the repo pattern). net: -1 line.
-- [ ] 11. CI result on the newest head (read it), device checks 194 to 202 (owner).
+- [x] 11. CI on `2ffa979` read: Functions, QML, Rules, E2E, PR summary success; Deploy steps skipped. This checkpoint-only commit goes on top (CI on it not read).
+- [ ] 12. Owner: veto or keep the login/SpinBox commit `25ea4e4`, plan Q1 to Q4, device checks 194 to 202 (201 first, on a dark phone).
 
 ## Measured (this session, by running it)
 functions 2391/2391 (after rebase and review fixes; 2352 before the rebase); scripts 1199/1199; `skills-index.js --check` current; QML linter (qt-qml-review skill, diff scope) 0 findings. Not run: CI on the newest head, any device check (194 to 202).
