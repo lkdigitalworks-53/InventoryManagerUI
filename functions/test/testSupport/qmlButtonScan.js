@@ -108,6 +108,8 @@ function scanInstances(src, typeName) {
             ownSrc: flatten(bodyT, body),
             labelled: /(^|[\s;{])label\s*:/.test(own),
             ignored: /(^|[\s;{])Accessible\.ignored\s*:\s*true/.test(own),
+            named: /(^|[\s;{])Accessible\.name\s*:/.test(own), // S5e-3b: text fields
+            placeholder: /(^|[\s;{])placeholderText\s*:/.test(own),
         });
         re.lastIndex = open + 1;
     }
@@ -137,4 +139,16 @@ function scanTree(root) {
     return { iconOnly, textChild };
 }
 
-module.exports = { stripComments, blankStrings, matchBrace, flatten, scanButtons, scanInstances, qmlFiles, scanTree };
+// S5e-3b. Every TextField/TextArea block under qml/ that sets no `Accessible.name` of its own (an `AuthTextField {` or a `SearchField {` use is a
+// different type and is not matched: `\b` needs a word edge before `TextField`). `placeholder` says whether a placeholderText stands in (UNVERIFIED as a name).
+function scanFields(root) {
+    const out = [];
+    for (const f of qmlFiles(path.join(root, "qml"))) {
+        const rel = path.relative(root, f).split(path.sep).join("/"), src = fs.readFileSync(f, "utf8");
+        for (const type of ["TextField", "TextArea"])
+            for (const i of scanInstances(src, type)) if (!i.named) out.push({ file: rel, line: i.line, type, placeholder: i.placeholder });
+    }
+    return out;
+}
+
+module.exports = { stripComments, blankStrings, matchBrace, flatten, scanButtons, scanInstances, scanFields, qmlFiles, scanTree };

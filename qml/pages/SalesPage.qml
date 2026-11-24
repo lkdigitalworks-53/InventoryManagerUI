@@ -801,9 +801,12 @@ Item {
                     }
                     QQC.AbstractButton {
                         visible: root._scopedTransactions(999).length > 5
+                        Accessible.name: seeAllLabel.text
                         implicitWidth: dp(60)
                         implicitHeight: dp(28)
                         contentItem: Text {
+                            id: seeAllLabel
+                            Accessible.ignored: true
                             text: root._showAllActivities ? qsTr("Show less") : qsTr("See all")
                             color: Constants.brand2
                             font.pixelSize: sp(Constants.fsSmall)

@@ -255,8 +255,11 @@ BottomSheet {
                     Layout.fillWidth: true
                     Layout.preferredHeight: dp(32)
                     property bool open: true   // advanced section starts expanded
+                    Accessible.name: advLabel.text
                     contentItem: RowLayout {
                         Text {
+                            id: advLabel
+                            Accessible.ignored: true
                             text: qsTr("Advanced")
                             color: Constants.textPrimary
                             font.pixelSize: sp(Constants.fsBody)

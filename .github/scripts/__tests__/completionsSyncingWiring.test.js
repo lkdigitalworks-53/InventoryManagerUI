@@ -60,7 +60,10 @@ function dialogProblems(src) {
   const out = [];
   if (!/visible: dataModel\.syncingOrderIds\[dlg\.orderId\] === true/.test(src)) out.push('visible-binding');
   if (!/text: qsTr\("Saved\. Syncing…"\)/.test(src)) out.push('text');
-  if (!/Accessible\.name: qsTr\(/.test(src.slice(src.indexOf('id: syncingHint')))) out.push('accessible-name');
+  // Only the caption's own block: the old slice ran to end of file, so any later `Accessible.name: qsTr(` in the dialog
+  // (S5e-3b added two price/discount field names) hid a removed caption name.
+  const at = src.indexOf('id: syncingHint'), end = src.indexOf('\n            }', at);
+  if (at < 0 || end < 0 || !/Accessible\.name: qsTr\(/.test(src.slice(at, end))) out.push('accessible-name');
   return out;
 }
 
