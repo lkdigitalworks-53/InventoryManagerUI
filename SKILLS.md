@@ -5399,7 +5399,7 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 
 **The check:** `node --test functions/test/pickerS5e3bNames.test.js functions/test/pickerS5e3Names.test.js`: green (70 cases). `node --test .github/scripts/__tests__/*.test.js`: green. On a device: checks 180 to 192.
 
-## Skill 187: A wire slice copies the proven shape, returns the outcome as a status, and tests the route bodies it touches
+## Skill 188: A wire slice copies the proven shape, returns the outcome as a status, and tests the route bodies it touches
 
 **Why:** NO3a wired `OrdersStore.addOrder` to the `createOrder` operation the way AP3a wired add product. Three things were new: the answer can arrive AFTER the dialog closed and still has to trigger a follow-up (auto-approve), a replayed answer must not be trusted, and the first mutant run left three survivors that were all in `DataModel`, which no test touched.
 

@@ -142,7 +142,7 @@ Item {
                     _syncOrdersModel()
                     dispatcher.orderAdded(newOrderId)
                     // "replayed": the server already had this order (a resend after a lost answer), the list is being re-read, and
-                    // auto-approve never starts for a replay (KNOWN-ISSUES 126), whether or not a sync already landed the order.
+                    // auto-approve never starts for a replay (KNOWN-ISSUES 135), whether or not a sync already landed the order.
                     if (status !== "replayed") _autoApproveNewOrder(newOrderId)
                 })
         }

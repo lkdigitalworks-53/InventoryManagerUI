@@ -1,6 +1,6 @@
 "use strict";
 
-// Atomic-ops NO3a review sweep (2026-11-24). KNOWN-ISSUES 130: the real NewOrderDialog has no headless test (it imports Felgo),
+// Atomic-ops NO3a review sweep (2026-11-24). KNOWN-ISSUES 139: the real NewOrderDialog has no headless test (it imports Felgo),
 // and tst_NewOrderDialogSubmitGuard.qml only tests a hand-written replica. This file pins the SOURCE of the three things that
 // keep the "Place order" sheet from sticking on its busy overlay or from making a second order:
 //   - trySubmit: `if (busy) return` first, `busy = true` before `orderCreated(` is emitted, no totals or status in the payload;

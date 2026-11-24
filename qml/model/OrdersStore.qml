@@ -942,7 +942,7 @@ QtObject {
     //   (true,  id, undefined, "applied")      the server created it; the order is in the local list
     //   (true,  id, undefined, "replayed")     the server had ALREADY made it (a resend after a lost answer): not added from the
     //                                          answer (it may be stale), the list is re-read, and the caller must NOT auto-approve
-    //                                          (KNOWN-ISSUES 126); the id is real, the sheet may close
+    //                                          (KNOWN-ISSUES 135); the id is real, the sheet may close
     //   (true,  "", undefined, "queued")       saved but not answered yet (slow link); the order appears when the server answers
     //   (true,  "", undefined, "unconfirmed")  the server answered but the answer could not be read: the list is re-read and NO retry
     //                                          is offered (a new tap is a new key, so a second order)
