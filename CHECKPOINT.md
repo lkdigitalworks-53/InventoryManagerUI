@@ -13,8 +13,11 @@
 - [x] 3. Commit B `b5e36b2` (own commit, revertable alone): PhotoSourceSheet 7 sizes -> `sp(Constants.fs*)` (tokens equal old numbers), 3 rows `Math.max(56, labelColumn.implicitHeight + 20)`; S5E3C-10 pins zero bare sizes; S5F-09..12. 11 hand mutants, all killed (one no-op redone; a mutant loop once reverted uncommitted work, redone from the committed state).
 - [x] 4. Docs: plan `docs/superpowers/plans/2026-11-24-product-picker-v2-s5f-dead-helper-cleanup.md` (D1..D6, Q1..Q4), test plan (row, unit table, checks 203 to 208, affected areas, verification row), KNOWN-ISSUES (121, 128 fixed, 143 shrunk, new 146, 147), Skill 190 + index (191 skills), AGENTS (helper list, status), README (tree, status).
 - [x] 5. Measured by running: functions 2404/2404 (main was 2391), scripts 1199/1199, skills-index current.
-- [ ] 6. Push, PR, read CI verdicts.
+- [x] 6. Pushed, PR #220 opened. CI on head `9b9c821` read: QML 3408, Functions 2404, Rules 129, E2E 124 = 6065/6065 green; Deploy steps skipped. This checkpoint-only commit goes on top (CI on it not read).
 - [ ] 7. Owner: veto D1/D2, device check of the photo sheet at normal and 2.0x font, merge.
+
+## Next
+(1) Owner: Q1..Q4 in the PR, device checks 203 to 208 (207 first), merge. (2) S5e-4 curated device pass (phone job, KI 29 number). (3) KI 146 cleanup of the two dead Auth buttons. (4) KI 143 colour literals to tokens, one file at a time.
 
 ## If this session is cut off
 Resume at the first unticked step. Re-measure counts before claiming any: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`, `node .github/scripts/skills-index.js --check`.
