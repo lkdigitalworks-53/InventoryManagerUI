@@ -81,4 +81,4 @@ function scanFixedHeightText(root, relFiles) {
     return out;
 }
 
-module.exports = { scanColors, scanPixelSizes, scanHex, scanFixedHeightText, luminance, contrast, colorTokens };
+module.exports = { scanColors, scanPixelSizes, scanHex, scanFixedHeightText, contrast, colorTokens };

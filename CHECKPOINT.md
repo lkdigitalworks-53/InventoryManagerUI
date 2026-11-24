@@ -18,7 +18,8 @@
 - [x] 7. PR REVIEW (2026-11-24, next session): rebased on main `fc4eee5` (#217), CHECKPOINT kept, SKILLS-INDEX / SKILLS / KNOWN-ISSUES clash with NO3a resolved by renumbering KI 135-138 to 142-145 and Skill 188 to 189 (190 skills), force-pushed `609a972`.
 - [x] 8. Review fixes, code (`25ea4e4`): login fields pin `color` + `placeholderTextColor`; Restock SpinBox pins `palette.text` (KI 142 had advised `color:`, invalid on a SpinBox); `S5E3C-07` now zero-left, `S5E3C-23` new; 5 hand mutants killed; QML linter 0 findings; functions 2391/2391.
 - [x] 9. Review fixes, docs (this commit): KI 142 and 145 rewritten (145 line ref 219 to 215 after the rebase), plan D2/D5/D8, test plan rows and check 201, Skill 189 rule 8, AGENTS, README, counts.
-- [ ] 10. Still to do from the review: ponytail pass (net cut list), CI result on the new head, device checks 194 to 202 (owner).
+- [x] 10. Ponytail pass: one cut (`luminance` export, only `contrast` uses it); nothing else to delete (every scanner export has a caller, the archived prev-CHECKPOINT follows the repo pattern). net: -1 line.
+- [ ] 11. CI result on the newest head (read it), device checks 194 to 202 (owner).
 
 ## Measured (this session, by running it)
 functions 2391/2391 (after rebase and review fixes; 2352 before the rebase); scripts 1199/1199; `skills-index.js --check` current; QML linter (qt-qml-review skill, diff scope) 0 findings. Not run: CI on the newest head, any device check (194 to 202).
