@@ -38,6 +38,9 @@ Rectangle {
             Layout.fillHeight: true
             placeholderText: "Search…"
             font.pixelSize: sp(Constants.fsBody)
+            // S5e-3c: the pill is a fixed light fill, so the typed text and the hint are pinned, not left to the system palette
+            color: Constants.textPrimary
+            placeholderTextColor: Constants.textSecondary
             background: Item {}
             verticalAlignment: TextInput.AlignVCenter
             Accessible.name: input.placeholderText    // S5e-1: named by what it searches, whatever the page set

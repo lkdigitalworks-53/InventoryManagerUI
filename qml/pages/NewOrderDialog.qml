@@ -334,6 +334,8 @@ BottomSheet {
                                 text: InventoryStore.formatCurrency(modelData.price)
                                 inputMethodHints: Qt.ImhFormattedNumbersOnly
                                 font.pixelSize: sp(Constants.fsBody)
+                                // S5e-3c: the typed text is pinned (the fill is a fixed light colour; a palette colour would follow the system theme)
+                                color: linePriceField.enabled ? Constants.textPrimary : Constants.textMuted
                                 horizontalAlignment: Text.AlignRight
                                 verticalAlignment: TextInput.AlignVCenter
                                 selectByMouse: true
@@ -381,6 +383,8 @@ BottomSheet {
                                 text: String(modelData.discountValue || 0)
                                 inputMethodHints: Qt.ImhFormattedNumbersOnly
                                 font.pixelSize: sp(Constants.fsBody)
+                                // S5e-3c: the typed text is pinned (the fill is a fixed light colour; a palette colour would follow the system theme)
+                                color: lineDiscField.enabled ? Constants.textPrimary : Constants.textMuted
                                 horizontalAlignment: Text.AlignRight
                                 verticalAlignment: TextInput.AlignVCenter
                                 selectByMouse: true
