@@ -1,24 +1,42 @@
-# CHECKPOINT: 2026-11-23 picker S5e-3b (name the text-child buttons and the four order fields) - resume here
+# CHECKPOINT: 2026-11-23 NO3a create-order wire - resume here
 
-**Branch:** `feat/2026-11-23-picker-s5e3b-names-for-text-buttons-and-fields` (cut from `main` @ `13e08e8`, PR #215 S5e-3a merged).
-**Commit rule (this session):** every commit message carries `lkdwtaher@gmail.com` (project-instruction address); git user `Taher (via Claude session)`. The commit-email question is still open (KNOWN-ISSUES 125).
-**Rules in force:** no build or run; no Qt in the sandbox (CI is the oracle); always a branch; push without asking (PAT per command, remote URL kept clean); tests + test plan for every change; out-of-scope findings go to `docs/superpowers/KNOWN-ISSUES.md`; short scope so another account can take over from the remote branch; no parallel agents.
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-23-pr215-merged-prev-CHECKPOINT.md`.
-**Skills used:** superpowers:brainstorming (design in the plan, decisions with defaults, veto in the PR), qt-qml, qt-ui-design, ponytail. **Plan:** `docs/superpowers/plans/2026-11-23-product-picker-v2-s5e3b-names-for-text-buttons-and-fields.md`. **Test plan:** `docs/superpowers/test-plans/2026-11-03-product-picker-v2-test-plan.md` (S5e-3b rows, checks 180 to 192).
+## REVIEW SWEEP 2026-11-24 (owner session `lkdigitalworks@gmail.com`; PR #217 head branch, fixes added to the SAME PR) - resume here
+**Ask:** full deep review of PR #217 (requesting-code-review, qt-qml-review, ponytail-audit), fixes in the same PR, no parallel agents, quality and robustness first, show done/next at the end. Commit rule for THIS sweep: `lkdigitalworks@gmail.com` in the message (the nine earlier commits carry `dextran52@gmail.com`; history is not rewritten). No build, no Qt in the sandbox, CI is the oracle, never write the PAT to `.git/config`.
+- [x] R0 Clone, PR #217 metadata (head `feat/2026-11-23-no3a-create-order-wire`, base `main`, clean, CI green on `093dd05`), CHECKPOINT, design, test plan read.
+- [x] R1 Code review of the diff against the design: store, DataModel, dialog, Logic, Main, e2e helpers; read Gateway (`recordOperation`, `_finishOperation`: waiter first, signal always; `discardParked`), `OrderPlan`, `FailureCause`, key nonce (62 bits), `_commit` vs `_addLocalOrder`, server role gate (staff can still create orders), all `addOrder` callers.
+- [x] R2 `qt_qml_lint.py` filtered to changed lines: no real finding (project `var` style, existing end-of-file `Connections`, 2 `JS-2` false positives). Six QML domains checked one at a time: nothing in layout, loaders, delegates, states or images (none touched).
+- [x] R3 Ponytail audit. Findings: **F1 should-fix** a live replayed answer was reported as `applied`, so `DataModel` auto-approved it whenever a sync had already listed the order (a race), against D-NO3-5 and KNOWN-ISSUES 135; **F2 should-fix** the dialog's new `onOrderCreationDeferred` and its busy/emit rules had no test (KNOWN-ISSUES 139). No must-fix found. Small items judged and left: KNOWN-ISSUES 141.
+- [x] R4 Fixes: `OrdersStore.addOrder` returns status `replayed`; `DataModel.onAddOrder` skips auto-approve for it; `orderWire` W-4 and W-14 updated, QML twin updated + new DataModel replay test; `functions/test/newOrderDialog.guard.test.js` (6 cases); replica test +2. Functions 2338/2338 RUN locally; 3 hand mutants killed.
+- [x] R5 Docs: design (D-NO3-4, D-NO3-5, section 6), test plan (+rows, device steps 20-21, counts), KNOWN-ISSUES 135, 139, 141, AGENTS, Skill 188 (rules 10-11), STATUS. README unchanged on purpose (no person-visible change).
+- [x] R6 Scripts 1199/1199, skills index current, brace balance ok, committed (author and message carry `lkdigitalworks@gmail.com`), `.git/config` has no token. The first push (`2e97553`, `7632f82`) was rewritten by the rebase below, so those SHAs no longer exist: use `git log`.
+- [x] R6b REBASE onto `main` `a40e8c0` (#216 merged; 11 branch commits replayed, then 2 sweep commits, then 1 renumber commit). Conflicts: `CHECKPOINT.md` took the BRANCH version at every step (as asked); `SKILLS.md`, `KNOWN-ISSUES.md`, `SKILLS-INDEX.md` were merged by keeping main's entries and appending ours. Main now owns Skill 187 and KNOWN-ISSUES 126-134, so OUR entries moved: Skill 187 -> **188**, NO3a KNOWN-ISSUES 126-132 -> **135-141** (every reference on lines this branch added was moved with them: AGENTS, design, test plan, STATUS, code comments, the dialog guard test). Intermediate commits still show the old numbers; only the tip is consistent. After the rebase: functions 2367/2367 RUN (main's 2332 base moved, ours +38 incl. the sweep), scripts 1199/1199, skills index current, no conflict markers. QML and e2e: CI only.
+- [ ] R7 Owner: review in PR #217; answer Q-NO3-1..3; confirm the commit email (KNOWN-ISSUES 111, 118, 125, 141f). If CI is red on the new QML tests (`tst_OrdersStore_addOrder.qml` replay test, `tst_NewOrderDialogSubmitGuard.qml`), they are CI-only: read the first failure, the node twins (`orderWire` W-4/W-14, `newOrderDialog.guard`) already pass.
+**Next after the owner review:** unchanged from below (NO3b price cap, NO4 device pass steps 1-21, then `_tryAdjustOrder` design).
+
+---
+
+**Branch:** `feat/2026-11-23-no3a-create-order-wire` (cut from `main` @ `5948767`, #212 merged; #213 and #214 also merged).
+**Commit rule:** every commit carries `dextran52@gmail.com` (author and message), per the task prompt of 2026-11-23. History is not rewritten; KNOWN-ISSUES 111/118 (which address is right) still waits for the owner.
+**Rules in force:** no build or run; no Qt in the sandbox (CI is the oracle); always a branch; push without asking; tests + test plan for every change; out-of-scope findings go to `docs/superpowers/KNOWN-ISSUES.md`; PAT per command via `git -c http.extraHeader`, never in `.git/config`; keep scope short so another account can take over.
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-23-pr212-merged-prev-CHECKPOINT.md`.
+**Skills used:** caveman (chat), brainstorming (design + decisions defaulted, vetoable in the PR, as ordered), qt-qml (store/dialog glue), qt-ui-design (dialog wording only), ponytail (dead params and the no-lines branch deleted).
+
+## Scope split (decided this session)
+NO3 (wire) = NO3a (this branch: store + DataModel + dialog callback + helper texts + e2e helpers + tests) and NO3b (next: `NewOrderDialog._setLinePrice` cap with a visible message, KNOWN-ISSUES 114; device pass NO4).
 
 ## Steps
-- [x] 0. Cloned fresh, skills read, roadmap read from the repo: S1 to S5e-3a merged (#215 merged). Left: S5e-3b, S5e-3c (split out), S5e-4.
-- [x] 1. Recon: the 13 text-child buttons read one by one; 9 text fields counted (7 unnamed); main had not moved.
-- [x] 2. Plan doc (decisions S5e3b-D1 to D9, what is NOT done, advice, questions).
-- [x] 3. QML (14 files): 11 text-child buttons named, 3 member buttons say the member, 4 order fields named, 3 tab labels `qsTr`.
-- [x] 4. Tests: `pickerS5e3bNames.test.js` (27), `pickerS5e3Names.test.js` re-pinned (S5E3-07, 15, 16, 22), `scanFields` in the support module, one loose guard tightened (`completionsSyncingWiring.test.js`, KI 126). 33 hand mutants, 33 killed (one lived on the first run: `TextArea`, fixed by `S5E3B-27`).
-- [x] 5. Docs: test plan (slice row, unit table, checks 180 to 192, affected areas, verification row), KNOWN-ISSUES (97, 120, 124 updated; 126 to 130 new), Skill 187 + index (188 skills), AGENTS, README, this file.
-- [x] 6. Committed `58881af`, pushed, PR #216 opened. CI on the head: QML 3382, Functions 2327, Rules 129, E2E 124 = 5962/5962, green.
-- [x] 6b. PR #216 final sweep (account B, 2026-11-24): review done, F-1 fixed (empty item name), tests 29, KI 131 to 134, CI green on `842ea90`. Details: `docs/superpowers/specs/2026-11-23-pr216-final-sweep-CHECKPOINT.md`.
-- [ ] 7. Owner: veto or accept D1 to D9, answer Q1 to Q3 of the plan, write the device results down.
+- [x] 0. Clone, memory read, roadmap read (STATUS 14-19, NO2 design, AP3a design), code read.
+- [x] 1. Design `specs/2026-11-23-no3a-create-order-wire-design.md` (D-NO3-1..11, Q-NO3-1..3).
+- [x] 2. `OrderFlow.js` (texts, key, classify, one refusal text per planner reason). A mutant-style test found `Line NaN` for a NaN index; fixed.
+- [x] 3. `OrdersStore.addOrder` rewrite (one operation, loop and no-lines branch deleted) + `onCreateOrderApplied/Rejected`.
+- [x] 4. `DataModel` route + `_autoApproveNewOrder`; `Logic.addOrder` signal + `orderCreationDeferred`; `Main.qml`; dialog payload and Connections.
+- [x] 5. e2e: `_withOnline` in OrdersE2E, ReturnAfterMetadataEditE2E, OrdersStoreE2E (+ operation URL); guard `orderE2eHelpers.guard.test.js`.
+- [x] 6. Tests: `orderWire` 15, `orderFlow` 7, e2e guard 10, QML twins `tst_OrderFlow`, `tst_OrdersStore_addOrder`, smoke test updated; both dormancy guards became wiring guards.
+- [x] 7. Hand mutants: 28 -> 3 survivors (DataModel guards, online type) -> W-6 odd values, W-14, W-15 -> 28/28 killed.
+- [x] 8. Docs: test plan (+ index row), KNOWN-ISSUES 135-140 (110 and 115 closed), Skill 188 + index, AGENTS, README, STATUS 20.
+- [x] 9. Functions 2332/2332 RUN, scripts 1199/1199 RUN, skills index current. Committed; push + PR below.
+- [x] 10. PR #217 opened; CI on head ba8d732 all green 5990/5990 (QML 3405, Functions 2332, Rules 129, E2E 124; the rewired e2e suites passed first run).
+- [ ] 11. Owner review in PR #217; merge; answers to Q-NO3-1..3 (and still Q-NO2-2/3, commit-email KNOWN-ISSUES 111/118).
 
-## Measured (this session, by running it)
-functions suite 2327/2327 (clean main measured 2300, +27); scripts 1199/1199; `skills-index.js --check` current. Not run: CI, any device check, the repo's QML lint (not in the tree).
-
-## If this session is cut off
-Resume at the first unticked step above. Re-measure counts before claiming any: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`, `node .github/scripts/skills-index.js --check`. NEXT SLICE: S5e-3c (font-scale and two-theme source audit), then S5e-4.
+## Next slice (NO3b, not started)
+`NewOrderDialog._setLinePrice` cap at `RestockFlow.MAX_UNIT_COST` with a visible message (KNOWN-ISSUES 114); then NO4 (Taher's device pass, test plan steps 1-21); then design `_tryAdjustOrder` first (Q-NO3-1). If CI is red on the e2e suites, read the first `addOrder callback never fired` (KNOWN-ISSUES 137).

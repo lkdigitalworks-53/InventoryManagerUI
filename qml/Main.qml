@@ -872,8 +872,7 @@ App {
     NewOrderDialog {
         id: newOrderDlg
         onOrderCreated: function(order) {
-            logic.addOrder(order.customer, order.items, order.total,
-                order.status, order.date, order.email, order.phone, order.products,
+            logic.addOrder(order.customer, order.date, order.email, order.phone, order.products,
                 order.orderChannel || "", order.staffId || "")
         }
         onManageChannelsRequested: manageChannelsDlg.open()

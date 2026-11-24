@@ -514,17 +514,17 @@ test("D-1 DescribeItem labels a create by the typed customer, never by the mint 
     assert.equal(plain(DI.describe({ opType: "restock", ops: [] })).title, "Restock");
 });
 
-// ---------------------------------------------------------------------------- dormancy guard
+// ---------------------------------------------------------------------------- wiring guard
 
-test("G-1 dormancy: only the helpers refer to the create-order planner or its keys; no store, page or dialog does (NO3 replaces this with a wiring guard)", () => {
+test("G-1 wiring (NO3a replaced the dormancy guard): only OrderFlow and OrdersStore use the planner and its keys; no DataModel, page or dialog does", () => {
     const hits = [];
     (function walk(dir) {
         for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
             const p = path.join(dir, f.name);
             if (f.isDirectory()) walk(p);
             else if (/\.(qml|js)$/.test(f.name) && !/OrderPlan\.js$|OperationKeys\.js$|FailureCause\.js$|DescribeItem\.js$|AddProductPlan\.js$/.test(f.name)
-                     && /OrderPlan|createOrderKey|createOrderNonce|forCreateOrder/.test(fs.readFileSync(p, "utf8"))) hits.push(path.relative(QML_ROOT, p));
+                     && /OrderPlan|createOrderKey|createOrderNonce|forCreateOrder/.test(fs.readFileSync(p, "utf8"))) hits.push(path.relative(QML_ROOT, p).split(path.sep).join("/"));
         }
     })(QML_ROOT);
-    assert.deepEqual(hits, []);
+    assert.deepEqual(hits.sort(), ["helper/OrderFlow.js", "model/OrdersStore.qml"]);
 });

@@ -7,7 +7,7 @@ import QtTest
 // to the original order-completion double-submit bug (SKILLS Skill 61),
 // reached via order CREATION instead of order approval. A plain double-tap
 // on "Place order" (no slow connection or special reopen steps needed) mints
-// two separate orders via OrdersStore.nextOrderId's real, server-coordinated
+// two separate orders via OrdersStore.addOrder's real, server-coordinated createOrder
 // round trip, and — if autoApproveEnabled is on — double-deducts stock too,
 // since both duplicate orders get auto-completed.
 //
@@ -31,7 +31,7 @@ TestCase {
 
     // ── A minimal model of the dialog's new guarded trySubmit(). ──
     // `mintCalls` counts how many times the stand-in for
-    // logic.addOrder(...) -> OrdersStore.nextOrderId's real network mint
+    // logic.addOrder(...) -> OrdersStore.addOrder's real createOrder operation
     // would have actually fired — the number that matters for the bug
     // (does a double-tap mint one order or two), not just the dialog's own
     // busy flag.
@@ -44,7 +44,7 @@ TestCase {
 
             // Stand-in for the fire-and-forget `orderCreated(...)` emit ->
             // Main.qml -> logic.addOrder(...) -> DataModel.onAddOrder ->
-            // OrdersStore.addOrder -> nextOrderId's real round trip. Doesn't
+            // OrdersStore.addOrder -> the createOrder operation's real round trip. Doesn't
             // resolve on its own — the test drives resolution explicitly via
             // onOrderAdded/onOrderCreationFailed, same as production where
             // resolution arrives asynchronously off a real network response.
@@ -70,6 +70,16 @@ TestCase {
                 if (!this.busy) return
                 this.busy = false
                 this.errorText = message || "Could not create order — try again"
+            },
+
+            // NO3a: saved, but the server's answer is not in yet (queued) or could not be read (unconfirmed). Mirrors the real
+            // handler: guarded by busy, clears it, shows the text, closes (the real one closes in a `finally`).
+            toastText: "",
+            onOrderCreationDeferred: function(status) {
+                if (!this.busy) return
+                this.busy = false
+                this.toastText = status === "queued" ? "queued text" : "unconfirmed text"
+                this.closed = true
             },
 
             // Mirrors onOpened()'s defensive reset.
@@ -166,6 +176,27 @@ TestCase {
         dlg.closed = false // simulate "reopened since" so a false-positive would be visible
         dlg.onOrderAdded("ORD-001")
         verify(!dlg.closed, "a stale signal arriving while not busy must be ignored")
+    }
+
+    // ── NO3a: saved but not confirmed to this caller (queued or unconfirmed) ─
+    function test_deferred_signal_clears_busy_shows_a_toast_and_closes_without_a_retry() {
+        var statuses = ["queued", "unconfirmed"]
+        for (var i = 0; i < statuses.length; ++i) {
+            var dlg = makeDialog()
+            dlg.trySubmit()
+            dlg.onOrderCreationDeferred(statuses[i])
+            verify(!dlg.busy, statuses[i] + ": busy cleared")
+            verify(dlg.closed, statuses[i] + ": the sheet closes, the cart is not offered again (a second tap is a second order)")
+            compare(dlg.toastText, statuses[i] + " text")
+            compare(dlg.errorText, "", statuses[i] + ": not an error")
+            compare(dlg.mintCalls, 1)
+        }
+    }
+    function test_deferred_signal_while_not_busy_is_a_no_op() {
+        var dlg = makeDialog()
+        dlg.onOrderCreationDeferred("queued")
+        verify(!dlg.closed, "a stale deferred signal must not close a sheet that is not waiting")
+        compare(dlg.toastText, "")
     }
 
     // ── Reopen resets stale state (onOpened's defensive busy = false) ────

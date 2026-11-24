@@ -23,16 +23,12 @@ BottomSheet {
     signal orderCreated(var order)
     signal manageChannelsRequested()
 
-    // In-flight guard — see ASYNC-REENTRANCY-BUGS.md C-2. `orderCreated` is a
-    // fire-and-forget signal into Main.qml -> logic.addOrder -> DataModel's
-    // OrdersStore.nextOrderId mint (a real, server-coordinated network round
-    // trip). Without this, a double-tap on "Place order" mints two separate
-    // orders — and if autoApproveEnabled is on, double-deducts stock via
-    // _tryCompleteOrder too. There is no DataModel-layer guard for creation
-    // the way _completingOrderIds guards completion (no second call path
-    // into OrdersStore.addOrder the way _approveAllPending gives completion),
-    // so the UI entry point below is the ONLY thing standing between this and
-    // a duplicate order — same category the doc calls out.
+    // In-flight guard — see ASYNC-REENTRANCY-BUGS.md C-2. `orderCreated` is a fire-and-forget signal into Main.qml ->
+    // logic.addOrder -> DataModel -> OrdersStore.addOrder, which sends ONE atomic order operation and waits for the server (NO3a).
+    // Without this, a double-tap on "Place order" would send two operations and make two orders — and if autoApproveEnabled is
+    // on, double-deduct stock via the completion too. There is no DataModel-layer guard for creation the way
+    // _completingOrderIds guards completion, so the UI entry point below is the ONLY thing standing between this and a
+    // duplicate order — same category the doc calls out.
 
     property var selectedProducts: []
 
@@ -512,7 +508,7 @@ BottomSheet {
     }
 
     // Commit an edited per-line unit price. Mirrors _setLineDiscount: immutable
-    // array replace so _totalsCache (and the orderCreated payload) recompute.
+    // array replace so _totalsCache recomputes.
     // Rejects empty / NaN / negative by keeping the existing price.
     function _setLinePrice(idx, value) {
         if (idx < 0 || idx >= selectedProducts.length) return
@@ -559,10 +555,8 @@ BottomSheet {
         if (errs.length > 0) { errorLabel.text = errs.join(" · "); return }
         errorLabel.text = ""
 
-        var totalItems = 0
         var prods = []
         for (var i = 0; i < selectedProducts.length; ++i) {
-            totalItems += selectedProducts[i].qty
             var inv = selectedProducts[i].productId ? InventoryStore.getById(selectedProducts[i].productId) : null
             prods.push({ productId: selectedProducts[i].productId, name: selectedProducts[i].name,
                          qty: selectedProducts[i].qty, price: selectedProducts[i].price,
@@ -571,7 +565,6 @@ BottomSheet {
                          discountType: selectedProducts[i].discountType || "flat",
                          discountValue: selectedProducts[i].discountValue || 0 })
         }
-        var t = _totalsCache
 
         // Channel + staff additions to the payload. The channel name itself
         // is what we persist (rather than an id) — channels are a free-text
@@ -593,13 +586,14 @@ BottomSheet {
         // button already binds `enabled: primaryEnabled && !busy`, so this
         // also disables the button itself the instant this line runs.
         busy = true
-        orderCreated({ customer: customerField.text, items: totalItems, total: t.total,
-                       status: "pending", date: new Date(),
+        // The totals and the status are not sent: OrdersStore computes every total from the lines (one author) and a new order
+        // is always pending.
+        orderCreated({ customer: customerField.text, date: new Date(),
                        email: emailField.text, phone: phoneField.text, products: prods,
                        orderChannel: channel, staffId: staffId })
         // No dlg.close() here anymore — closing now waits for a real
-        // logic.orderAdded (success) or logic.orderCreationFailed (failure)
-        // signal, via the Connections block below. See ASYNC-REENTRANCY-BUGS.md
+        // logic.orderAdded (success), logic.orderCreationDeferred (saved, not confirmed yet) or logic.orderCreationFailed
+        // (failure) signal, via the Connections block below. See ASYNC-REENTRANCY-BUGS.md
         // C-2 and SKILLS Skill 65.
     }
 
@@ -643,6 +637,13 @@ BottomSheet {
             if (!dlg.busy) return
             dlg.busy = false
             errorLabel.text = errorMessage || "Could not create order — try again"
+        }
+        // Saved, but the server's answer is not in yet (slow link) or could not be read: close with a toast that says so. The
+        // order is NOT offered again (a second tap would be a second order); it appears in the list when the server answers.
+        function onOrderCreationDeferred(status) {
+            if (!dlg.busy) return
+            dlg.busy = false
+            try { Toast.show(OrdersStore.createDoneMessage(status)) } finally { dlg.close() }
         }
     }
 }

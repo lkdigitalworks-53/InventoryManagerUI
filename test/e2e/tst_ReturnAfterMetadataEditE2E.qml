@@ -177,20 +177,34 @@ TestCase {
         return createdId
     }
 
+    // NO3a: a new order is ONE awaited operation (OrdersStore.addOrder) and needs a connection, as adding a product does (AP3a).
+    // These files set the fixture token by hand, and going "online" runs AuthService.init() -> AuthStore.loadSession() -> clear(),
+    // which wipes it, so the fixture is captured first and put back right after the flip. Online is put back in a finally.
+    // Safe to nest (a flip to the value it already has changes nothing). CI is the oracle for this seam.
+    function _withOnline(fn) {
+        var wasOnline = AuthService.isOnline
+        var savedAuth = { idToken: AuthStore.idToken, uid: AuthStore.uid, tenantId: AuthStore.tenantId }
+        AuthService.isOnline = true
+        AuthStore.idToken = savedAuth.idToken
+        AuthStore.uid = savedAuth.uid
+        AuthStore.tenantId = savedAuth.tenantId
+        try { return fn() } finally { AuthService.isOnline = wasOnline }
+    }
+
     function _addOrder(productId, qty) {
         var products = [{
             productId: productId, name: "E2E Return Widget", price: 100, quantity: qty,
             taxable: false, taxPercent: 0, discountType: "flat", discountValue: 0
         }]
-        var totals = OrdersStore.computeOrderTotals(products)
         var createdId = ""
         var done = false
-        OrdersStore.addOrder(
-            "E2E Customer", totals.itemCount, totals.total, "pending", new Date(),
-            "", "", products, "e2e", "",
-            function(ok, id) { done = true; createdId = ok ? id : "" }
-        )
-        tryVerify(function() { return done }, 5000, "addOrder callback never fired")
+        _withOnline(function() {
+            OrdersStore.addOrder(
+                "E2E Customer", new Date(), "", "", products, "e2e", "",
+                function(ok, id) { done = true; createdId = ok ? id : "" }
+            )
+            tryVerify(function() { return done }, 5000, "addOrder callback never fired")
+        })
         verify(createdId.length > 0, "addOrder did not return an orderId")
         return createdId
     }
