@@ -13,7 +13,8 @@
 - [x] 3. Scanner `functions/test/testSupport/qmlThemeScaleScan.js` + `pickerS5e3cAudit.test.js` (22 cases). 17 hand mutants, all killed (2 survived first run, test hardened).
 - [x] 4. Docs: plan (D1 to D8, Q1 to Q4), test plan (row, unit table, checks 194 to 202, affected area, verification row), KNOWN-ISSUES 135 to 138, Skill 188 + index (189 skills), AGENTS, README.
 - [x] 5a. Measured by running: functions 2352/2352, scripts 1199/1199, skills-index current.
-- [ ] 5b. Commit, push, open PR, read CI.
+- [x] 5b. Committed `3238f90`, pushed, PR #218 opened. CI on that head: QML, Functions, Rules, E2E all success (counts not read, only verdicts); Deploy steps skipped.
+- [x] 6. Final report given. NEXT (owner): answer plan Q1 to Q4, run device checks 194 to 202 (194 and 201 first, on a phone set to dark).
 - [ ] 6. Final report: done / next (S5e-4, owner decisions).
 
 ## Measured (this session, by running it)
