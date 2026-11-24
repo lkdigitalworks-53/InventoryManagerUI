@@ -72,6 +72,16 @@ TestCase {
                 this.errorText = message || "Could not create order — try again"
             },
 
+            // NO3a: saved, but the server's answer is not in yet (queued) or could not be read (unconfirmed). Mirrors the real
+            // handler: guarded by busy, clears it, shows the text, closes (the real one closes in a `finally`).
+            toastText: "",
+            onOrderCreationDeferred: function(status) {
+                if (!this.busy) return
+                this.busy = false
+                this.toastText = status === "queued" ? "queued text" : "unconfirmed text"
+                this.closed = true
+            },
+
             // Mirrors onOpened()'s defensive reset.
             reopen: function() {
                 this.busy = false
@@ -166,6 +176,27 @@ TestCase {
         dlg.closed = false // simulate "reopened since" so a false-positive would be visible
         dlg.onOrderAdded("ORD-001")
         verify(!dlg.closed, "a stale signal arriving while not busy must be ignored")
+    }
+
+    // ── NO3a: saved but not confirmed to this caller (queued or unconfirmed) ─
+    function test_deferred_signal_clears_busy_shows_a_toast_and_closes_without_a_retry() {
+        var statuses = ["queued", "unconfirmed"]
+        for (var i = 0; i < statuses.length; ++i) {
+            var dlg = makeDialog()
+            dlg.trySubmit()
+            dlg.onOrderCreationDeferred(statuses[i])
+            verify(!dlg.busy, statuses[i] + ": busy cleared")
+            verify(dlg.closed, statuses[i] + ": the sheet closes, the cart is not offered again (a second tap is a second order)")
+            compare(dlg.toastText, statuses[i] + " text")
+            compare(dlg.errorText, "", statuses[i] + ": not an error")
+            compare(dlg.mintCalls, 1)
+        }
+    }
+    function test_deferred_signal_while_not_busy_is_a_no_op() {
+        var dlg = makeDialog()
+        dlg.onOrderCreationDeferred("queued")
+        verify(!dlg.closed, "a stale deferred signal must not close a sheet that is not waiting")
+        compare(dlg.toastText, "")
     }
 
     // ── Reopen resets stale state (onOpened's defensive busy = false) ────

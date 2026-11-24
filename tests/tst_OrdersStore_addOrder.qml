@@ -110,7 +110,8 @@ TestCase {
     function test_replayed_answer_adds_nothing_locally() {
         var t = _tap()
         Gateway._finishOperation(_items()[0], { ok: true, results: _answer(_items()[0], "ORD-001"), idempotentReplay: true })
-        compare(t.calls[0].status, "applied")
+        compare(t.calls[0].status, "replayed")
+        compare(t.calls[0].id, "ORD-001")
         compare(OrdersStore.orders.length, 0)
     }
     function test_unreadable_answer_is_unconfirmed() {
@@ -177,5 +178,18 @@ TestCase {
         var completionQueued = OutboxStore.items.filter(function(i) { return i.opType === "completeOrder" }).length > 0
         verify(completionQueued || compFailSpy.count === 1, "an attempt was made after the answer (queued, or refused with a text)")
         compare(OrdersStore.orders.length, 1)
+    }
+    // A replay never auto-approves, also when a sync already put the order in the list (the case that used to depend on a race).
+    function test_dataModel_live_replay_never_auto_approves_even_when_the_order_is_already_listed() {
+        OrdersStore.autoApproveEnabled = true
+        testLogic.addOrder("Asha", new Date(), "", "", [line], "", "")
+        var answer = _answer(_items()[0], "ORD-001")
+        OrdersStore._addLocalOrder(answer[1].after)
+        compare(OrdersStore.orders.length, 1, "a sync landed the order first")
+        Gateway._finishOperation(_items()[0], { ok: true, results: answer, idempotentReplay: true })
+        compare(addedSpy.count, 1, "the sheet still closes")
+        compare(addedSpy.signalArguments[0][0], "ORD-001")
+        compare(OutboxStore.items.filter(function(i) { return i.opType === "completeOrder" }).length, 0, "no completion for a replay")
+        compare(compFailSpy.count, 0)
     }
 }

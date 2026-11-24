@@ -136,7 +136,7 @@ test("W-4 a replayed answer (live or later) adds NO order locally, re-reads the 
         assert.deepEqual(h.ids(), [], "a replayed order is as of the FIRST application and could be stale");
         assert.equal(h.log.resync, 1);
         assert.equal(added, "");
-        if (awaited) assert.deepEqual(t.calls, [{ ok: true, id: "ORD-001", refusal: undefined, status: "applied" }]);
+        if (awaited) assert.deepEqual(t.calls, [{ ok: true, id: "ORD-001", refusal: undefined, status: "replayed" }], "its own status: the caller must not be able to mistake it for a first application");
     }
 });
 
@@ -330,6 +330,11 @@ test("W-14 DataModel.onAddOrder: the callback's four outcomes reach the dialog a
     const ok = run([true, "ORD-001", undefined, "applied"]);
     assert.deepEqual(ok.emitted, [["added", "ORD-001"]]);
     assert.deepEqual([ok.completed, ok.synced], [["ORD-001"], 1]);
+    // A replay closes the sheet like an applied order but NEVER auto-approves, even when a sync already put the order in the list
+    // (orders has ORD-001 here: the only thing that used to keep a replay from being approved was a race with that sync).
+    const rp = run([true, "ORD-001", undefined, "replayed"]);
+    assert.deepEqual(rp.emitted, [["added", "ORD-001"]]);
+    assert.deepEqual([rp.completed, rp.synced], [[], 1]);
     assert.deepEqual(dmSandbox().log.store, []);
     const d = dmSandbox(); d.ctx.onAddOrder("Asha", new Date(0), "e", "p", [LINE], "Online", "S-1");
     assert.deepEqual(plain(d.log.store[0]).slice(0, 1).concat(plain(d.log.store[0]).slice(2)), ["Asha", "e", "p", plain([LINE]), "Online", "S-1"], "the argument order the store expects");

@@ -939,8 +939,10 @@ QtObject {
     // taxPercent?, discountType?, discountValue? }; _normalizeOrder resolves tax from inventory and computes every total, so the
     // totals have ONE author. The order is always created pending (stock is taken by the completion operation, D-NO-6).
     // callback(ok, orderId, refusal, status), exactly once:
-    //   (true,  id, undefined, "applied")      the server created it; the order is in the local list (a replayed answer is NOT
-    //                                          added from the answer, it may be stale: the list is re-read)
+    //   (true,  id, undefined, "applied")      the server created it; the order is in the local list
+    //   (true,  id, undefined, "replayed")     the server had ALREADY made it (a resend after a lost answer): not added from the
+    //                                          answer (it may be stale), the list is re-read, and the caller must NOT auto-approve
+    //                                          (KNOWN-ISSUES 126); the id is real, the sheet may close
     //   (true,  "", undefined, "queued")       saved but not answered yet (slow link); the order appears when the server answers
     //   (true,  "", undefined, "unconfirmed")  the server answered but the answer could not be read: the list is re-read and NO retry
     //                                          is offered (a new tap is a new key, so a second order)
@@ -969,8 +971,11 @@ QtObject {
             if (kind === "queued") { finish(true, "", undefined, "queued"); return }
             _createSettled[plan.key] = true
             if (kind === "applied") {
-                var out = _applyCreateOrder(plan.key, res.results, res.idempotentReplay === true)
-                if (out.ok) finish(true, out.orderId, undefined, "applied")
+                var replay = res.idempotentReplay === true
+                var out = _applyCreateOrder(plan.key, res.results, replay)
+                // A replay is its own status: whether the list already holds the order depends on a race with the sync, so the
+                // caller cannot tell a replay from "applied" by looking at the list (it would auto-approve some replays only).
+                if (out.ok) finish(true, out.orderId, undefined, replay ? "replayed" : "applied")
                 else finish(true, "", undefined, "unconfirmed")
                 return
             }

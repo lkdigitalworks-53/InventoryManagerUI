@@ -1,5 +1,19 @@
 # CHECKPOINT: 2026-11-23 NO3a create-order wire - resume here
 
+## REVIEW SWEEP 2026-11-24 (owner session `lkdigitalworks@gmail.com`; PR #217 head branch, fixes added to the SAME PR) - resume here
+**Ask:** full deep review of PR #217 (requesting-code-review, qt-qml-review, ponytail-audit), fixes in the same PR, no parallel agents, quality and robustness first, show done/next at the end. Commit rule for THIS sweep: `lkdigitalworks@gmail.com` in the message (the nine earlier commits carry `dextran52@gmail.com`; history is not rewritten). No build, no Qt in the sandbox, CI is the oracle, never write the PAT to `.git/config`.
+- [x] R0 Clone, PR #217 metadata (head `feat/2026-11-23-no3a-create-order-wire`, base `main`, clean, CI green on `093dd05`), CHECKPOINT, design, test plan read.
+- [x] R1 Code review of the diff against the design: store, DataModel, dialog, Logic, Main, e2e helpers; read Gateway (`recordOperation`, `_finishOperation`: waiter first, signal always; `discardParked`), `OrderPlan`, `FailureCause`, key nonce (62 bits), `_commit` vs `_addLocalOrder`, server role gate (staff can still create orders), all `addOrder` callers.
+- [x] R2 `qt_qml_lint.py` filtered to changed lines: no real finding (project `var` style, existing end-of-file `Connections`, 2 `JS-2` false positives). Six QML domains checked one at a time: nothing in layout, loaders, delegates, states or images (none touched).
+- [x] R3 Ponytail audit. Findings: **F1 should-fix** a live replayed answer was reported as `applied`, so `DataModel` auto-approved it whenever a sync had already listed the order (a race), against D-NO3-5 and KNOWN-ISSUES 126; **F2 should-fix** the dialog's new `onOrderCreationDeferred` and its busy/emit rules had no test (KNOWN-ISSUES 130). No must-fix found. Small items judged and left: KNOWN-ISSUES 132.
+- [x] R4 Fixes: `OrdersStore.addOrder` returns status `replayed`; `DataModel.onAddOrder` skips auto-approve for it; `orderWire` W-4 and W-14 updated, QML twin updated + new DataModel replay test; `functions/test/newOrderDialog.guard.test.js` (6 cases); replica test +2. Functions 2338/2338 RUN locally; 3 hand mutants killed.
+- [x] R5 Docs: design (D-NO3-4, D-NO3-5, section 6), test plan (+rows, device steps 20-21, counts), KNOWN-ISSUES 126, 130, 132, AGENTS, Skill 187 (rules 10-11), STATUS. README unchanged on purpose (no person-visible change).
+- [ ] R6 Scripts suite + skills index check, commit, push to the PR branch (see git log for the sweep commit), then read CI.
+- [ ] R7 Owner: review in PR #217; answer Q-NO3-1..3; confirm the commit email (KNOWN-ISSUES 111, 118, 125, 132f). If CI is red on the new QML tests (`tst_OrdersStore_addOrder.qml` replay test, `tst_NewOrderDialogSubmitGuard.qml`), they are CI-only: read the first failure, the node twins (`orderWire` W-4/W-14, `newOrderDialog.guard`) already pass.
+**Next after the owner review:** unchanged from below (NO3b price cap, NO4 device pass steps 1-21, then `_tryAdjustOrder` design).
+
+---
+
 **Branch:** `feat/2026-11-23-no3a-create-order-wire` (cut from `main` @ `5948767`, #212 merged; #213 and #214 also merged).
 **Commit rule:** every commit carries `dextran52@gmail.com` (author and message), per the task prompt of 2026-11-23. History is not rewritten; KNOWN-ISSUES 111/118 (which address is right) still waits for the owner.
 **Rules in force:** no build or run; no Qt in the sandbox (CI is the oracle); always a branch; push without asking; tests + test plan for every change; out-of-scope findings go to `docs/superpowers/KNOWN-ISSUES.md`; PAT per command via `git -c http.extraHeader`, never in `.git/config`; keep scope short so another account can take over.
@@ -24,4 +38,4 @@ NO3 (wire) = NO3a (this branch: store + DataModel + dialog callback + helper tex
 - [ ] 11. Owner review in PR #217; merge; answers to Q-NO3-1..3 (and still Q-NO2-2/3, commit-email KNOWN-ISSUES 111/118).
 
 ## Next slice (NO3b, not started)
-`NewOrderDialog._setLinePrice` cap at `RestockFlow.MAX_UNIT_COST` with a visible message (KNOWN-ISSUES 114); then NO4 (Taher's device pass, test plan steps 1-19); then design `_tryAdjustOrder` first (Q-NO3-1). If CI is red on the e2e suites, read the first `addOrder callback never fired` (KNOWN-ISSUES 128).
+`NewOrderDialog._setLinePrice` cap at `RestockFlow.MAX_UNIT_COST` with a visible message (KNOWN-ISSUES 114); then NO4 (Taher's device pass, test plan steps 1-21); then design `_tryAdjustOrder` first (Q-NO3-1). If CI is red on the e2e suites, read the first `addOrder callback never fired` (KNOWN-ISSUES 128).
