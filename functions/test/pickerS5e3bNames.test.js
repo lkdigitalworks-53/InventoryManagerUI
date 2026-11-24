@@ -209,7 +209,9 @@ test("S5E3B-24 MONKEY: every per-row name, run against 19 hostile item names plu
             const withName = JSON.parse(JSON.stringify(f[2][0]));
             (withName.modelData || withName.model).name = item;
             const out = run(e, withName);
-            assert.ok(out.includes(item), JSON.stringify(item) + " lost in " + out);
+            // an empty name speaks the word "item" (PR #216 sweep F-1); every other name is kept verbatim
+            assert.ok(out.includes(item === "" ? "item" : item), JSON.stringify(item) + " lost in " + out);
+            assert.equal(/ of $/.test(out) || /undefined|null/.test(out), false, "a name with nothing after 'of': " + out);
         }
         // the member label falls back to the word "member" only when both display name and email are empty
         assert.equal(run(lbl, { modelData: { displayName: item, email: "" } }), item === "" ? "member" : item);
@@ -260,4 +262,27 @@ test("S5E3B-27 scanFields on a hand-made tree: TextField and TextArea, prefixed 
             { file: "qml/sub/B.qml", line: 2, type: "TextArea", placeholder: false },
         ]);
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---- PR #216 sweep: an order line with no name --------------------------------------------------------------------
+test("S5E3B-28 SWEEP F-1: a line with an empty, missing or null name speaks 'item', never 'Price of ' or 'Price of undefined' (imported or legacy lines)", () => {
+    for (const [file, id, states] of FIELDS) {
+        const expr = /Accessible\.name:\s*([^\n]+)/.exec(scanInstances(read(file), "TextField").find((x) => new RegExp("id: " + id + "\\b").test(x.ownSrc)).ownSrc)[1].trim();
+        assert.match(expr, /\|\| qsTr\("item"\)/, file + " " + id + ": the fallback is gone");
+        for (const st of states) {
+            const key = st.modelData ? "modelData" : "model";
+            for (const bad of [{ name: "" }, {}, { name: null }]) {
+                const ctx = JSON.parse(JSON.stringify(st));
+                ctx[key] = Object.assign({}, ctx[key]); delete ctx[key].name; Object.assign(ctx[key], bad);
+                const out = run(expr, ctx);
+                assert.match(out, /^(Price|Discount) of item(, percent|, flat amount)?$/, file + " " + id + ": " + JSON.stringify(bad) + " -> " + out);
+            }
+        }
+    }
+});
+test("S5E3B-29 SWEEP F-1: the fallback word is a plain qsTr literal, one per field expression use (translators get one 'item')", () => {
+    // only on `Accessible.name:` lines: OrderDetailDialog already uses the same fallback in its activity text (three more uses)
+    const n = (f) => stripComments(read(f)).split("\n").filter((l) => /Accessible\.name:/.test(l)).join("\n").match(/\|\| qsTr\("item"\)/g).length;
+    assert.equal(n("qml/pages/NewOrderDialog.qml"), 3, "NewOrderDialog: price once, discount twice (percent and flat)");
+    assert.equal(n("qml/pages/OrderDetailDialog.qml"), 3, "OrderDetailDialog: price once, discount twice (percent and flat)");
 });

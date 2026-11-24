@@ -9,10 +9,11 @@
 - [x] 1. This checkpoint created (before any review work).
 - [x] 2. Pass A: QML diff read line by line (12 QML files, not 14: 14 counts tests/docs). Context of every touched button/field read.
 - [x] 3. Pass B: qt_qml_lint.py on the 12 changed QML files; filtered to changed lines only: 5 hits (see log). Baseline noise (~1000 lines) is old, not this PR. qmllint not run (no Qt, CI only).
-- [ ] 4. Pass C: tests read (pickerS5e3bNames, pickerS5e3Names, qmlButtonScan, completionsSyncingWiring).
-- [ ] 5. Pass D: docs read (plan, test plan, KNOWN-ISSUES, Skill 187, AGENTS, README, CHECKPOINT).
-- [ ] 6. Run the Node suites (functions, scripts, skills-index) to measure the baseline.
-- [ ] 7. Fix findings (one commit per group), add tests, update test plan and docs.
+- [x] 4. Pass C: tests read (pickerS5e3bNames, pickerS5e3Names, qmlButtonScan, completionsSyncingWiring). Gap found: monkey S5E3B-24 passed an empty name trivially (`out.includes("")`).
+- [x] 5. Pass D: docs read (test plan diff, KNOWN-ISSUES numbering 97/120-130, Skill 187, AGENTS, README). Numbering consistent. Plan doc and root CHECKPOINT only skimmed.
+- [x] 6. Baseline measured on PR head: functions 2327/2327, scripts 1199/1199, skills-index current.
+- [x] 7a. F-1 fixed (fallback `|| qsTr("item")` on 4 field names), S5E3B-24 hardened, S5E3B-28/29 added, 6/6 mutants killed, docs updated (test plan row + check 193, Skill 187 rule 11, KI 131-134, AGENTS, README).
+- [ ] 7b. Remaining pass: ponytail lean read of the PR (deletes/merges), root CHECKPOINT.md, plan doc note.
 - [ ] 8. Push, read CI.
 - [ ] 9. Final report: done / next.
 
@@ -27,3 +28,6 @@ Session 2 (account B) started at step 2, repo cloned fresh, remote URL clean, gi
 
 ## If this session is cut off
 Resume at the first unticked step. Re-measure before claiming any count: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`, `node .github/scripts/skills-index.js --check`.
+
+- F-1 FIXED (KI 131). F-2 logged KI 132. F-3 logged KI 133. Guard fragility logged KI 134. DEL-1 18 hits in OrderDetailDialog (2 new from this PR) logged in KI 133.
+- Not fixed on purpose, needs owner decision (see final report): tab selected state (KI 130), five dead Profile rows now announced as buttons (KI 129).
