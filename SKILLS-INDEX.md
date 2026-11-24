@@ -196,3 +196,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 186: Count unnamed controls with a scan that reads only a button's own properties, and give a button one translated word that the picture reuses
 - 187: Name a button that draws its words in a child Text by pointing at that Text and hiding it, name the row when a word repeats, and scope every wiring guard to one block
 - 188: A wire slice copies the proven shape, returns the outcome as a status, and tests the route bodies it touches
+- 189: Audit font scale and system theme by reading source with a ratchet, pin what the app leaves to the palette, and say what the source cannot prove

@@ -222,6 +222,8 @@ BottomSheet {
             from: 1; to: 9999; value: 10
             editable: true
             font.pixelSize: sp(Constants.fsBodyLg)
+            // S5e-3c review: a SpinBox has no `color`; its typed text reads `palette.text`. The fill below is a fixed light colour, so pin it (KI 142)
+            palette.text: qtyField.enabled ? Constants.textPrimary : Constants.textMuted
             background: Rectangle {
                 radius: dp(14)
                 color: Constants.cardBg
