@@ -170,10 +170,10 @@ test("S5E3C-17 scanColors: own depth-1 colour only; comments, strings, nested ch
 });
 
 test("S5E3C-18 scanPixelSizes: bare, sp, dp, reference, trailing comment, string and comment look-alikes", () => {
-    const d = tmpRoot({ "B.qml": ["Text { font.pixelSize: sp(13) }", "Text { font.pixelSize: 14 }", "Text { font.pixelSize: dp(5) }", "Text { font.pixelSize: root._font }",
+    const d = tmpRoot({ "B.qml": ["Text { font.pixelSize: sp(13) }", "Text { font.pixelSize: 14 }", "Text { font.pixelSize: dp(5) }", "Text { font.pixelSize: root._font }", "Text { font.pixelSize: 13 + extra }",
         "Text { font.pixelSize: 12   // note", "}", "Text { text: \"pixelSize: 9\" }", "// font.pixelSize: 8", "Icon { size: 20 }"].join("\n") });
     assert.deepEqual(T.scanPixelSizes(d).map((p) => p.expr + ":" + (p.raw ? "raw" : p.scaled ? "scaled" : "ref")),
-        ["sp(13):scaled", "14:raw", "dp(5):scaled", "root._font:ref", "12:raw"]);
+        ["sp(13):scaled", "14:raw", "dp(5):scaled", "root._font:ref", "13 + extra:ref", "12:raw"]);
 });
 
 test("S5E3C-19 contrast: black on white is 21, a colour on itself 1, symmetric, and the token reader skips aliases and rgba", () => {

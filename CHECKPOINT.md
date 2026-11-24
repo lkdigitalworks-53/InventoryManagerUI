@@ -10,10 +10,16 @@
 - [x] 0. Cloned fresh, skills read, roadmap read: S1 to S5e-3b merged (#216 merged). Left: S5e-3c, S5e-4 (device pass, KI 29 number).
 - [x] 1. Recon by script: 347 Text/Label (3 without `color`, all invisible), 378 `pixelSize` (19 not via `sp()`, all outside the picker arc), picker arc has 0 hex literals; 5 typed-text fields in the arc with NO colour (SearchField, 2 in New Order, 2 in Edit Order) on fixed light fills.
 - [x] 2. QML: 5 `color:` pins (+ `placeholderTextColor` on SearchField). 11 lines, 3 files.
-- [ ] 3. Scanner `functions/test/testSupport/qmlThemeScaleScan.js` and tests `pickerS5e3cAudit.test.js` (S5E3C-NN), hand mutants.
-- [ ] 4. Docs: plan, test plan (rows, checks 194 on), KNOWN-ISSUES 135 on, Skill 188 + index, AGENTS, README.
-- [ ] 5. Measure (functions suite, scripts suite, skills-index --check), commit, push, open PR, read CI.
+- [x] 3. Scanner `functions/test/testSupport/qmlThemeScaleScan.js` + `pickerS5e3cAudit.test.js` (22 cases). 17 hand mutants, all killed (2 survived first run, test hardened).
+- [x] 4. Docs: plan (D1 to D8, Q1 to Q4), test plan (row, unit table, checks 194 to 202, affected area, verification row), KNOWN-ISSUES 135 to 138, Skill 188 + index (189 skills), AGENTS, README.
+- [x] 5a. Measured by running: functions 2352/2352, scripts 1199/1199, skills-index current.
+- [ ] 5b. Commit, push, open PR, read CI.
 - [ ] 6. Final report: done / next (S5e-4, owner decisions).
+
+## Measured (this session, by running it)
+functions 2352/2352; scripts 1199/1199; `skills-index.js --check` current. Not run: CI, any device check (194 to 202), the repo's QML lint (not in the tree).
 
 ## If this session is cut off
 Resume at the first unticked step. Re-measure counts before claiming any: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`, `node .github/scripts/skills-index.js --check`.
+
+NEXT SLICES: (1) login fields + Restock SpinBox colour pins (KI 135, owner Q2), (2) dead-helper cleanup (KI 136, owner Q3), (3) S5e-4 curated device pass (not code) and KI 29 with a number.

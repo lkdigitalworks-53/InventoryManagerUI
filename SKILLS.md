@@ -5417,3 +5417,18 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 11. A dialog that cannot run headless still gets its source pinned: the busy guard first, `busy = true` before the emit, every answer handler guarded by `busy` and clearing it, a close in a `finally` (`newOrderDialog.guard.test.js`).
 
 **The check:** `cd functions && node --test test/orderWire.test.js test/orderFlow.test.js test/orderE2eHelpers.guard.test.js` is 15 + 7 + 10 green, `test/newOrderDialog.guard.test.js` adds 6, and the 28 hand mutants listed in the test plan plus the 3 of the review sweep are all killed.
+
+## Skill 189: Audit font scale and system theme by reading source with a ratchet, pin what the app leaves to the palette, and say what the source cannot prove
+
+**Why:** S5e-3c had to answer "does the picker survive a big font and a dark system theme" without a build. Two facts decided everything. `sp()` follows the system font and a bare `pixelSize: 14` does not (378 sizes, 25 bare, none in the picker arc). The app has ONE light palette (`Constants.qml`), so a dark system theme can only reach what the app never colours: the typed text and hint of a `TextField` on a fixed light fill. Five picker fields had that gap; 344 of 347 `Text` did not.
+
+**The rules:**
+1. Count before you fix. A script over the whole tree (`qmlThemeScaleScan.js`: `scanColors`, `scanPixelSizes`, `scanHex`, `scanFixedHeightText`) turned "audit the themes" into six numbers, and the numbers showed which half of the roadmap line was empty (there is no dark theme to audit, only palette leaks).
+2. A colour the app leaves to the palette must be pinned wherever its FILL is a fixed colour: text colour `Constants.textPrimary` while enabled, `Constants.textMuted` while disabled (the pair `AppComboBox` already uses), hint `textSecondary`. The pin reads the field's own `enabled`, not the dialog's.
+3. Pin the colour pair with arithmetic, not by eye: `contrast()` on the token hex values (WCAG relative luminance). The muted token is 2.56:1; a test that says so keeps it from becoming a hint colour by accident.
+4. Fix what is inside the slice's scope; ratchet the rest with the reason for every entry (login fields, dead helpers), so the next person's fix fails a test and forces the doc update. Dead code is deleted, not fixed.
+5. A scan counts only the block's OWN depth-1 properties (`border.color` and a child `Rectangle { color }` are not the field's colour); decoys for each are in the scanner tests, and a seeded monkey of 300 generated blocks checks the scanner against its generator.
+6. Run the mutants BEFORE believing the tests: three of 17 needed work (a no-op mutant that proved nothing, a raw-size check that `13 + extra` now catches, a wrong escape in the mutant itself).
+7. Say what the source cannot prove, in the same PR: clipping at 2.0x, the real dark scheme on Felgo, the switch paint. They are device checks 194 to 202 and KI 135, 138, marked UNVERIFIED.
+
+**The check:** `node --test functions/test/pickerS5e3cAudit.test.js`: green (22 cases). `node .github/scripts/skills-index.js --check`: current. On a device: checks 194 to 202.
