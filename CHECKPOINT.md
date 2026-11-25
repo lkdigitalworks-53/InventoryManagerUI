@@ -13,7 +13,7 @@
 - [x] 3. Fixes (design section 8, KNOWN-ISSUES 152): dialog-held refusals, `_settlePriceEdit`, submit blocked on an unread refusal, order-independent focus handler, plain text after Enter, stale `OrderPlan` comment.
 - [x] 4. Tests: functions 2420/2420 RUN, scripts 1199/1199, 29/29 hand mutants.
 - [x] 5. Docs: design, test plan (25 device checks), README, KNOWN-ISSUES, Skill 190, AGENTS, STATUS.
-- [ ] 6. Push; read CI on the pushed head (QML twins are CI only).
+- [x] 6. Pushed `7a31861`; PR text updated. CI on it: 6089/6089 (QML 3416, Functions 2420, Rules 129, E2E 124), deploy skipped, PR mergeable clean. This checkpoint-only commit goes on top (its CI not read).
 - [ ] 7. Owner: review the PR (veto D-NO3b-9..11 if wanted), device checks 1 to 25.
 
 ## Next slice
