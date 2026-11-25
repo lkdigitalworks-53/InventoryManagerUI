@@ -162,3 +162,43 @@ test("S5F-12 regression: the sheet's six labels, its three signals and its 15 co
     assert.match(src, /NativeUtils\.displayCameraPicker\(\)/);
     assert.equal((src.match(/#[0-9a-fA-F]{6}\b/g) || []).length, 15, "colour literals stay KI 143's, not touched here");
 });
+
+// ---- PR #220 review, commit C: the sheet scrolls when taller than its cap; labels wrap instead of running out of the row -----------
+const codeOf = () => stripComments(sheet());
+
+test("S5F-14 PhotoSourceSheet: contentItem is a vertical Flickable around contentCol; Popup height still reads contentCol and is capped at 80%", () => {
+    const src = codeOf();
+    assert.match(src, /contentItem:\s*Flickable\s*\{[^]*?clip:\s*true[^]*?flickableDirection:\s*Flickable\.VerticalFlick[^]*?boundsBehavior:\s*Flickable\.StopAtBounds[^]*?contentWidth:\s*width[^]*?contentHeight:\s*contentCol\.implicitHeight/);
+    assert.match(src, /ColumnLayout\s*\{\s*\n\s*id:\s*contentCol\s*\n\s*width:\s*root\.availableWidth/);
+    assert.match(src, /height:\s*Math\.min\(contentCol\.implicitHeight \+ dp\(24\),\s*\n?\s*parent \? parent\.height \* 0\.8 : 480\)/);
+    assert.equal(/contentItem:\s*ColumnLayout/.test(src), false, "the old non-scrolling contentItem came back");
+    assert.equal(/\bScrollView\s*\{/.test(src), false, "BottomSheet.qml says why a sheet must not size from a ScrollView");
+    assert.equal(/ScrollView inside handles overflow/.test(sheet()), false, "the stale comment about a ScrollView that never existed came back");
+});
+
+test("S5F-15 PhotoSourceSheet: each label Column is as wide as its row minus its Icon, all six texts wrap at that width, the handle uses Layout sizes", () => {
+    const src = codeOf();
+    for (const [icon, col] of [["camIcon", "camLabels"], ["galIcon", "galLabels"], ["remIcon", "remLabels"]]) {
+        assert.equal(new RegExp("Icon \\{ id: " + icon + ";").test(src), true, icon);
+        assert.equal(new RegExp("id: " + col + "\\s*\\n\\s*width: Math\\.max\\(0, parent\\.width - " + icon + "\\.width - parent\\.spacing\\)").test(src), true, col);
+    }
+    const texts = src.match(/Text \{[^\n]*\}/g) || [];
+    assert.equal(texts.length, 6);
+    for (const l of texts) assert.match(l, /Text \{ width: parent\.width; wrapMode: Text\.WordWrap; text: /);
+    assert.match(src, /Layout\.preferredWidth: 40; Layout\.preferredHeight: 4; radius: 2/);
+    assert.equal(/\bwidth: 40; height: 4/.test(src), false, "a bare width/height on a Layout child came back");
+});
+
+test("S5F-16 monkey: the label width formula on 500 seeded row widths is never negative and is the row minus icon minus spacing when that fits", () => {
+    const expr = /width: (Math\.max\(0, parent\.width - camIcon\.width - parent\.spacing\))/.exec(codeOf())[1];
+    const f = new Function("parent", "camIcon", "Math", "return " + expr + ";");
+    let seed = 220;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const icon = { width: 20 };
+    for (const w of [-50, -1, 0, 1, 31.9, 32, 32.1, 308, 1e6]) { const v = f({ width: w, spacing: 12 }, icon, Math); assert.ok(v >= 0, "w=" + w); assert.equal(v, Math.max(0, w - 32)); }
+    for (let i = 0; i < 500; i++) {
+        const w = rnd() * 800 - 100, sp = Math.floor(rnd() * 24), iw = Math.floor(rnd() * 40), v = f({ width: w, spacing: sp }, { width: iw }, Math);
+        assert.ok(v >= 0, "w=" + w);
+        if (w - iw - sp >= 0) assert.equal(v, w - iw - sp); else assert.equal(v, 0);
+    }
+});

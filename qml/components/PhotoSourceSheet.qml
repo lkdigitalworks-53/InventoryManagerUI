@@ -17,9 +17,9 @@ QQC.Popup {
     // (the EditProductDialog bug). At App root, `parent` is the window, so the
     // bottom-anchored positioning below is window-relative and correct.
     width: parent ? parent.width : 360
-    // Cap the sheet at 80% of viewport height so the content (camera + gallery
-    // + URL + remove rows) never spills past the bottom edge on phone-sized
-    // screens. ScrollView inside handles overflow when even 80% isn't enough.
+    // Cap the sheet at 80% of viewport height so it never spills past the bottom
+    // edge on phone-sized screens. The Flickable in contentItem scrolls the rows
+    // when even 80% isn't enough.
     height: Math.min(contentCol.implicitHeight + dp(24),
                      parent ? parent.height * 0.8 : 480)
     x: 0
@@ -38,151 +38,166 @@ QQC.Popup {
         border.color: Constants.borderColor
     }
 
-    contentItem: ColumnLayout {
-        id: contentCol
-        spacing: 4
+    // A Flickable, not a ScrollView: BottomSheet.qml explains why a sheet must not size itself from a ScrollView (its deferred layout
+    // pass reports height 0 on first open). The Popup height below still reads contentCol.implicitHeight directly; the Flickable only
+    // makes the rows reachable when that height is more than the 80% cap (a big system font, or the phone turned sideways).
+    contentItem: Flickable {
+        clip: true
+        flickableDirection: Flickable.VerticalFlick
+        boundsBehavior: Flickable.StopAtBounds
+        contentWidth: width
+        contentHeight: contentCol.implicitHeight
 
-        Rectangle {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.topMargin: 8
-            width: 40; height: 4; radius: 2
-            color: "#d1d5db"
-        }
+        ColumnLayout {
+            id: contentCol
+            width: root.availableWidth
+            spacing: 4
 
-        QQC.Label {
-            Layout.fillWidth: true
-            Layout.topMargin: 8
-            Layout.leftMargin: 16
-            text: "Set product photo"
-            font.pixelSize: sp(Constants.fsTitle)
-            font.bold: true
-            color: "#111827"
-        }
+            Rectangle {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: 8
+                Layout.preferredWidth: 40; Layout.preferredHeight: 4; radius: 2
+                color: "#d1d5db"
+            }
 
-        // Camera (mobile only — no camera picker on desktop)
-        Rectangle {
-            visible: Qt.platform.os === "android" || Qt.platform.os === "ios"
-            Layout.fillWidth: true
-            Layout.leftMargin: 12; Layout.rightMargin: 12
-            Layout.topMargin: 4
-            radius: 10
-            color: cameraTap.pressed ? "#f3f4f6" : "#ffffff"
-            border.color: Constants.borderColor
-            implicitHeight: Math.max(56, camLabels.implicitHeight + 20)
+            QQC.Label {
+                Layout.fillWidth: true
+                Layout.topMargin: 8
+                Layout.leftMargin: 16
+                text: "Set product photo"
+                font.pixelSize: sp(Constants.fsTitle)
+                font.bold: true
+                color: "#111827"
+            }
 
-            Row {
-                anchors.fill: parent
-                anchors.leftMargin: 14; anchors.rightMargin: 14
-                spacing: 12
-                Icon { name: "camera"; size: 20; anchors.verticalCenter: parent.verticalCenter; color: Constants.textPrimary }
-                Column {
-                    id: camLabels
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 2
-                    Text { text: "Take photo"; color: "#111827"; font.pixelSize: sp(Constants.fsBodyLg); font.bold: true }
-                    Text { text: "Use the camera"; color: "#6b7280"; font.pixelSize: sp(Constants.fsCaption) }
+            // Camera (mobile only — no camera picker on desktop)
+            Rectangle {
+                visible: Qt.platform.os === "android" || Qt.platform.os === "ios"
+                Layout.fillWidth: true
+                Layout.leftMargin: 12; Layout.rightMargin: 12
+                Layout.topMargin: 4
+                radius: 10
+                color: cameraTap.pressed ? "#f3f4f6" : "#ffffff"
+                border.color: Constants.borderColor
+                implicitHeight: Math.max(56, camLabels.implicitHeight + 20)
+
+                Row {
+                    anchors.fill: parent
+                    anchors.leftMargin: 14; anchors.rightMargin: 14
+                    spacing: 12
+                    Icon { id: camIcon; name: "camera"; size: 20; anchors.verticalCenter: parent.verticalCenter; color: Constants.textPrimary }
+                    Column {
+                        id: camLabels
+                        width: Math.max(0, parent.width - camIcon.width - parent.spacing)
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 2
+                        Text { width: parent.width; wrapMode: Text.WordWrap; text: "Take photo"; color: "#111827"; font.pixelSize: sp(Constants.fsBodyLg); font.bold: true }
+                        Text { width: parent.width; wrapMode: Text.WordWrap; text: "Use the camera"; color: "#6b7280"; font.pixelSize: sp(Constants.fsCaption) }
+                    }
+                }
+                MouseArea {
+                    id: cameraTap
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        if (typeof NativeUtils !== "undefined") {
+                            NativeUtils.cameraPickerFinished.connect(root._onCameraDone)
+                            NativeUtils.displayCameraPicker()
+                            root.close()
+                        }
+                    }
                 }
             }
-            MouseArea {
-                id: cameraTap
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                    if (typeof NativeUtils !== "undefined") {
-                        NativeUtils.cameraPickerFinished.connect(root._onCameraDone)
-                        NativeUtils.displayCameraPicker()
+
+            // Gallery / Files
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.leftMargin: 12; Layout.rightMargin: 12
+                Layout.topMargin: 2
+                radius: 10
+                color: galleryTap.pressed ? "#f3f4f6" : "#ffffff"
+                border.color: Constants.borderColor
+                implicitHeight: Math.max(56, galLabels.implicitHeight + 20)
+
+                Row {
+                    anchors.fill: parent
+                    anchors.leftMargin: 14; anchors.rightMargin: 14
+                    spacing: 12
+                    Icon { id: galIcon; name: "gallery"; size: 20; anchors.verticalCenter: parent.verticalCenter; color: Constants.textPrimary }
+                    Column {
+                        id: galLabels
+                        width: Math.max(0, parent.width - galIcon.width - parent.spacing)
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 2
+                        Text { width: parent.width; wrapMode: Text.WordWrap; text: "Choose from gallery"; color: "#111827"; font.pixelSize: sp(Constants.fsBodyLg); font.bold: true }
+                        Text { width: parent.width; wrapMode: Text.WordWrap; text: "Pick an existing image"; color: "#6b7280"; font.pixelSize: sp(Constants.fsCaption) }
+                    }
+                }
+                MouseArea {
+                    id: galleryTap
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        var isMobile = (Qt.platform.os === "android" || Qt.platform.os === "ios")
+                        // Close this modal sheet BEFORE launching a picker. On desktop,
+                        // opening the native file dialog while the modal is still tearing
+                        // down suppresses the dialog — so defer it to the next tick.
+                        root.close()
+                        if (isMobile && NativeUtils.displayImagePicker) {
+                            // Mobile: the OS photo picker.
+                            NativeUtils.imagePickerFinished.connect(root._onGalleryDone)
+                            NativeUtils.displayImagePicker(qsTr("Choose a photo"))
+                        } else {
+                            // Desktop: no native photo picker — use the system file
+                            // dialog with a Qt name-filter (NOT a MIME wildcard).
+                            NativeUtils.filePickerFinished.connect(root._onPhotoFilePicked)
+                            Qt.callLater(function() {
+                                NativeUtils.displayFilePicker(qsTr("Choose a photo"), "",
+                                    "Image files (*.png *.jpg *.jpeg *.gif *.bmp *.webp)")
+                            })
+                        }
+                    }
+                }
+            }
+
+            // Remove (only when there's an existing photo)
+            Rectangle {
+                visible: root.hasExistingPhoto
+                Layout.fillWidth: true
+                Layout.leftMargin: 12; Layout.rightMargin: 12
+                Layout.topMargin: 2
+                radius: 10
+                color: removeTap.pressed ? "#fef2f2" : "#ffffff"
+                border.color: Constants.borderColor
+                implicitHeight: Math.max(56, remLabels.implicitHeight + 20)
+
+                Row {
+                    anchors.fill: parent
+                    anchors.leftMargin: 14; anchors.rightMargin: 14
+                    spacing: 12
+                    Icon { id: remIcon; name: "delete"; size: 20; anchors.verticalCenter: parent.verticalCenter; color: Constants.textPrimary }
+                    Column {
+                        id: remLabels
+                        width: Math.max(0, parent.width - remIcon.width - parent.spacing)
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 2
+                        Text { width: parent.width; wrapMode: Text.WordWrap; text: "Remove photo"; color: "#b91c1c"; font.pixelSize: sp(Constants.fsBodyLg); font.bold: true }
+                        Text { width: parent.width; wrapMode: Text.WordWrap; text: "Clear the existing image"; color: "#6b7280"; font.pixelSize: sp(Constants.fsCaption) }
+                    }
+                }
+                MouseArea {
+                    id: removeTap
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        root.removeRequested()
                         root.close()
                     }
                 }
             }
+
+            Item { Layout.preferredHeight: dp(8); Layout.fillWidth: true }
         }
-
-        // Gallery / Files
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.leftMargin: 12; Layout.rightMargin: 12
-            Layout.topMargin: 2
-            radius: 10
-            color: galleryTap.pressed ? "#f3f4f6" : "#ffffff"
-            border.color: Constants.borderColor
-            implicitHeight: Math.max(56, galLabels.implicitHeight + 20)
-
-            Row {
-                anchors.fill: parent
-                anchors.leftMargin: 14; anchors.rightMargin: 14
-                spacing: 12
-                Icon { name: "gallery"; size: 20; anchors.verticalCenter: parent.verticalCenter; color: Constants.textPrimary }
-                Column {
-                    id: galLabels
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 2
-                    Text { text: "Choose from gallery"; color: "#111827"; font.pixelSize: sp(Constants.fsBodyLg); font.bold: true }
-                    Text { text: "Pick an existing image"; color: "#6b7280"; font.pixelSize: sp(Constants.fsCaption) }
-                }
-            }
-            MouseArea {
-                id: galleryTap
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                    var isMobile = (Qt.platform.os === "android" || Qt.platform.os === "ios")
-                    // Close this modal sheet BEFORE launching a picker. On desktop,
-                    // opening the native file dialog while the modal is still tearing
-                    // down suppresses the dialog — so defer it to the next tick.
-                    root.close()
-                    if (isMobile && NativeUtils.displayImagePicker) {
-                        // Mobile: the OS photo picker.
-                        NativeUtils.imagePickerFinished.connect(root._onGalleryDone)
-                        NativeUtils.displayImagePicker(qsTr("Choose a photo"))
-                    } else {
-                        // Desktop: no native photo picker — use the system file
-                        // dialog with a Qt name-filter (NOT a MIME wildcard).
-                        NativeUtils.filePickerFinished.connect(root._onPhotoFilePicked)
-                        Qt.callLater(function() {
-                            NativeUtils.displayFilePicker(qsTr("Choose a photo"), "",
-                                "Image files (*.png *.jpg *.jpeg *.gif *.bmp *.webp)")
-                        })
-                    }
-                }
-            }
-        }
-
-        // Remove (only when there's an existing photo)
-        Rectangle {
-            visible: root.hasExistingPhoto
-            Layout.fillWidth: true
-            Layout.leftMargin: 12; Layout.rightMargin: 12
-            Layout.topMargin: 2
-            radius: 10
-            color: removeTap.pressed ? "#fef2f2" : "#ffffff"
-            border.color: Constants.borderColor
-            implicitHeight: Math.max(56, remLabels.implicitHeight + 20)
-
-            Row {
-                anchors.fill: parent
-                anchors.leftMargin: 14; anchors.rightMargin: 14
-                spacing: 12
-                Icon { name: "delete"; size: 20; anchors.verticalCenter: parent.verticalCenter; color: Constants.textPrimary }
-                Column {
-                    id: remLabels
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 2
-                    Text { text: "Remove photo"; color: "#b91c1c"; font.pixelSize: sp(Constants.fsBodyLg); font.bold: true }
-                    Text { text: "Clear the existing image"; color: "#6b7280"; font.pixelSize: sp(Constants.fsCaption) }
-                }
-            }
-            MouseArea {
-                id: removeTap
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                    root.removeRequested()
-                    root.close()
-                }
-            }
-        }
-
-        Item { Layout.preferredHeight: dp(8); Layout.fillWidth: true }
     }
 
     function _onCameraDone(ok, path) {
