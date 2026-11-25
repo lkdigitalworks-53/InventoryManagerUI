@@ -79,3 +79,37 @@ test("D-6 DataModel.onAddOrder: deferred only for queued and unconfirmed; auto-a
     assert.ok(body.indexOf("orderAdded(newOrderId)") < body.indexOf("_autoApproveNewOrder("), "the sheet closes before an approval starts");
     assert.equal((body.match(/_autoApproveNewOrder\(/g) || []).length, 1, "one approval site, so one place to gate");
 });
+
+// ---------------------------------------------------------------------------------------------------------------------
+// NO3b (design 2026-11-24-no3b-order-price-cap-design.md): the unit-price field. The real function body runs in
+// orderPriceCap.test.js; these pin the QML wiring around it (what the person sees and hears), which cannot load headless.
+// ---------------------------------------------------------------------------------------------------------------------
+
+test("D-7 _setLinePrice reads the text through OrderFlow.priceEdit only (no regex strip, no parseFloat) and records the refusal by product", () => {
+    const body = strip(block(DIALOG, "function _setLinePrice("));
+    assert.ok(/OrderFlow\.priceEdit\(value, cur\.price, InventoryStore\.formatCurrency\(cur\.price\)\)/.test(body));
+    assert.ok(/_setPriceError\(cur\.productId, r\.kind === "refused" \? OrderFlow\.priceText\(r\.reason\) : ""\)/.test(body));
+    assert.ok(body.indexOf("parseFloat") < 0 && body.indexOf(".replace(") < 0, "the lenient reading must not come back");
+    assert.ok(/import "\.\.\/helper\/OrderFlow\.js" as OrderFlow/.test(DIALOG));
+});
+
+test("D-8 the price field's wiring: both commit signals, the settle callers, the pruning, and the message binding", () => {
+    assert.ok(/onEditingFinished: _commitPrice\(\)/.test(DIALOG) && /onAccepted: _commitPrice\(\)/.test(DIALOG));
+    assert.ok(/onTextEdited: if \(activeFocus\) dlg\._setPriceError\(modelData\.productId, ""\)/.test(DIALOG));
+    assert.ok(/id: cartRepeater\s+model: dlg\.selectedProducts/.test(DIALOG), "_settlePriceEdit walks THIS repeater");
+    assert.ok(/readonly property string priceError: dlg\._priceErrors\[modelData\.productId\] \|\| ""/.test(DIALOG));
+    assert.ok(/onSelectedProductsChanged: _priceErrors = OrderFlow\.prunePriceErrors\(_priceErrors, selectedProducts\)/.test(DIALOG));
+    for (const f of ["function _setLineDiscount(", "function changeQty(", "function trySubmit()"]) {
+        const body = strip(block(DIALOG, f));
+        assert.ok(body.indexOf("_settlePriceEdit()") > 0 && body.indexOf("_settlePriceEdit()") < body.indexOf("selectedProducts"), f + " settles before it reads the cart");
+    }
+});
+
+test("D-9 the message is visible text in the danger colour (not colour alone), wraps, and the field announces it", () => {
+    const at = DIALOG.indexOf("visible: cartRow.priceError.length > 0");
+    assert.ok(at > 0);
+    const textBlock = DIALOG.substring(DIALOG.lastIndexOf("Text {", at), DIALOG.indexOf("}", at));
+    for (const needed of ["text: cartRow.priceError", "color: Constants.danger", "wrapMode: Text.Wrap", "Layout.fillWidth: true"]) assert.ok(textBlock.indexOf(needed) >= 0, needed);
+    assert.ok(/Accessible\.description: cartRow\.priceError/.test(DIALOG));
+    assert.ok(/border\.color: cartRow\.priceError\.length > 0 \? Constants\.danger/.test(DIALOG));
+});

@@ -1,22 +1,22 @@
-# CHECKPOINT: 2026-11-25 picker S5g (dead Auth buttons out, S5e-4 final device pass prepared) - resume here
+# CHECKPOINT: 2026-11-26 PR #221 (S5g) deep review sweep - resume here
 
-**Branch:** `feat/2026-11-25-picker-s5g-auth-button-cleanup-and-final-pass` (cut from `main` @ `4ce6a48`, PR #220 S5f merged).
-**Commit rule:** every commit message carries `dextran52@gmail.com` (owner instruction 2026-11-25, this session; ignore the addresses in older checkpoints, KI 125).
-**Rules in force:** no build or run; no Qt in the sandbox (CI is the oracle); always a branch; push without asking (PAT per command via http.extraheader, remote URL kept clean); tests + test plan for every change; out-of-scope findings go to `docs/superpowers/KNOWN-ISSUES.md`; short scope so another account can take over from the remote branch; no parallel agents.
-**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-25-pr220-merged-prev-CHECKPOINT.md`.
-**Skills used:** superpowers:brainstorming (design in the plan, questions answered by defaults), qt-qml, qt-ui-design, ponytail, caveman.
+**Branch:** `feat/2026-11-25-picker-s5g-auth-button-cleanup-and-final-pass`, PR #221 (base `main` @ `5c41b8f`, #219 NO3b merged).
+**Ask (2026-11-26):** full deep review of PR #221, fixes in the SAME PR, no parallel agents, quality and robustness first, show done/next at the end, caveman chat mode. Skills used: requesting-code-review, qt-qml-review, ponytail-audit (all run inline, no subagents).
+**New owner facts (2026-11-26):** (1) all picker slices were tested on a device by the owner; (2) NO dark theme or any other theme is planned in the near future, focus is finishing pending features (recorded in KNOWN-ISSUES 143/144 and README).
+**Commit rule (owner, 2026-11-26):** every commit message carries `tsadmin@gmail.com`. Older addresses in older checkpoints are history (KI 125).
+**Rules in force:** no build or run; no Qt in the sandbox (CI is the oracle); always a branch; push without asking (PAT per command via http.extraheader, never stored in `.git/config`); tests + test plan for every change; keep scope small enough for one chat turn so another account can resume from the remote branch.
+**Previous checkpoint archived:** `docs/superpowers/specs/2026-11-26-pr221-s5g-prev-CHECKPOINT.md` (the S5g session's own checkpoint).
 
 ## Steps
-- [x] 0. Cloned fresh, memory + repo docs read. Roadmap read: picker v2 S1 to S5f merged (#220 = S5f, main @ `4ce6a48`). Open PRs: #219 (NO3b, atomic-ops roadmap, not picker), #211, #178, #39, #29. Only roadmap row left: S5e-4 (curated device pass, KI 29 with a number): a PHONE job, no code. Left over from S5f: KI 146 (dead Auth buttons, Q3 default yes), KI 143 (colour literals), KI 29.
-- [x] 1. Baseline measured on main: functions 2408/2408, scripts 1199/1199, skills-index current.
-- [x] 2. Commit A `d7fe130`: deleted `AuthPrimaryButton` + `AuthSecondaryButton` (KI 146); fixed `S5E3-29`, `S5F-03`, `S5E3C-12`; new `pickerS5gAuthButtons.test.js` (S5G-01..06). 11 hand mutants, all killed (first loop polluted by an untracked file and mutant 11 edited the test: both redone, Skill 191).
-- [x] 3. Commit B (docs only): `test-plans/2026-11-25-picker-v2-s5e4-final-device-pass.md` (20 checks F1..F20, KI 29 table F8 + partial-state probe F9, decision rule written first), plan `plans/2026-11-25-product-picker-v2-s5g-auth-buttons-and-final-pass.md` (D1..D6, Q-S5G-1..4), test plan rows + checks 213/214, KNOWN-ISSUES (146 closed, 143 to 49, 150 new), README, AGENTS, Skill 191 + index (192 skills), atomic-ops note.
-- [x] 4a. Measured by running: functions 2414/2414 (main 2408), scripts 1199/1199, skills-index current.
-- [x] 4b. Pushed, PR #221 opened. CI on head `864a236` read (verdicts AND counts): 6075/6075 = QML 3408, Functions 2414, Rules 129, E2E 124; Deploy steps skipped. QML count unchanged (no QML test loads Felgo pages; the deletion is covered by source scans plus CI compiling `qml/`). This checkpoint-only commit goes on top (CI on it not read).
-- [ ] 5. Owner: run the 20 checks on a phone, write the result lines in the S5e-4 file, answer the questions in the plan, merge.
-
-## Next
-(1) Owner: run F1..F20 on a phone (F8, F9 first if short of time), write a result line each. (2) Owner: Q-S5G-1..4 in the plan. (3) After the pass: fix FAILs, decide KI 29 by the written rule, close KI 143/144 if no theme is planned. (4) Atomic-ops arc: `_tryAdjustOrder` (Q-NO3-1), PR #219 NO3b is open and not mine.
+- [x] 0. Cloned repo, read skills, fetched PR #221 (`0dd5b02`). State was `dirty`: conflicts with main (#219 NO3b merged after the PR was cut).
+- [x] 1. Merged `origin/main` into the branch. 6 doc conflicts (CHECKPOINT, README, SKILLS, SKILLS-INDEX, ATOMIC status, KNOWN-ISSUES), NO code file conflicted. Kept main's entries, appended ours. RENUMBERED ours: KNOWN-ISSUES 150 -> 162 (main owns 150-161), Skill 191 -> 192 (main owns 191); skills count 193; skills-index `--check` current.
+- [ ] 2. Baseline: install `functions` deps (`npm ci`), run the Node suites on the merged tree (this is Node only, not the app).
+- [ ] 3. Review phase 1: qt-qml-review linter (`qt_qml_lint.py`) on the QML files touched by #219/#221 and the picker files.
+- [ ] 4. Review phase 2: six qt-qml-review domains by hand, ponytail audit of the diff, requesting-code-review of #221 against its plan.
+- [ ] 5. Fixes in this PR (list filled in as found).
+- [ ] 6. Tests for each fix, test plan rows, docs (KNOWN-ISSUES, README, SKILLS/AGENTS only if needed).
+- [ ] 7. Push, read CI (QML, Functions, Rules, E2E) on the pushed head.
+- [ ] 8. Report: done / next / important test cases.
 
 ## If this session is cut off
-Resume at the first unticked step. Re-measure counts before claiming any: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`, `node .github/scripts/skills-index.js --check`. Push with `git -c http.extraheader="Authorization: Basic $(printf 'x-access-token:%s' $PAT | base64 -w0)" push origin HEAD`.
+Resume at the first unticked step. Re-measure counts before claiming any: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`, `node .github/scripts/skills-index.js --check`. The branch on the remote always holds the latest finished step.

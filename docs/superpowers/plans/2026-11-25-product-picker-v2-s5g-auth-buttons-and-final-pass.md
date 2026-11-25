@@ -1,6 +1,6 @@
 # Product picker v2, slice S5g: delete the two dead Auth buttons, prepare the final device pass (S5e-4)
 
-**Date:** 2026-11-25. **Branch:** `feat/2026-11-25-picker-s5g-auth-button-cleanup-and-final-pass`, cut from `main` @ `4ce6a48` (#220 S5f merged). **Test plan:** `test-plans/2026-11-03-product-picker-v2-test-plan.md` (S5g rows, device checks 213 and 214) and the new `test-plans/2026-11-25-picker-v2-s5e4-final-device-pass.md`. **Closes:** KNOWN-ISSUES 146; shrinks 143 (56 to 49). **New:** KNOWN-ISSUES 150.
+**Date:** 2026-11-25. **Branch:** `feat/2026-11-25-picker-s5g-auth-button-cleanup-and-final-pass`, cut from `main` @ `4ce6a48` (#220 S5f merged). **Test plan:** `test-plans/2026-11-03-product-picker-v2-test-plan.md` (S5g rows, device checks 213 and 214) and the new `test-plans/2026-11-25-picker-v2-s5e4-final-device-pass.md`. **Closes:** KNOWN-ISSUES 146; shrinks 143 (56 to 49). **New:** KNOWN-ISSUES 162.
 
 ## 0. Where the roadmap stands (read from the repo and the GitHub API, 2026-11-25)
 | Item | State |
@@ -32,11 +32,11 @@ For (a): it is the roadmap's last row and the one thing that turns 15 slices of 
 
 ## 2. What changed
 - Commit A: two QML files deleted (83 lines, 7 colour literals, 2 `QQC.Button` roots). `pickerS5e3Names` (list of 9 roots now 7, pin loop 5 files now 3), `pickerS5fDeadHelpers` (S5F-03 now `AnalysisService` only), `pickerS5e3cAudit` (S5E3C-12 two keys out). New `pickerS5gAuthButtons.test.js` (S5G-01..06).
-- Commit B: docs only. This plan, the S5e-4 file, test plan rows, KNOWN-ISSUES (146 closed, 143 shrunk, 150 new), README, AGENTS, Skill 191, the atomic-operations status line, checkpoint.
+- Commit B: docs only. This plan, the S5e-4 file, test plan rows, KNOWN-ISSUES (146 closed, 143 shrunk, 162 new), README, AGENTS, Skill 192, the atomic-operations status line, checkpoint.
 
 ## 3. Test strategy
 Node only (CI is the oracle, no Qt in the sandbox). `S5G-01` the files are gone, from every directory a QML file can live in. `S5G-02` no name in any QML file (comments stripped), `qmldir`, QML test, C++ or CMake. `S5G-03` the matcher on hand-built trees: a real use in a page, a qmldir, CMake and a QML test is found; a comment, a longer name, a shorter name, a prefixed name and an empty tree are not. `S5G-04` regression: `LoginPage` still instantiates `PrimaryButton`, `GhostButton`, `AuthTextField` and `AuthPasswordField`, and those four files exist. `S5G-05` the literals outside `Constants.qml` are exactly 49. `S5G-06` a seeded monkey of 300 trees, a name placed in a random real or decoy position plus a random CMake mention; the matcher count equals the count by construction.
-**Hand mutants: 11, all killed** (the file restored, a page that names it, GhostButton renamed in the login page, an extra colour literal, a CMake mention, a qmldir line, a stale root pin, a NEW dead file, a QML test that names it, PrimaryButton renamed, an Auth field renamed). Two mistakes of mine on the way, both written down in Skill 191: the first loop left an untracked restored file behind (`git reset --hard` does not remove untracked files), so every later mutant looked killed by the leftover; and my first version of mutant 11 edited the test it was supposed to test. Both redone, baseline run empty first.
+**Hand mutants: 11, all killed** (the file restored, a page that names it, GhostButton renamed in the login page, an extra colour literal, a CMake mention, a qmldir line, a stale root pin, a NEW dead file, a QML test that names it, PrimaryButton renamed, an Auth field renamed). Two mistakes of mine on the way, both written down in Skill 192: the first loop left an untracked restored file behind (`git reset --hard` does not remove untracked files), so every later mutant looked killed by the leftover; and my first version of mutant 11 edited the test it was supposed to test. Both redone, baseline run empty first.
 **Not run:** CI (read on the PR head), any device check (213, 214, F1 to F20).
 
 ## 4. What is NOT done (written down)
@@ -57,4 +57,4 @@ Node only (CI is the oracle, no Qt in the sandbox). `S5G-01` the files are gone,
 - **Q-S5G-4.** Commit address: this session used `dextran52@gmail.com` (owner instruction 2026-11-25). Older commits carry three other addresses (KI 125).
 
 ## 7. Result (2026-11-25)
-New Node tests 6 (`S5G-01..06`); functions suite 2414/2414 (main @ `4ce6a48` measured 2408), scripts 1199/1199, `skills-index.js --check` current after Skill 191. Hand mutants 11, all killed. Not run: CI (read on the PR head), any device check.
+New Node tests 6 (`S5G-01..06`); functions suite 2414/2414 (main @ `4ce6a48` measured 2408), scripts 1199/1199, `skills-index.js --check` current after Skill 192. Hand mutants 11, all killed. Not run: CI (read on the PR head), any device check.
