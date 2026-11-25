@@ -21,3 +21,18 @@
 
 ## If this session is cut off
 Resume at the first unticked step. Re-measure counts before claiming any: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`, `node .github/scripts/skills-index.js --check`.
+
+---
+# PR #220 REVIEW SESSION (2026-11-25, different account) - resume here
+**Branch:** same PR branch `feat/2026-11-24-picker-s5f-dead-helper-cleanup` (owner: "add fixes in the same PR"). Review commits carry `tsadmin@gmail.com` in the message text (owner instruction 2026-11-25; supersedes `taher.lkdw@gmail.com` above for NEW commits).
+**Rules in force:** no build/run app; no Qt in sandbox (CI is the oracle); no parallel agents; short scope per turn; push without asking (PAT per command via http.extraheader, remote URL kept clean); tests + test plan for every change; docs updated as needed.
+**Skills used:** requesting-code-review, qt-qml-review (diff scope, linter not in sandbox if missing), ponytail-audit (lens), caveman.
+## Review steps
+- [x] R0. Cloned, checked out PR head `965c778`, read plan/checkpoint/diff. CI on head: 6065/6065 green (QML 3408, Functions 2404, Rules 129, E2E 124).
+- [x] R1. Measured: `functions` 2404/2404 by running (matches PR claim).
+- [x] R2. Deletion safety: no ref to the 5 names anywhere (whole tree), no CMake file list (GLOB_RECURSE + CONFIGURE_DEPENDS), no qmldir entry, no dynamic load that could build their names, no Constants member orphaned (deleted files used literals only).
+- [ ] R3. QML review of PhotoSourceSheet (findings in the report below, filled as found).
+- [ ] R4. Scanner + tests review.
+- [ ] R5. Docs review (KI, README, AGENTS, Skill 190, test plan).
+- [ ] R6. Fixes + tests + test plan + docs, commit, push.
+- [ ] R7. CI on new head read.
