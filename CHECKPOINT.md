@@ -12,7 +12,7 @@
 - [x] 2. Commit A `d7fe130`: deleted `AuthPrimaryButton` + `AuthSecondaryButton` (KI 146); fixed `S5E3-29`, `S5F-03`, `S5E3C-12`; new `pickerS5gAuthButtons.test.js` (S5G-01..06). 11 hand mutants, all killed (first loop polluted by an untracked file and mutant 11 edited the test: both redone, Skill 191).
 - [x] 3. Commit B (docs only): `test-plans/2026-11-25-picker-v2-s5e4-final-device-pass.md` (20 checks F1..F20, KI 29 table F8 + partial-state probe F9, decision rule written first), plan `plans/2026-11-25-product-picker-v2-s5g-auth-buttons-and-final-pass.md` (D1..D6, Q-S5G-1..4), test plan rows + checks 213/214, KNOWN-ISSUES (146 closed, 143 to 49, 150 new), README, AGENTS, Skill 191 + index (192 skills), atomic-ops note.
 - [x] 4a. Measured by running: functions 2414/2414 (main 2408), scripts 1199/1199, skills-index current.
-- [ ] 4b. Push, open PR, read CI verdicts AND counts (fill in below).
+- [x] 4b. Pushed, PR #221 opened. CI on head `864a236` read (verdicts AND counts): 6075/6075 = QML 3408, Functions 2414, Rules 129, E2E 124; Deploy steps skipped. QML count unchanged (no QML test loads Felgo pages; the deletion is covered by source scans plus CI compiling `qml/`). This checkpoint-only commit goes on top (CI on it not read).
 - [ ] 5. Owner: run the 20 checks on a phone, write the result lines in the S5e-4 file, answer the questions in the plan, merge.
 
 ## Next
