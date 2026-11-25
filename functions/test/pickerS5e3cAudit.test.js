@@ -17,7 +17,7 @@ const ARC = ["components/ProductPickerSheet", "components/ProductPickerRow", "co
 const TOK = T.colorTokens(read("qml/helper/Constants.qml"));
 const fields = () => T.scanColors(ROOT, ["TextField", "TextArea"]);
 const one = (file, id) => { const r = fields().filter((f) => f.file === file && f.id === id); assert.equal(r.length, 1, "expected one field " + id + " in " + file); return r[0]; };
-// Dead = no other QML file names the type (StatusBadge is only used by the dead OrderRow, so it is dead too).
+// users(name) = the QML files that name a type (used by the S5f guard that the five dead helpers stay deleted).
 const users = (name) => qmlFiles(path.join(ROOT, "qml")).filter((f) => path.basename(f) !== name + ".qml" && new RegExp("\\b" + name + "\\b").test(fs.readFileSync(f, "utf8"))).map((f) => path.basename(f, ".qml"));
 
 // ---- A. the five typed-text fields of the picker arc ---------------------------------------------------------------------
@@ -77,11 +77,10 @@ test("S5E3C-23 the Restock SpinBox pins its typed text through palette.text (a S
     assert.ok(T.contrast(TOK.textPrimary, TOK.cardBg) >= 4.5);
 });
 
-test("S5E3C-08 ratchet: the 3 Text/Label blocks with no colour are invisible or dead (nothing a user reads)", () => {
+test("S5E3C-08 ratchet: the 2 Text/Label blocks with no colour are invisible (nothing a user reads; the third, dead CardKPI, was deleted in S5f)", () => {
     const bare = T.scanColors(ROOT, ["Text", "Label"]).filter((t) => !t.colored);
-    assert.deepEqual(bare.map((t) => t.file), ["qml/components/ToastHost.qml", "qml/helper/CardKPI.qml", "qml/pages/LoginPage.qml"]);
-    assert.ok(bare[0].hidden && bare[2].hidden, "ToastHost measure and the Login wordmark mask are `visible: false`");
-    assert.deepEqual(users("CardKPI"), [], "CardKPI has a user now: its bare Text is real");
+    assert.deepEqual(bare.map((t) => t.file), ["qml/components/ToastHost.qml", "qml/pages/LoginPage.qml"]);
+    assert.ok(bare[0].hidden && bare[1].hidden, "ToastHost measure and the Login wordmark mask are `visible: false`");
 });
 
 // ---- B. font scale -----------------------------------------------------------------------------------------------------------
@@ -92,16 +91,11 @@ test("S5E3C-09 the picker arc has no bare pixel size and no colour literal (all 
     assert.ok(T.scanPixelSizes(ROOT).filter((p) => ARC.includes(p.file)).length >= 60, "the arc's own sizes were all read");
 });
 
-test("S5E3C-10 ratchet: 25 bare pixel sizes, 7 on a live photo sheet and 18 in dead helpers (KI 143)", () => {
+test("S5E3C-10 ratchet: NO bare pixel size left anywhere (18 went with the five dead helpers, the 7 on the photo sheet go through sp() since S5f; KI 143 closed)", () => {
     const by = {};
     T.scanPixelSizes(ROOT).filter((p) => p.raw).forEach((p) => { by[p.file] = (by[p.file] || 0) + 1; });
-    assert.deepEqual(by, {
-        "qml/components/PhotoSourceSheet.qml": 7, "qml/helper/CardKPI.qml": 4, "qml/helper/OrderRow.qml": 10,
-        "qml/helper/PlaceholderPage.qml": 1, "qml/helper/SegmentedNav.qml": 2, "qml/helper/StatusBadge.qml": 1,
-    });
+    assert.deepEqual(by, {});
     assert.deepEqual(users("PhotoSourceSheet").sort(), ["EditProductDialog", "Main"]);
-    for (const dead of ["CardKPI", "OrderRow", "PlaceholderPage", "SegmentedNav"]) assert.deepEqual(users(dead), [], dead + " has a user now");
-    assert.deepEqual(users("StatusBadge"), ["OrderRow"], "StatusBadge is only kept alive by the dead OrderRow");
 });
 
 test("S5E3C-11 every pixel size that is neither bare nor sp()/dp() is AvatarBadge's _font, and that is sp() on every branch", () => {
@@ -116,9 +110,8 @@ test("S5E3C-12 ratchet: colour literals by file (Constants.qml is where they bel
     assert.deepEqual(T.scanHex(ROOT), {
         "qml/components/AlertDialog.qml": 2, "qml/components/AuthPasswordField.qml": 16, "qml/components/AuthPrimaryButton.qml": 1,
         "qml/components/AuthSecondaryButton.qml": 6, "qml/components/AuthTextField.qml": 8, "qml/components/PhotoSourceSheet.qml": 15,
-        "qml/components/ProductPhotoGallery.qml": 4, "qml/components/StockProgressBar.qml": 2, "qml/helper/CardKPI.qml": 7,
-        "qml/helper/Constants.qml": 44, "qml/helper/OrderRow.qml": 18, "qml/helper/PlaceholderPage.qml": 3,
-        "qml/helper/SegmentedNav.qml": 8, "qml/helper/StatusBadge.qml": 8, "qml/model/StaffStore.qml": 2,
+        "qml/components/ProductPhotoGallery.qml": 4, "qml/components/StockProgressBar.qml": 2,
+        "qml/helper/Constants.qml": 44, "qml/model/StaffStore.qml": 2,
     });
     assert.equal(qmlFiles(path.join(ROOT, "qml")).length - Object.keys(T.scanHex(ROOT)).length >= 70, true, "most of the tree has none");
 });

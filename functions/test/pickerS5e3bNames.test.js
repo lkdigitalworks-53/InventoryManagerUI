@@ -159,15 +159,13 @@ test("S5E3B-20 RATCHET: every named button that draws a child Text either ignore
     // OrdersPage approve button: its Text is the progress ("3 / 10"), worth hearing; ProfilePage uidBtn: the Text is the ID value
     assert.deepEqual(keep, { "qml/pages/OrdersPage.qml": 1, "qml/pages/ProfilePage.qml": 1 }, "a named button now reads its Text twice, or one of these two changed");
 });
-test("S5E3B-21 RATCHET: the two text-child buttons left unnamed stay the ones with a reason (KNOWN-ISSUES 123, 121)", () => {
+test("S5E3B-21 RATCHET: the one text-child button left unnamed keeps its reason (KNOWN-ISSUES 123); the dead SegmentedNav is deleted (KNOWN-ISSUES 128, S5f)", () => {
     const inv = one(read("qml/pages/InventoryPage.qml"), (b) => !b.root && /id: card\b/.test(b.body));
     assert.equal(inv.named || inv.ownText, false, "ProductCard got a name: the device checks 176 to 179 decided it? update KNOWN-ISSUES 123 and S5E3-07");
     assert.match(inv.body, /signal restockClicked\(\)/, "ProductCard holds other buttons (the reason it is left)");
-    const seg = scanButtons(read("qml/helper/SegmentedNav.qml"));
-    assert.equal(seg.length, 1);
+    assert.equal(fs.existsSync(path.join(ROOT, "qml", "helper", "SegmentedNav.qml")), false, "SegmentedNav came back: name its buttons first");
     for (const f of qmlFiles(path.join(ROOT, "qml"))) {
-        if (f.endsWith("SegmentedNav.qml")) continue;
-        assert.equal(/\bSegmentedNav\s*\{/.test(stripComments(fs.readFileSync(f, "utf8"))), false, rel(f) + " now uses SegmentedNav: name its buttons first");
+        assert.equal(/\bSegmentedNav\b/.test(stripComments(fs.readFileSync(f, "utf8"))), false, rel(f) + " names SegmentedNav");
     }
 });
 test("S5E3B-22 every added name: qsTr literals only (letters, spaces, %1, commas), short, no concatenation (the data label of SettingsRow excepted), no role line", () => {
