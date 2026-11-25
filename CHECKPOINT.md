@@ -29,10 +29,19 @@ Resume at the first unticked step. Re-measure counts before claiming any: `cd fu
 **Skills used:** requesting-code-review, qt-qml-review (diff scope, linter not in sandbox if missing), ponytail-audit (lens), caveman.
 ## Review steps
 - [x] R0. Cloned, checked out PR head `965c778`, read plan/checkpoint/diff. CI on head: 6065/6065 green (QML 3408, Functions 2404, Rules 129, E2E 124).
-- [x] R1. Measured: `functions` 2404/2404 by running (matches PR claim).
-- [x] R2. Deletion safety: no ref to the 5 names anywhere (whole tree), no CMake file list (GLOB_RECURSE + CONFIGURE_DEPENDS), no qmldir entry, no dynamic load that could build their names, no Constants member orphaned (deleted files used literals only).
-- [ ] R3. QML review of PhotoSourceSheet (findings in the report below, filled as found).
-- [ ] R4. Scanner + tests review.
-- [ ] R5. Docs review (KI, README, AGENTS, Skill 190, test plan).
-- [ ] R6. Fixes + tests + test plan + docs, commit, push.
-- [ ] R7. CI on new head read.
+- [x] R1. Measured by running: functions 2404/2404, scripts 1199/1199, skills-index current (matches the PR claim).
+- [x] R2. Deletion safety: no ref to the 5 names anywhere (whole tree), CMake globs (`CONFIGURE_DEPENDS`), no qmldir entry, no computed-string load, no `Constants` member orphaned. SAFE.
+- [x] R3. QML review of `PhotoSourceSheet` (+ linter 0 findings on changed lines): FOUND (a) sheet not scrollable, capped 80%, rows now grow with the font: sideways from ~1.3x the Remove row leaves the screen (manifest `screenOrientation=user`); stale comment claims a ScrollView that does not exist; (b) labels do not wrap: long label runs out of the row at ~2.0x (pixel numbers are my arithmetic, not measured); (c) handle used bare width/height in a Layout.
+- [x] R4. Scanner + tests review: FOUND `deadQmlFiles` counted "has any other user" (misses chains and dead cycles); unused `outsideText` export; Skill 190 rule 1 claimed `qmldir`/`tests/` are scanned (they are not). Tests are source scans only (nothing runs QML); S5F-11 only exercises `Math.max` (kept, low value).
+- [x] R5. Docs review: README/AGENTS counts and KI 121/128/143/146 consistent except KI 146 `tests/` claim (fixed).
+- [x] R6a. Commit `fe60214` scanner reachability (S5F-06/07 fixed, S5F-13 new, S5F-08 oracle rebuilt, 6 mutants killed).
+- [x] R6b. Commit `338d0e7` (C, revert alone) sheet Flickable + wrap + Layout handle; S5F-14..16; 14 mutants killed.
+- [x] R6c. Docs commit (this one): Skill 190 (+ rule 8, index regenerated, still 191 skills), AGENTS, README, KI 146/147 rewritten + 148/149 new, plan section 9 (D7, D8, Q5-Q7), test plan (cases 13-16, checks 209-212, counts). Measured: functions 2408/2408, scripts 1199/1199, skills-index current.
+- [ ] R7. CI on the new head: read the PR comment (verdicts AND counts).
+- [ ] R8. Owner: Q1-Q7 (plan section 9), device checks 203-212 (207 first, then 209 and 210), merge.
+
+## Next
+(1) Read CI on the newest head; if QML tests fail, the cause is almost surely `PhotoSourceSheet.qml` commit C: revert `338d0e7` and report. (2) Owner device pass (S5e-4). (3) KI 146 delete the two Auth buttons. (4) KI 143 colour literals.
+
+## If this session is cut off
+Resume at the first unticked step. Re-measure before claiming counts: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`, `node .github/scripts/skills-index.js --check`. Push with `git -c http.extraheader="Authorization: Basic $(printf 'x-access-token:%s' $PAT | base64 -w0)" push origin HEAD`.
