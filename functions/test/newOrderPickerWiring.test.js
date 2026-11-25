@@ -285,7 +285,7 @@ test("NOW-18 S5b + sweep: the real cart-row stepper uses the one stock rule: a f
     const fn = extractFunction("pages/NewOrderDialog.qml", "changeQty");
     assert.ok(/Picker\.stepQty\(sp\.qty, delta, inv\)/.test(fn) && !/inv\.stock/.test(fn));
     const stepped = (stock, qty, delta, gone) => {
-        const box = { Picker: NP, selectedProducts: [{ name: "W", qty, price: 5, productId: "P" }],
+        const box = { Picker: NP, _settlePriceEdit: () => {}, selectedProducts: [{ name: "W", qty, price: 5, productId: "P" }],
                       InventoryStore: { getById: () => gone ? null : { productId: "P", stock } } };
         vm.createContext(box);
         vm.runInContext(fn + "\nchangeQty(0, " + delta + ")", box);

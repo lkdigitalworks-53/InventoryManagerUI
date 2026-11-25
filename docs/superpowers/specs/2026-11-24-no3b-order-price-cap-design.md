@@ -65,3 +65,24 @@ Place order -> OrderPlan.build still guards price > 1e9 (bad-line): the field an
 - **Q-NO3b-2** limit a price to 2 decimals? Recommended: yes, as its own small slice across Add Product, Restock and New Order together, so the three fields stay equal (changing one now would break D-NO3b-1's agreement).
 - **Q-NO3b-3** should `1,200` (comma as a thousands separator) be accepted? Recommended: no (D-NO3b-1, `1,5` ambiguity).
 - Unchanged owner items: Q-NO3-1 (which stock-touching path next; recommended `_tryAdjustOrder`), Q-NO2-2, the commit address (KNOWN-ISSUES 111, 118), AP4.
+
+## 8. Review sweep of PR #219 (2026-11-25). Where this section differs from sections 2 to 7, this section wins.
+**What was wrong in the first version (found by reading the commit paths, then reproduced in Node against the real function bodies):**
+1. **A refused price could be ordered unseen.** Type `1,200` on a 500 line and tap Place order: the button takes the focus, the refusal is recorded, and `trySubmit` went on at once with 500. The sheet closed; the message was never read.
+2. **A typed price could miss the cart.** Nothing but Qt focus events committed it. The ₹/% pill is a `MouseArea` (takes no focus) and rebuilds every row, so the typed text went with the old field.
+3. **The message died with the row.** It lived in the delegate; a `+` tap (which first takes the focus, committing and refusing, then rebuilds the rows) erased it in the same gesture.
+4. **D-NO3b-2's claim was wrong.** "The design does not depend on the order" held only for the display text. If the focus handler had run before `editingFinished`, it overwrote the typed text with the old formatted price: a lost price, not a missing message. (The old code had the same assumption, and price editing works on devices, so Qt most likely runs `editingFinished` first. Now it does not matter.)
+5. **Enter left a focused field showing `₹100`.** Typing then appended to the formatted text, which is refused.
+
+**Decisions (defaults, vetoable):**
+- **D-NO3b-9 Place order commits the price field in use, then refuses to send while any line has an unread refusal** ("Tomato: the new price was not accepted, so it is still ₹100. Tap its price field to keep or change it"). Tapping the field clears it; so does typing in it. Options: (A) block until acknowledged (chosen: no order is ever booked at a price the person did not see); (B) block only a refusal made by this tap (an Enter or earlier blur refusal that scrolled away would still be ordered); (C) the old behaviour. Cost of A: one extra tap when the person did mean to keep the old price. This replaces the old device check 17.
+- **D-NO3b-10 refusals are dialog state keyed by product** (`_priceErrors`, `OrderFlow.withPriceError/prunePriceErrors`). Replaces "delegate-local" in D-NO3b-3. A removed line or a new sheet forgets its message.
+- **D-NO3b-11 whoever rebuilds the rows from a row tap, and `trySubmit`, call `_settlePriceEdit()` first** (`_setLineDiscount`, `changeQty`, `trySubmit`). The focus handler formats only the untouched plain number, and a commit that happens with the field still focused leaves the plain number selected.
+- `_setLinePrice` returns nothing now; `null / "" / text` is gone (D-NO3b-3, section 4).
+
+**Data flow now:** commit -> `_setLinePrice` -> `priceEdit`: `unchanged` touches nothing; `refused` records the text for the product; `set` clears it and replaces the line. The row binds `priceError` to the record. `trySubmit`: busy guard, settle, validate (including the record), send.
+
+**Tests added:** `orderPriceCap` P-8..P-16 and P-14b run the REAL `trySubmit`, `_settlePriceEdit`, `settlePrice`, `_commitPrice`, `_setLineDiscount`, `changeQty` and the three QML handlers over a stand-in Repeater that rebuilds rows on each cart change, in both focus-loss orders and with no focus loss, plus 800 random sessions. `orderFlow` F-14..F-16 and three QML twins cover the new helpers. 29 of 29 hand mutants killed (two survived the first run; both tests were hardened).
+**Still unproven:** real Qt signal order, what Qt emits while a focused field is destroyed (the re-entrant commit is harmless by construction: it reads the already committed price and is `unchanged`), TalkBack.
+
+**Open questions, taken at the recommended default on the owner's instruction (2026-11-25):** Q-NO3b-1 price 0 stays allowed. Q-NO3b-2 a 2-decimal limit: yes, later, as its own slice across Add Product, Restock and New Order. Q-NO3b-3 `1,200` stays refused. Q-NO3-1 `_tryAdjustOrder` is designed next. Commit address: `lkdwtaher@gmail.com` (current project instructions).

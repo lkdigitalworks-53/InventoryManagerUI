@@ -92,4 +92,24 @@ TestCase {
         compare(OF.priceText("weird"), "")
         compare(OF.priceText(undefined), "")
     }
+    function test_priceBlockedText() {
+        compare(OF.priceBlockedText("Tomato", "₹100"), "Tomato: the new price was not accepted, so it is still ₹100. Tap its price field to keep or change it")
+        compare(OF.priceBlockedText("", "₹1").indexOf("An item: "), 0)
+    }
+    function test_withPriceError_sets_and_removes_without_touching_the_input() {
+        var before = { A: "x" }
+        var added = OF.withPriceError(before, "B", "y")
+        compare(added.B, "y")
+        compare(added.A, "x")
+        compare(before.B, undefined)
+        var removed = OF.withPriceError(added, "A", "")
+        compare(removed.A, undefined)
+        compare(removed.B, "y")
+    }
+    function test_prunePriceErrors_keeps_only_cart_ids() {
+        var out = OF.prunePriceErrors({ A: "x", B: "y" }, [{ productId: "B" }, null])
+        compare(Object.keys(out).length, 1)
+        compare(out.B, "y")
+        compare(Object.keys(OF.prunePriceErrors({ A: "x" }, undefined)).length, 0)
+    }
 }

@@ -127,3 +127,29 @@ test("F-13 priceEdit never throws and always answers one of three kinds, for any
             if (r.kind === "refused") assert.ok(["blank", "invalid", "large"].includes(r.reason));
         }
 });
+
+test("F-14 priceBlockedText names the line (or 'An item') and the price the cart still holds", () => {
+    assert.equal(OF.priceBlockedText("Tomato", "₹100"), "Tomato: the new price was not accepted, so it is still ₹100. Tap its price field to keep or change it");
+    for (const n of ["", undefined, null]) assert.ok(OF.priceBlockedText(n, "₹1").startsWith("An item: "), String(n));
+});
+
+test("F-15 withPriceError returns a new object, sets or removes one id, and leaves the others and the input alone", () => {
+    const before = { A: "x" };
+    const added = OF.withPriceError(before, "B", "y");
+    assert.deepEqual(plain(added), { A: "x", B: "y" });
+    assert.deepEqual(before, { A: "x" });
+    assert.notEqual(added, before);
+    assert.deepEqual(plain(OF.withPriceError(added, "A", "")), { B: "y" });
+    assert.deepEqual(plain(OF.withPriceError({}, "A", "")), {});
+    assert.deepEqual(plain(OF.withPriceError(undefined, "A", "z")), { A: "z" });
+});
+
+test("F-16 prunePriceErrors keeps only the ids still in the cart; odd input gives an empty object", () => {
+    const errors = { A: "x", B: "y" };
+    assert.deepEqual(plain(OF.prunePriceErrors(errors, [{ productId: "B" }, { productId: "C" }])), { B: "y" });
+    assert.deepEqual(plain(OF.prunePriceErrors(errors, [])), {});
+    for (const lines of [undefined, null, "A", {}, [null, undefined, {}]]) assert.deepEqual(plain(OF.prunePriceErrors(errors, lines)), {}, String(lines));
+    assert.deepEqual(plain(OF.prunePriceErrors(undefined, [{ productId: "A" }])), {});
+    assert.deepEqual(Object.keys(OF.prunePriceErrors({}, [{ productId: "toString" }])), [], "an inherited name is not a refusal");
+});
+

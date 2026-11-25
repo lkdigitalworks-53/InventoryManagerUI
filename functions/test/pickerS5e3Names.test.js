@@ -181,8 +181,8 @@ test("S5E3-21 the four fields keep their commit wiring (focus out, accept) and t
     assert.match(nd, /onEditingFinished: _commitPrice\(\)/);
     assert.match(nd, /onAccepted: _commitPrice\(\)/);
     assert.match(nd, /onEditingFinished: _commitDiscount\(\)/);
-    // NO3b: gaining focus also clears the row's price message; the plain/formatted swap itself is unchanged.
-    assert.match(nd, /if \(activeFocus\) \{ cartRow\.priceError = ""; text = String\(modelData\.price\); selectAll\(\) \}/);
+    // NO3b: gaining focus also clears the line's price message; the plain/formatted swap itself is unchanged.
+    assert.match(nd, /if \(activeFocus\) \{ dlg\._setPriceError\(modelData\.productId, ""\); text = String\(modelData\.price\); selectAll\(\) \}/);
     const od = stripComments(read("qml/pages/OrderDetailDialog.qml"));
     assert.match(od, /onEditingFinished: _commitDiscount\(\)/);
     assert.match(od, /products\.setProperty\(row\.rowIdx, "price", v\)/);

@@ -85,22 +85,24 @@ test("D-6 DataModel.onAddOrder: deferred only for queued and unconfirmed; auto-a
 // orderPriceCap.test.js; these pin the QML wiring around it (what the person sees and hears), which cannot load headless.
 // ---------------------------------------------------------------------------------------------------------------------
 
-test("D-7 _setLinePrice reads the text through OrderFlow.priceEdit only (no regex strip, no parseFloat) and returns null / '' / the text", () => {
+test("D-7 _setLinePrice reads the text through OrderFlow.priceEdit only (no regex strip, no parseFloat) and records the refusal by product", () => {
     const body = strip(block(DIALOG, "function _setLinePrice("));
     assert.ok(/OrderFlow\.priceEdit\(value, cur\.price, InventoryStore\.formatCurrency\(cur\.price\)\)/.test(body));
-    assert.ok(/OrderFlow\.priceText\(r\.reason\)/.test(body));
+    assert.ok(/_setPriceError\(cur\.productId, r\.kind === "refused" \? OrderFlow\.priceText\(r\.reason\) : ""\)/.test(body));
     assert.ok(body.indexOf("parseFloat") < 0 && body.indexOf(".replace(") < 0, "the lenient reading must not come back");
-    assert.ok(/return null/.test(body) && /return ""/.test(body));
     assert.ok(/import "\.\.\/helper\/OrderFlow\.js" as OrderFlow/.test(DIALOG));
 });
 
-test("D-8 the price field: a refusal sets cartRow.priceError, null leaves it alone (Enter fires two handlers), focus gain clears it", () => {
-    const commit = strip(block(DIALOG, "function _commitPrice()"));
-    assert.ok(/var msg = dlg\._setLinePrice\(index, text\)\s+if \(msg !== null\) cartRow\.priceError = msg/.test(commit));
-    const focus = strip(block(DIALOG, "onActiveFocusChanged:"));
-    assert.ok(focus.indexOf('if (activeFocus) { cartRow.priceError = "";') >= 0);
-    assert.ok(/property string priceError: ""/.test(DIALOG));
-    assert.equal((DIALOG.match(/_commitPrice\(\)/g) || []).length, 3, "declared once, called from onEditingFinished and onAccepted");
+test("D-8 the price field's wiring: both commit signals, the settle callers, the pruning, and the message binding", () => {
+    assert.ok(/onEditingFinished: _commitPrice\(\)/.test(DIALOG) && /onAccepted: _commitPrice\(\)/.test(DIALOG));
+    assert.ok(/onTextEdited: if \(activeFocus\) dlg\._setPriceError\(modelData\.productId, ""\)/.test(DIALOG));
+    assert.ok(/id: cartRepeater\s+model: dlg\.selectedProducts/.test(DIALOG), "_settlePriceEdit walks THIS repeater");
+    assert.ok(/readonly property string priceError: dlg\._priceErrors\[modelData\.productId\] \|\| ""/.test(DIALOG));
+    assert.ok(/onSelectedProductsChanged: _priceErrors = OrderFlow\.prunePriceErrors\(_priceErrors, selectedProducts\)/.test(DIALOG));
+    for (const f of ["function _setLineDiscount(", "function changeQty(", "function trySubmit()"]) {
+        const body = strip(block(DIALOG, f));
+        assert.ok(body.indexOf("_settlePriceEdit()") > 0 && body.indexOf("_settlePriceEdit()") < body.indexOf("selectedProducts"), f + " settles before it reads the cart");
+    }
 });
 
 test("D-9 the message is visible text in the danger colour (not colour alone), wraps, and the field announces it", () => {

@@ -85,8 +85,7 @@ function priceEdit(text, current, shown) {
     return m.state === "ok" ? { kind: "set", price: m.n } : { kind: "refused", reason: m.state }
 }
 
-// Person-facing text for a refused price. "" for a reason this file does not know (the caller then shows nothing and keeps the
-// old price, which is still safe).
+// Person-facing text for a refused price. "" for a reason this file does not know (priceEdit gives only the three below).
 function priceText(reason) {
     switch (reason) {
     case "blank": return "Enter the price of one unit, 0 or more"
@@ -94,4 +93,29 @@ function priceText(reason) {
     case "large": return "Price is too large. Enter the price of ONE unit, up to " + RF.MAX_UNIT_COST
     }
     return ""
+}
+
+// The Place order refusal for a line whose typed price was refused: the cart still holds `shownPrice`.
+function priceBlockedText(name, shownPrice) {
+    return (name ? name : "An item") + ": the new price was not accepted, so it is still " + shownPrice
+        + ". Tap its price field to keep or change it"
+}
+
+// The refusals by product id. -> a NEW object (so QML sees the change) with `message` for `id`, or without `id` when it is "".
+function withPriceError(errors, id, message) {
+    var out = Object.assign({}, errors)
+    if (message) out[id] = message
+    else delete out[id]
+    return out
+}
+
+// Only the refusals of lines that are still in the cart.
+function prunePriceErrors(errors, lines) {
+    var out = {}
+    var list = Array.isArray(lines) ? lines : []
+    for (var i = 0; i < list.length; ++i) {
+        var id = list[i] ? list[i].productId : undefined
+        if (errors && Object.prototype.hasOwnProperty.call(errors, id)) out[id] = errors[id]
+    }
+    return out
 }

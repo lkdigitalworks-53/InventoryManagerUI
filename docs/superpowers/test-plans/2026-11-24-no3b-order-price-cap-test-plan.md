@@ -13,6 +13,18 @@ Honesty note: the Node tests were RUN in the sandbox against the REAL function b
 ## 2. Functional tests (real dialog function body + real planner)
 `functions/test/orderPriceCap.test.js` (new), 7 cases, RUN: P-1 a plain price is committed (new array, other line and fields untouched, old array not mutated); P-2 ten refused entries return their text and change nothing; P-3 the plain price, the formatted display, padding and `100.00` are `null`; P-4 Enter's second call (text now the formatted old price) is `null`, never a message; P-5 a bad index (NaN, undefined, null, `"0"`, 0.5, Infinity, an object, an empty cart) is `null` (found a real throw, fixed, D-NO3b-8); P-6 the field and `OrderPlan.build` agree on the limit (1e9 planned, 1e9 + 0.01 refused by both) and on 0; P-7 monkey: 20 000 random texts from a hostile alphabet never throw, never change a refused or unchanged entry, and every committed price is a plain decimal in range that the REAL order normaliser and planner accept.
 
+### Review sweep 2026-11-25 (design section 8), all RUN unless marked CI
+| File | Cases | Covers |
+|---|---|---|
+| `orderPriceCap.test.js` P-8..P-16, P-14b | 10 new | uncommitted valid price is ordered (3 focus behaviours); refused entry then Place order sends nothing (3 x 6); acknowledge then send; Enter keeps a plain focused field; focus loss formats; refusal survives rebuilds, leaves with its line; discount pill and stepper commit first; busy sheet does nothing; 800 random sessions (never a price other than the cart's, never while a refusal stands) |
+| `orderFlow.test.js` F-14..F-16 | 3 new | `priceBlockedText`, `withPriceError`, `prunePriceErrors` (odd input, inherited names) |
+| `newOrderDialog.guard.test.js` D-7, D-8 | rewritten | wiring: handlers, repeater id, binding, pruning, the three settle callers run before the cart is read |
+| `tests/tst_OrderFlow.qml` | +3 (CI) | helper twins |
+| `newOrderPickerWiring` NOW-18, `pickerS5e3Names` S5E3-21 | updated | stub for the new call; the new focus line |
+
+P-1..P-7 now read the refusal from the dialog's record instead of a return value (`null` in their names means "touched nothing").
+Current counts: functions **2420/2420** RUN (after the merge of #218), scripts **1199/1199** RUN, 29 of 29 sweep mutants killed. The counts in section 5 are the first version's.
+
 ## 3. Rules and regression
 Rules and server: none changed. Regression: `pickerS5e3Names` S5E3-21 pinned the exact focus line of the price field; it is updated (a comment says why) and still pins the plain/formatted swap. The NO2/NO3a suites (`createOrderPlan`, `orderWire`, `orderFlow` F-1..F-7, `newOrderDialog.guard` D-1..D-6) still pass unchanged (the planner keeps its own 1e9 guard as the last line of defence); `AddProductFlow` callers are untouched (`moneyState` is an alias of the private reader).
 
@@ -39,14 +51,21 @@ None added: the dialog has no headless e2e and the price rule is client-side onl
 ### Edge cases
 10. Refuse an entry (check 5), then tap the field again. Expect: the message disappears when the field gets focus; type a good price: no message.
 11. Refuse an entry with Enter. Expect: the message STAYS (the second handler must not wipe it). On a touch keyboard use its Done key (same test).
-12. Refuse an entry, then tap the + stepper of the same line. Expect: the row is rebuilt and the message is gone; the price is the real one (nothing was lost).
+12. Refuse an entry (check 5), then tap the + stepper of the same line. Expect: the quantity rises, the price is the real one and the message STAYS under that line. Remove the line with -, add the product again: no message.
 13. TalkBack on: focus the Price field after a refusal. Expect: "Price of <name>" and the reason read as its description; the message line is readable as text. Without a screen reader the red border AND the text carry the message (colour is not the only cue).
 14. Large system font (Settings > Display > Font size > Largest): trigger the message on a 3-line cart. Expect: the text wraps, the row grows, nothing overlaps or truncates; the Place order button stays reachable.
 15. A line with two decimals (`19.99`), re-tap and leave: unchanged, no message; the display is `₹20` (one-decimal display, KNOWN-ISSUES 144).
 ### Multiple scenarios
 16. Three lines in the cart: refuse a price on line 2 only. Expect: the message under line 2 only, lines 1 and 3 untouched; fix line 2: its message goes.
-17. Refuse a price, then Place order. Expect: the order is placed with the REAL (old) price of that line, never the refused text (the cart never held it).
+17. Refuse a price, then Place order. Expect: NOT placed; the bottom line names the item and the price it still has. Tap that price field (the red message goes), tap Place order: placed at the old price.
 18. Dark theme and light theme: the red text and border are readable in both.
+### Added by the review sweep
+21. Type `250` in a price field and, with the keyboard still open, tap Place order. Expect: the order has 250 on that line.
+22. On a 500 line type `1,200` and tap Place order directly. Expect: NOT placed, message under the row and at the bottom, price still ₹500.
+23. Type `250` and, without leaving the field, tap the % pill of the same line, then repeat with its + button. Expect: price 250 kept both times. (On a device a button may need a second tap when the first one commits a price: note it if so.)
+24. Refuse an entry with Enter. Expect: the field shows the plain old number, selected; typing replaces it and the message goes.
+25. Type a price on line 1, then tap line 2's price field directly. Expect: line 1 updates; line 2 may need a second tap (rows are rebuilt). No crash, no wrong price.
+
 ### Monkey (2 minutes)
 19. Type junk (letters, symbols, emoji, a 400-character paste, a pasted `₹1,20,000`) into every price field, switch between fields, rotate, press Enter and back repeatedly, tap + and - between edits. Expect: no crash, no freeze, no price outside 0 to 1000000000, the totals always equal the visible lines.
 ### Affected areas (smoke)
