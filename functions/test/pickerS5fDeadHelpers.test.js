@@ -27,9 +27,9 @@ test("S5F-02 nothing names a deleted helper: no QML file (comments aside), no qm
     for (const [f, t] of hay) for (const n of GONE) assert.equal(new RegExp("\\b" + n + "\\b").test(t), false, path.basename(f) + " names " + n);
 });
 
-test("S5F-03 RATCHET: the only QML files nothing live uses are the two Auth buttons (dead, KNOWN-ISSUES 146) and AnalysisService (dormant on purpose, README: not yet wired into SalesPage)", () => {
-    assert.deepEqual(deadQmlFiles(ROOT), ["qml/components/AuthPrimaryButton.qml", "qml/components/AuthSecondaryButton.qml", "qml/model/AnalysisService.qml"],
-        "a NEW unused QML file (delete it, or use it), or one of these three deleted/used: update this list on purpose");
+test("S5F-03 RATCHET: the only QML file nothing live uses is AnalysisService (dormant on purpose, README: not yet wired into SalesPage); the two dead Auth buttons went in S5g (KNOWN-ISSUES 146)", () => {
+    assert.deepEqual(deadQmlFiles(ROOT), ["qml/model/AnalysisService.qml"],
+        "a NEW unused QML file (delete it, or use it), or AnalysisService deleted/used: update this list on purpose");
 });
 
 test("S5F-04 the live helpers the dead ones were next to are still there (Constants, FormValidator, SafeArea, InlineDatePicker)", () => {

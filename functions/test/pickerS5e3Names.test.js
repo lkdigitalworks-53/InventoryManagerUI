@@ -325,11 +325,11 @@ test("S5E3-28 words of the wrapper labels: qsTr literals only, plain, short, no 
 test("S5E3-29 RATCHET: the components whose ROOT is a raw button are pinned with what speaks for them (KNOWN-ISSUES 123 for the two unverified)", () => {
     const roots = qmlFiles(path.join(ROOT, "qml")).filter((f) => scanButtons(fs.readFileSync(f, "utf8")).some((b) => b.root)).map(rel);
     assert.deepEqual(roots, [
-        "qml/components/ActionTile.qml", "qml/components/AuthPrimaryButton.qml", "qml/components/AuthSecondaryButton.qml", "qml/components/DangerButton.qml",
+        "qml/components/ActionTile.qml", "qml/components/DangerButton.qml",
         "qml/components/FloatingActionButton.qml", "qml/components/GhostButton.qml", "qml/components/IconActionButton.qml", "qml/components/ListCard.qml",
         "qml/components/PrimaryButton.qml",
     ], "a new component whose root is a button: decide what speaks for it (label, text, or a name at each use) and add it here");
-    for (const f of ["AuthPrimaryButton", "AuthSecondaryButton", "DangerButton", "GhostButton", "PrimaryButton"])
+    for (const f of ["DangerButton", "GhostButton", "PrimaryButton"])
         assert.match(stripComments(read("qml/components/" + f + ".qml")), /text: root\.text/, f + " no longer draws its own `text`, which is what Qt speaks");
     for (const f of ["FloatingActionButton", "IconActionButton"]) assert.match(read("qml/components/" + f + ".qml"), /Accessible\.name: /, f + " lost its spoken name");
     // ActionTile (caption) and ListCard (title, subtitle) draw their words only in a child Text and set no name: UNVERIFIED on a device, KI 123.

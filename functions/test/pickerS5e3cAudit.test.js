@@ -108,8 +108,8 @@ test("S5E3C-11 every pixel size that is neither bare nor sp()/dp() is AvatarBadg
 
 test("S5E3C-12 ratchet: colour literals by file (Constants.qml is where they belong; the rest are KI 143)", () => {
     assert.deepEqual(T.scanHex(ROOT), {
-        "qml/components/AlertDialog.qml": 2, "qml/components/AuthPasswordField.qml": 16, "qml/components/AuthPrimaryButton.qml": 1,
-        "qml/components/AuthSecondaryButton.qml": 6, "qml/components/AuthTextField.qml": 8, "qml/components/PhotoSourceSheet.qml": 15,
+        "qml/components/AlertDialog.qml": 2, "qml/components/AuthPasswordField.qml": 16, "qml/components/AuthTextField.qml": 8,
+        "qml/components/PhotoSourceSheet.qml": 15,
         "qml/components/ProductPhotoGallery.qml": 4, "qml/components/StockProgressBar.qml": 2,
         "qml/helper/Constants.qml": 44, "qml/model/StaffStore.qml": 2,
     });
