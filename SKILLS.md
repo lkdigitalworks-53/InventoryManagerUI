@@ -5463,7 +5463,7 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 5. Test the REAL body of the dialog function (`extractFunction("pages/NewOrderDialog.qml", "_setLinePrice")` in a vm with the real `formatCurrency`) and pin the QML wiring around it from source; a hostile-alphabet monkey (20 000 texts) asserts every committed value is plain, in range and plannable through the real planner.
 6. Probe a function's index guard with `NaN`, `undefined`, `"0"`, `0.5`, `Infinity`: `idx < 0 || idx >= n` lets `NaN` through and the body then threw. `!(idx >= 0 && idx < n) || Math.floor(idx) !== idx` does not.
 7. Before editing a line in a QML file, grep `functions/test` for a pin on its exact text (`S5E3-21` pinned the focus line). Update the pin with a comment saying why; do not loosen it blindly.
-8. The same defect found in a second dialog (Edit Order, KNOWN-ISSUES 143) is logged with a fix shape and a reason it is not folded in; it is not silently fixed in a slice whose design and tests are about another path.
+8. The same defect found in a second dialog (Edit Order, KNOWN-ISSUES 151) is logged with a fix shape and a reason it is not folded in; it is not silently fixed in a slice whose design and tests are about another path.
 9. A fresh sandbox has no `functions/node_modules`: a full-suite run with a dozen "Cannot find module" failures is the environment. Run `npm ci` in `functions/` first, then count.
 10. A mutant runner that times out leaves the LAST mutant applied. Run it in the background (`nohup ... &`), poll its log, and `git diff` the source before committing.
 

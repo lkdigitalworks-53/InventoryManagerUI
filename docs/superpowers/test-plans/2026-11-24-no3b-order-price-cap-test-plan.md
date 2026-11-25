@@ -54,7 +54,7 @@ None added: the dialog has no headless e2e and the price rule is client-side onl
 12. Refuse an entry (check 5), then tap the + stepper of the same line. Expect: the quantity rises, the price is the real one and the message STAYS under that line. Remove the line with -, add the product again: no message.
 13. TalkBack on: focus the Price field after a refusal. Expect: "Price of <name>" and the reason read as its description; the message line is readable as text. Without a screen reader the red border AND the text carry the message (colour is not the only cue).
 14. Large system font (Settings > Display > Font size > Largest): trigger the message on a 3-line cart. Expect: the text wraps, the row grows, nothing overlaps or truncates; the Place order button stays reachable.
-15. A line with two decimals (`19.99`), re-tap and leave: unchanged, no message; the display is `₹20` (one-decimal display, KNOWN-ISSUES 144).
+15. A line with two decimals (`19.99`), re-tap and leave: unchanged, no message; the display is `₹20` (one-decimal display, KNOWN-ISSUES 152).
 ### Multiple scenarios
 16. Three lines in the cart: refuse a price on line 2 only. Expect: the message under line 2 only, lines 1 and 3 untouched; fix line 2: its message goes.
 17. Refuse a price, then Place order. Expect: NOT placed; the bottom line names the item and the price it still has. Tap that price field (the red message goes), tap Place order: placed at the old price.
@@ -69,6 +69,6 @@ None added: the dialog has no headless e2e and the price rule is client-side onl
 ### Monkey (2 minutes)
 19. Type junk (letters, symbols, emoji, a 400-character paste, a pasted `₹1,20,000`) into every price field, switch between fields, rotate, press Enter and back repeatedly, tap + and - between edits. Expect: no crash, no freeze, no price outside 0 to 1000000000, the totals always equal the visible lines.
 ### Affected areas (smoke)
-20. New order end to end (customer, channel, staff, Place order, auto-approve ON and OFF), the product picker (add, + / -, remove), the discount field (unchanged here, still lenient: KNOWN-ISSUES 146), Edit Order price and discount fields (unchanged, still lenient and uncapped: KNOWN-ISSUES 143), Add Product and Restock price fields (unchanged).
+20. New order end to end (customer, channel, staff, Place order, auto-approve ON and OFF), the product picker (add, + / -, remove), the discount field (unchanged here, still lenient: KNOWN-ISSUES 154), Edit Order price and discount fields (unchanged, still lenient and uncapped: KNOWN-ISSUES 151), Add Product and Restock price fields (unchanged).
 ### Not changed here
-The discount field; the Edit Order sheet's price and discount fields (KNOWN-ISSUES 143, recommended next slice NO3c); a decimal-places limit (Q-NO3b-2); the planner, the server, the rules.
+The discount field; the Edit Order sheet's price and discount fields (KNOWN-ISSUES 151, recommended next slice NO3c); a decimal-places limit (Q-NO3b-2); the planner, the server, the rules.
