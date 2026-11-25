@@ -1,7 +1,8 @@
 "use strict";
 // Picker v2, slice S5f: five dead helpers deleted (KNOWN-ISSUES 121, 128, 143). S5F-01..NN.
 // Plan: docs/superpowers/plans/2026-11-24-product-picker-v2-s5f-dead-helper-cleanup.md
-// Source reads only (qmltestrunner cannot load Felgo pages). They pin that the files stay deleted and that no NEW dead QML file appears.
+// Source reads only (qmltestrunner cannot load Felgo pages). They pin that the files stay deleted and that no NEW dead QML file appears
+// (dead = not reachable from a file the app's C++ / CMake names: a chain or a cycle of dead files is dead).
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -26,7 +27,7 @@ test("S5F-02 nothing names a deleted helper: no QML file (comments aside), no qm
     for (const [f, t] of hay) for (const n of GONE) assert.equal(new RegExp("\\b" + n + "\\b").test(t), false, path.basename(f) + " names " + n);
 });
 
-test("S5F-03 RATCHET: the only QML files nothing uses are the two Auth buttons (dead, KNOWN-ISSUES 146) and AnalysisService (dormant on purpose, README: not yet wired into SalesPage)", () => {
+test("S5F-03 RATCHET: the only QML files nothing live uses are the two Auth buttons (dead, KNOWN-ISSUES 146) and AnalysisService (dormant on purpose, README: not yet wired into SalesPage)", () => {
     assert.deepEqual(deadQmlFiles(ROOT), ["qml/components/AuthPrimaryButton.qml", "qml/components/AuthSecondaryButton.qml", "qml/model/AnalysisService.qml"],
         "a NEW unused QML file (delete it, or use it), or one of these three deleted/used: update this list on purpose");
 });
@@ -59,37 +60,52 @@ test("S5F-05 scanner: a real user keeps a file alive; a self-mention, a comment,
 
 test("S5F-06 scanner: a string source, a C++ mention and a CMake mention count as users; the 3rdparty C++ tree does not", () => {
     const r = tree({ "A.qml": "Item { }", "B.qml": "Item { }", "C.qml": "Item { }", "D.qml": "Item { }", "Host.qml": "Loader { source: \"A.qml\" }" },
-        { "main.cpp": "x B", "CMakeLists.txt": "set(f C)", "src/3rdparty/lib.cpp": "D", "src/real.cpp": "// none" });
-    assert.deepEqual(deadQmlFiles(r), ["qml/D.qml", "qml/Host.qml"]);
+        { "main.cpp": "x B Host", "CMakeLists.txt": "set(f C)", "src/3rdparty/lib.cpp": "D", "src/real.cpp": "// none" });
+    assert.deepEqual(deadQmlFiles(r), ["qml/D.qml"]);
 });
 
 test("S5F-07 scanner: empty tree, one file, nested dirs, a file used only from a deeper directory", () => {
     assert.deepEqual(deadQmlFiles(tree({})), []);
     assert.deepEqual(deadQmlFiles(tree({ "Solo.qml": "Item { }" })), ["qml/Solo.qml"]);
-    assert.deepEqual(deadQmlFiles(tree({ "a/b/Deep.qml": "Item { }", "c/User.qml": "Deep { }" })), ["qml/c/User.qml"]);
+    const nested = { "a/b/Deep.qml": "Item { }", "c/User.qml": "Deep { }" };
+    assert.deepEqual(deadQmlFiles(tree(nested, { "main.cpp": "User" })), []);
+    assert.deepEqual(deadQmlFiles(tree(nested)), ["qml/a/b/Deep.qml", "qml/c/User.qml"], "no root: the user is dead, so what only it uses is dead too");
 });
 
-// ---- monkey: 300 seeded random trees, expected dead set known by construction --------------------------------------------------
-test("S5F-08 monkey: 300 seeded random trees with decoys agree with the set known by construction", () => {
+test("S5F-13 scanner: a file used only by a dead file is dead (chain), a dead cycle is dead, a live second user rescues, a comment is no user", () => {
+    const files = {
+        "Main.qml": "App { A { } /* Hidden { } */ }", "A.qml": "B { Shared { } }", "B.qml": "Item { }",    // live chain
+        "X.qml": "Y { }", "Y.qml": "Z { }", "Z.qml": "Item { }",                                      // dead chain: nothing names X
+        "P.qml": "Q { }", "Q.qml": "P { }",                                                            // dead cycle
+        "Shared.qml": "Item { }", "Dead.qml": "Shared { }", "Hidden.qml": "Item { }",                  // Shared: named by dead Dead AND live A
+    };
+    assert.deepEqual(deadQmlFiles(tree(files, { "main.cpp": "Main" })), ["qml/Dead.qml", "qml/Hidden.qml", "qml/P.qml", "qml/Q.qml", "qml/X.qml", "qml/Y.qml", "qml/Z.qml"]);
+});
+
+// ---- monkey: 300 seeded random trees (chains, cycles, decoys); the expected dead set comes from a plain graph walk over the edges the generator drew
+test("S5F-08 monkey: 300 seeded random trees with decoys agree with a graph walk from the entry file", () => {
     let seed = 20261124;
     const rnd = (n) => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed % n; };
     for (let round = 0; round < 300; round++) {
         const n = 2 + rnd(8), names = Array.from({ length: n }, (_, i) => "Comp" + String.fromCharCode(65 + i) + (rnd(2) ? "X" : ""));
-        const used = new Set(), files = {};
+        const edges = names.map(() => []), body = names.map(() => "Item { ");
         names.forEach((name, i) => {
-            let body = "Item { ";
-            for (let k = 0; k < 1 + rnd(4); k++) {
+            const count = 1 + rnd(4);
+            for (let k = 0; k < count; k++) {
                 const j = rnd(n), other = names[j], kind = rnd(5);
-                if (kind === 0 && j !== i) { body += other + " { } "; used.add(j); }
-                else if (kind === 1 && j !== i) { body += "Loader { source: \"" + other + ".qml\" } "; used.add(j); }
-                else if (kind === 2) body += "// " + other + " { }\n";                  // comment decoy
-                else if (kind === 3) body += "My" + other + " { } ";                    // longer-name decoy (only a decoy when `other` is not itself a prefix match; names are unique so it never is)
-                else body += name + " { } ";                                            // self decoy
+                if (kind === 0 && j !== i) { body[i] += other + " { } "; edges[i].push(j); }
+                else if (kind === 1 && j !== i) { body[i] += "Loader { source: \"" + other + ".qml\" } "; edges[i].push(j); }
+                else if (kind === 2) body[i] += "// " + other + " { }\n";                    // comment decoy
+                else if (kind === 3) body[i] += "My" + other + " { } ";                      // longer-name decoy (no word boundary before the name)
+                else body[i] += name + " { } ";                                              // self decoy
             }
-            files[name + ".qml"] = body + "}";
         });
-        const expected = names.filter((_, i) => !used.has(i)).map((x) => "qml/" + x + ".qml").sort();
-        assert.deepEqual(deadQmlFiles(tree(files)), expected, "round " + round + ": " + JSON.stringify(files));
+        const entry = rnd(n), seen = new Set([entry]), walk = [entry];
+        while (walk.length) for (const j of edges[walk.pop()]) if (!seen.has(j)) { seen.add(j); walk.push(j); }
+        const files = { "Main.qml": "App { " + names[entry] + " { } }" };
+        names.forEach((name, i) => { files[name + ".qml"] = body[i] + "}"; });
+        const expected = names.filter((_, i) => !seen.has(i)).map((x) => "qml/" + x + ".qml").sort();
+        assert.deepEqual(deadQmlFiles(tree(files, { "main.cpp": "load(\"qml/Main.qml\")" })), expected, "round " + round + ": " + JSON.stringify(files));
     }
 });
 
