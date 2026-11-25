@@ -5451,3 +5451,17 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 
 **The check:** `node --test functions/test/pickerS5fDeadHelpers.test.js`: green (16 cases). `node .github/scripts/skills-index.js --check`: current. On a device: checks 203 to 212.
 
+## Skill 191: A deletion touches every ratchet that names the file, and a mutant loop must clean untracked files and never edit its own test
+
+**Why:** S5g deleted two unused QML buttons. Three tests named them (the roots-of-raw-buttons list and its `text` pin, the set of unreachable files, the colour-literal table); the reachability scan of Skill 190 reads `qml/`, not `functions/test/`, so it cannot find a name pinned in a test. Then the mutant loop went wrong twice, in ways that looked like success.
+
+**The rules:**
+1. Before deleting a file, grep its NAME across the whole tree including `functions/test/` and `docs/`. A name in a test is a ratchet entry or a fixture; each one changes in the same commit as the deletion (Skill 190 rule 2). A look-alike decoy string in a scanner test (`AuthPrimaryButton { }` as a type that must NOT count) is input, not a reference: leave it.
+2. After the deletion, run the three families that count things: the list of roots, the table of literals, the set of unreachable files. If the change leaves them green on the first run, check that they would have failed (mutant 1: put the file back).
+3. A mutant loop resets with `git reset --hard HEAD` AND `git clean -fdq -- qml tests CMakeLists.txt`. `reset --hard` does NOT remove files the mutant ADDED: the first loop left the restored file behind, and every later mutant was "killed" by the leftover, so the whole run proved nothing. Print a baseline first: it must be empty (no failures) or the loop is not trustworthy.
+4. A mutant changes the code under test, never the test. A first mutant 11 edited the test to drop the check it wanted to prove and then "survived". Redo it by changing only the code.
+5. Read each killer list, not just KILLED. A mutant that is killed by five tests, four of them unrelated, is killed by pollution (rule 3); a clean kill names the one or two tests that own that behaviour.
+6. A whole-word matcher gets look-alike decoys in its own test (a comment, a longer name, a shorter name, a prefixed name, an empty tree) and a seeded monkey with an expected count known by construction (`S5G-03`, `S5G-06`).
+
+**The check:** `node --test functions/test/pickerS5gAuthButtons.test.js`: green (6 cases). `node .github/scripts/skills-index.js --check`: current.
+
