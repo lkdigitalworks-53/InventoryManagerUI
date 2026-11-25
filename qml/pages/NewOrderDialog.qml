@@ -6,6 +6,7 @@ import "../components"
 import "../helper"
 import "../model"
 import "../helper/NewOrderPicker.js" as Picker
+import "../helper/OrderFlow.js" as OrderFlow
 
 // Mobile-first New Order sheet — bottom sheet with customer fields and a
 // product picker. Public contract preserved: signal `orderCreated(order)`.
@@ -31,6 +32,12 @@ BottomSheet {
     // duplicate order — same category the doc calls out.
 
     property var selectedProducts: []
+
+    // productId -> why the last price typed for that line was refused (NO3b). Kept here, not in the row: every cart change
+    // rebuilds the rows, so a message held by a row vanished unread (a quantity tap), and trySubmit must see it. A line that
+    // leaves the cart (or a new sheet) forgets its message.
+    property var _priceErrors: ({})
+    onSelectedProductsChanged: _priceErrors = OrderFlow.prunePriceErrors(_priceErrors, selectedProducts)
 
     // Mirror of StaffStore filtered to active members. Index 0 is the
     // empty "(no staff)" row so the user can leave it unattributed.
@@ -253,9 +260,17 @@ BottomSheet {
             spacing: dp(Constants.space2)
 
             Repeater {
+                id: cartRepeater
                 model: dlg.selectedProducts
                 delegate: Rectangle {
                     id: cartRow
+                    readonly property string priceError: dlg._priceErrors[modelData.productId] || ""   // "" = none
+                    // Commits this row's price if the person is still in the field. -> true when it was.
+                    function settlePrice() {
+                        if (!linePriceField.activeFocus) return false
+                        linePriceField._commitPrice()
+                        return true
+                    }
                     Layout.fillWidth: true
                     Layout.preferredHeight: cartCol.implicitHeight + dp(Constants.space3 * 2)
                     radius: dp(Constants.radius)
@@ -329,6 +344,7 @@ BottomSheet {
                             QQC.TextField {
                                 id: linePriceField
                                 Accessible.name: qsTr("Price of %1").arg(modelData.name || qsTr("item"))
+                                Accessible.description: cartRow.priceError
                                 Layout.minimumHeight: dp(48)
                                 Layout.preferredWidth: dp(72)
                                 text: InventoryStore.formatCurrency(modelData.price)
@@ -345,17 +361,23 @@ BottomSheet {
                                 background: Rectangle {
                                     radius: dp(8)
                                     color: linePriceField.enabled ? Constants.cardBg : Constants.subtleBg
-                                    border.color: linePriceField.activeFocus ? Constants.primaryBlue : Constants.borderColor
-                                    border.width: linePriceField.activeFocus ? 2 : 1
+                                    border.color: cartRow.priceError.length > 0 ? Constants.danger : (linePriceField.activeFocus ? Constants.primaryBlue : Constants.borderColor)
+                                    border.width: (linePriceField.activeFocus || cartRow.priceError.length > 0) ? 2 : 1
                                 }
+                                // Tapping the field acknowledges a refusal: the person now sees the real price in it.
                                 onActiveFocusChanged: {
-                                    if (activeFocus) { text = String(modelData.price); selectAll() }
-                                    else { text = InventoryStore.formatCurrency(modelData.price) }
+                                    if (activeFocus) { dlg._setPriceError(modelData.productId, ""); text = String(modelData.price); selectAll() }
+                                    // Format only the untouched plain number: if this runs before editingFinished, typed text must survive
+                                    else if (text === String(modelData.price)) { text = InventoryStore.formatCurrency(modelData.price) }
                                 }
+                                onTextEdited: if (activeFocus) dlg._setPriceError(modelData.productId, "")
                                 function _commitPrice() {
                                     dlg._setLinePrice(index, text)
                                     var cur = dlg.selectedProducts[index]
-                                    text = InventoryStore.formatCurrency(cur ? cur.price : modelData.price)
+                                    var price = cur ? cur.price : modelData.price
+                                    // Enter commits with the field still focused: it keeps the plain number, selected, ready to retype
+                                    text = activeFocus ? String(price) : InventoryStore.formatCurrency(price)
+                                    if (activeFocus) selectAll()
                                 }
                                 onEditingFinished: _commitPrice()
                                 onAccepted: _commitPrice()
@@ -405,6 +427,15 @@ BottomSheet {
                                 onEditingFinished: _commitDiscount()
                                 onAccepted: _commitDiscount()
                             }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: cartRow.priceError.length > 0
+                            text: cartRow.priceError
+                            color: Constants.danger
+                            font.pixelSize: sp(Constants.fsSmall)
+                            wrapMode: Text.Wrap
                         }
                     }
                 }
@@ -501,7 +532,21 @@ BottomSheet {
         return OrdersStore.computeOrderTotals(lines)
     }
 
+    // A typed price that is not committed yet. The ₹/% pill takes no focus, and a button is not promised to take it on every
+    // platform, so a row tap that rebuilds the rows, and trySubmit, ask first (NO3b).
+    function _settlePriceEdit() {
+        for (var i = 0; i < cartRepeater.count; ++i) {
+            var row = cartRepeater.itemAt(i)
+            if (row && row.settlePrice()) return   // one field has the focus, and a committed price rebuilds the rows
+        }
+    }
+
+    function _setPriceError(productId, message) {
+        _priceErrors = OrderFlow.withPriceError(_priceErrors, productId, message)
+    }
+
     function _setLineDiscount(idx, type, value) {
+        _settlePriceEdit()
         if (idx < 0 || idx >= selectedProducts.length) return
         var arr = selectedProducts.slice()
         arr[idx] = Object.assign({}, arr[idx], {
@@ -511,19 +556,23 @@ BottomSheet {
         selectedProducts = arr
     }
 
-    // Commit an edited per-line unit price. Mirrors _setLineDiscount: immutable
-    // array replace so _totalsCache recomputes.
-    // Rejects empty / NaN / negative by keeping the existing price.
+    // Commit an edited per-line unit price (NO3b). Immutable array replace so _totalsCache recomputes. One reading of the text
+    // (OrderFlow.priceEdit: a plain decimal up to the app's price limit). A refusal keeps the old price and records why.
+    // "unchanged" touches nothing: Enter fires accepted AND editingFinished, and the second call must not wipe the message.
     function _setLinePrice(idx, value) {
-        if (idx < 0 || idx >= selectedProducts.length) return
-        var v = parseFloat(String(value).replace(/[^0-9.]/g, ""))
-        if (isNaN(v) || v < 0) return
+        if (!(idx >= 0 && idx < selectedProducts.length) || Math.floor(idx) !== idx) return   // NaN, undefined, "0", 1.5: no such row
+        var cur = selectedProducts[idx]
+        var r = OrderFlow.priceEdit(value, cur.price, InventoryStore.formatCurrency(cur.price))
+        if (r.kind === "unchanged") return
+        _setPriceError(cur.productId, r.kind === "refused" ? OrderFlow.priceText(r.reason) : "")
+        if (r.kind !== "set" || r.price === cur.price) return
         var arr = selectedProducts.slice()
-        arr[idx] = Object.assign({}, arr[idx], { price: v })
+        arr[idx] = Object.assign({}, cur, { price: r.price })
         selectedProducts = arr
     }
 
     function changeQty(idx, delta) {
+        _settlePriceEdit()
         var arr = []
         for (var i = 0; i < selectedProducts.length; ++i) {
             var sp = selectedProducts[i]
@@ -547,6 +596,7 @@ BottomSheet {
         // a second tap arriving while the first request is still in flight
         // must be a hard no-op, not just skip re-validation.
         if (busy) return
+        _settlePriceEdit()
         var errs = []
         if (!customerField.text || customerField.text.length < 2) errs.push("Enter a valid customer name")
         if (selectedProducts.length === 0) errs.push("Add at least one product")
@@ -555,6 +605,9 @@ BottomSheet {
             var inv = InventoryStore.getById(sp.productId)
             if (inv && sp.qty > inv.stock)
                 errs.push(sp.name + ": only " + inv.stock + " in stock")
+            // A refused price left the old one in the cart: never book it unless the person has seen it (tap the field)
+            if (_priceErrors[sp.productId])
+                errs.push(OrderFlow.priceBlockedText(sp.name, InventoryStore.formatCurrency(sp.price)))
         }
         if (errs.length > 0) { errorLabel.text = errs.join(" · "); return }
         errorLabel.text = ""

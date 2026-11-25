@@ -1,6 +1,7 @@
 .pragma library
 .import "OperationKeys.js" as Keys
 .import "RestockFlow.js" as RF
+.import "AddProductFlow.js" as AP
 
 // Pure decisions around the create-order wiring (atomic-ops NO3a). Design:
 // docs/superpowers/specs/2026-11-23-no3a-create-order-wire-design.md. OrdersStore.addOrder stays thin and asks this file;
@@ -57,4 +58,64 @@ function doneText(status) {
     if (status === "queued") return QUEUED_TEXT
     if (status === "unconfirmed") return UNCONFIRMED_TEXT
     return ""
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// NO3b (design 2026-11-24-no3b-order-price-cap-design.md): the unit-price field of a cart line. _setLinePrice used to read the
+// text with replace(/[^0-9.]/g, "") + parseFloat, so "-5" became 5, "1e5" became 15, "12abc" became 12, "1.2.3" became 1.2, and
+// an over-limit or blank entry was dropped with no word (KNOWN-ISSUES 114). Now ONE reading (Add Product's plain decimal, with
+// the app's one limit RestockFlow.MAX_UNIT_COST) and a reason the person can read.
+// ---------------------------------------------------------------------------------------------------------------------
+
+// What the field text means for a line whose price is `current`:
+//   text      what the field holds when it is committed
+//   current   the line's stored price (a number)
+//   shown     the text the field displays when it is NOT being edited (InventoryStore.formatCurrency(current), e.g. "₹1,200")
+// -> { kind: "unchanged" }                 the text is what the field shows anyway (focus lost, nothing typed, or the formatted
+//                                          display read back): nothing to commit and nothing to say
+//    { kind: "set", price }                a plain decimal in 0..MAX_UNIT_COST
+//    { kind: "refused", reason }           reason "blank" | "invalid" | "large": keep the old price and show priceText(reason)
+// The formatted display is never parsed: "₹1,200" is not a price the person typed (the field swaps it in on focus loss, and
+// which of that swap and editingFinished runs first is Qt's business, not ours).
+function priceEdit(text, current, shown) {
+    var t = (typeof text === "string") ? text.trim() : ""
+    if (t !== "" && (t === String(current) || (typeof shown === "string" && t === shown.trim()))) return { kind: "unchanged" }
+    if (t === "") return { kind: "refused", reason: "blank" }
+    var m = AP.moneyState(t)
+    return m.state === "ok" ? { kind: "set", price: m.n } : { kind: "refused", reason: m.state }
+}
+
+// Person-facing text for a refused price. "" for a reason this file does not know (priceEdit gives only the three below).
+function priceText(reason) {
+    switch (reason) {
+    case "blank": return "Enter the price of one unit, 0 or more"
+    case "invalid": return "Price must be a plain number, like 120 or 99.5"
+    case "large": return "Price is too large. Enter the price of ONE unit, up to " + RF.MAX_UNIT_COST
+    }
+    return ""
+}
+
+// The Place order refusal for a line whose typed price was refused: the cart still holds `shownPrice`.
+function priceBlockedText(name, shownPrice) {
+    return (name ? name : "An item") + ": the new price was not accepted, so it is still " + shownPrice
+        + ". Tap its price field to keep or change it"
+}
+
+// The refusals by product id. -> a NEW object (so QML sees the change) with `message` for `id`, or without `id` when it is "".
+function withPriceError(errors, id, message) {
+    var out = Object.assign({}, errors)
+    if (message) out[id] = message
+    else delete out[id]
+    return out
+}
+
+// Only the refusals of lines that are still in the cart.
+function prunePriceErrors(errors, lines) {
+    var out = {}
+    var list = Array.isArray(lines) ? lines : []
+    for (var i = 0; i < list.length; ++i) {
+        var id = list[i] ? list[i].productId : undefined
+        if (errors && Object.prototype.hasOwnProperty.call(errors, id)) out[id] = errors[id]
+    }
+    return out
 }
