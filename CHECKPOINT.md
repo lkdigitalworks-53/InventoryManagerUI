@@ -37,7 +37,7 @@ Resume at the first unticked step. Re-measure counts before claiming any: `cd fu
 - [x] R6a. Commit `fe60214` scanner reachability (S5F-06/07 fixed, S5F-13 new, S5F-08 oracle rebuilt, 6 mutants killed).
 - [x] R6b. Commit `338d0e7` (C, revert alone) sheet Flickable + wrap + Layout handle; S5F-14..16; 14 mutants killed.
 - [x] R6c. Docs commit (this one): Skill 190 (+ rule 8, index regenerated, still 191 skills), AGENTS, README, KI 146/147 rewritten + 148/149 new, plan section 9 (D7, D8, Q5-Q7), test plan (cases 13-16, checks 209-212, counts). Measured: functions 2408/2408, scripts 1199/1199, skills-index current.
-- [ ] R7. CI on the new head: read the PR comment (verdicts AND counts).
+- [x] R7. CI on `1279f28` read (verdicts AND counts): 6069/6069 = QML 3408, Functions 2408, Rules 129, E2E 124; Deploy steps skipped. QML count did not move (no QML test loads Felgo pages, so commit C is covered by source scans only, not by running QML). This checkpoint-only commit goes on top (CI on it not read).
 - [ ] R8. Owner: Q1-Q7 (plan section 9), device checks 203-212 (207 first, then 209 and 210), merge.
 
 ## Next
