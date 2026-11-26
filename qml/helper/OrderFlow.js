@@ -119,3 +119,87 @@ function prunePriceErrors(errors, lines) {
     }
     return out
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// NO3c (design 2026-11-26-no3c-edit-order-money-fields-design.md): the discount fields of both order sheets had the old lenient
+// reading ("-5" stored 5, "1e2" stored 12), and a flat 500 switched to "%" was clamped by the totals to 100%: a free line with
+// no word (KNOWN-ISSUES 151, 154, 158). The error maps above (withPriceError, prunePriceErrors) are field-agnostic: New Order
+// keeps a second one for discounts.
+// ---------------------------------------------------------------------------------------------------------------------
+
+// True when `i` is a row of a list of `n` rows (a row can vanish while its field commits).
+function isRow(i, n) {
+    return typeof i === "number" && i >= 0 && i < n && Math.floor(i) === i
+}
+
+// True when a discount of `value` is whole on a line worth `gross` (price x quantity): the totals would not clamp it.
+// 0 always fits. The tolerance is for float noise (0.7 x 3 is 2.0999999999999996, and 2.1 off it is not "too much").
+function discountFits(value, type, gross) {
+    if (typeof value !== "number" || !(value >= 0)) return false
+    if (value === 0) return true
+    if (type === "percent") return value <= 100
+    return typeof gross === "number" && isFinite(gross) && value <= gross + 1e-6
+}
+
+function _discountFromText(t, type, gross) {
+    if (t === "") return { kind: "set", value: 0 }   // a blank discount is no discount
+    var m = AP.moneyState(t)
+    if (m.state === "invalid") return { kind: "refused", reason: "invalid" }
+    if (m.state === "ok" && discountFits(m.n, type, gross)) return { kind: "set", value: m.n }
+    return { kind: "refused", reason: type === "percent" ? "percent" : "amount" }
+}
+
+// What the discount field text means for a line whose discount is `current` (the field shows String(current || 0)):
+// -> { kind: "unchanged" } | { kind: "set", value } | { kind: "refused", reason: "invalid" | "percent" | "amount" }
+function discountEdit(text, current, type, gross) {
+    var t = (typeof text === "string") ? text.trim() : ""
+    if (t !== "" && t === String(current || 0)) return { kind: "unchanged" }
+    return _discountFromText(t, type, gross)
+}
+
+// Person-facing text for a refused discount; `shownGross` is the formatted line amount. "" for an unknown reason.
+function discountText(reason, shownGross) {
+    switch (reason) {
+    case "invalid": return "Discount must be a plain number, like 50 or 7.5"
+    case "percent": return "A percentage discount can be at most 100"
+    case "amount": return "The discount cannot be more than the line amount, " + shownGross
+    }
+    return ""
+}
+
+// The ₹ / % pill. `typed` is the text of this row's discount field when the person is still in it, else null. The number is read
+// under the NEW type; if it does not fit, the discount becomes 0 and the row says why. -> { value, message }.
+function discountSwitch(typed, current, type, gross, shownGross) {
+    var t = (typeof typed === "string") ? typed.trim() : String(current || 0)
+    var r = _discountFromText(t, type, gross)
+    if (r.kind === "set") return { value: r.value, message: "" }
+    return { value: 0, message: discountText(r.reason, shownGross) + ". It is now 0" }
+}
+
+function _sameLine(a, b) {
+    return !!b && String(a.productId || a.name) === String(b.productId || b.name) && a.price === b.price
+        && a.quantity === b.quantity && (a.discountType === "percent") === (b.discountType === "percent")
+        && (a.discountValue || 0) === (b.discountValue || 0)
+}
+
+// Why Save / Place order must not send this line yet (empty = fine). `line`: { productId, name, price, quantity, discountType,
+// discountValue }. `errors`: { price, discount }, the unread refusals of its fields. `money`: number -> formatted text.
+// `saved` (Edit Order): the lines as stored; a line identical to one of them is not checked for fit, so an old order with an odd
+// discount can still be saved for its customer name or status.
+function lineProblems(line, errors, money, saved) {
+    var out = []
+    var name = line.name ? line.name : "An item"
+    var percent = line.discountType === "percent"
+    var value = line.discountValue || 0
+    var gross = line.price * line.quantity
+    if (errors && errors.price) out.push(priceBlockedText(line.name, money(line.price)))
+    if (errors && errors.discount) {
+        out.push(name + ": check the discount, it is " + (percent ? value + "%" : money(value))
+            + ". Tap its discount field to keep or change it")
+    } else if (!discountFits(value, line.discountType, gross)
+               && !(Array.isArray(saved) && saved.some(function(s) { return _sameLine(line, s) }))) {
+        out.push(name + ": the discount must be from 0 to " + (percent ? "100%" : "the line amount, " + money(gross))
+            + ". Change the discount")
+    }
+    return out
+}

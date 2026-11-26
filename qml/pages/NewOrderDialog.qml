@@ -37,7 +37,11 @@ BottomSheet {
     // rebuilds the rows, so a message held by a row vanished unread (a quantity tap), and trySubmit must see it. A line that
     // leaves the cart (or a new sheet) forgets its message.
     property var _priceErrors: ({})
-    onSelectedProductsChanged: _priceErrors = OrderFlow.prunePriceErrors(_priceErrors, selectedProducts)
+    property var _discountErrors: ({})   // the same for the discount field (NO3c)
+    onSelectedProductsChanged: {
+        _priceErrors = OrderFlow.prunePriceErrors(_priceErrors, selectedProducts)
+        _discountErrors = OrderFlow.prunePriceErrors(_discountErrors, selectedProducts)
+    }
 
     // Mirror of StaffStore filtered to active members. Index 0 is the
     // empty "(no staff)" row so the user can leave it unattributed.
@@ -265,11 +269,12 @@ BottomSheet {
                 delegate: Rectangle {
                     id: cartRow
                     readonly property string priceError: dlg._priceErrors[modelData.productId] || ""   // "" = none
-                    // Commits this row's price if the person is still in the field. -> true when it was.
-                    function settlePrice() {
-                        if (!linePriceField.activeFocus) return false
-                        linePriceField._commitPrice()
-                        return true
+                    readonly property string discountError: dlg._discountErrors[modelData.productId] || ""
+                    // Commits the field of this row the person is still in. -> true when there was one.
+                    function settleField() {
+                        if (linePriceField.activeFocus) { linePriceField._commitPrice(); return true }
+                        if (lineDiscField.activeFocus) { lineDiscField._commitDiscount(); return true }
+                        return false
                     }
                     Layout.fillWidth: true
                     Layout.preferredHeight: cartCol.implicitHeight + dp(Constants.space3 * 2)
@@ -394,12 +399,14 @@ BottomSheet {
                                 model: ["₹", "%"]
                                 selected: modelData.discountType === "percent" ? 1 : 0
                                 onSegmentSelected: function(idx, label) {
-                                    dlg._setLineDiscount(index, idx === 1 ? "percent" : "flat", modelData.discountValue)
+                                    dlg._setLineDiscountType(index, idx === 1 ? "percent" : "flat",
+                                                             lineDiscField.activeFocus ? lineDiscField.text : null)
                                 }
                             }
                             QQC.TextField {
                                 id: lineDiscField
                                 Accessible.name: modelData.discountType === "percent" ? qsTr("Discount of %1, percent").arg(modelData.name || qsTr("item")) : qsTr("Discount of %1, flat amount").arg(modelData.name || qsTr("item"))
+                                Accessible.description: cartRow.discountError
                                 Layout.minimumHeight: dp(48)
                                 Layout.fillWidth: true
                                 text: String(modelData.discountValue || 0)
@@ -416,13 +423,17 @@ BottomSheet {
                                 background: Rectangle {
                                     radius: dp(8)
                                     color: lineDiscField.enabled ? Constants.cardBg : Constants.subtleBg
-                                    border.color: lineDiscField.activeFocus ? Constants.primaryBlue : Constants.borderColor
-                                    border.width: lineDiscField.activeFocus ? 2 : 1
+                                    border.color: cartRow.discountError.length > 0 ? Constants.danger : (lineDiscField.activeFocus ? Constants.primaryBlue : Constants.borderColor)
+                                    border.width: (lineDiscField.activeFocus || cartRow.discountError.length > 0) ? 2 : 1
                                 }
+                                // Tapping the field acknowledges a refusal: the person now sees the real discount in it.
+                                onActiveFocusChanged: if (activeFocus) { dlg._setDiscountError(modelData.productId, ""); selectAll() }
+                                onTextEdited: if (activeFocus) dlg._setDiscountError(modelData.productId, "")
                                 function _commitDiscount() {
-                                    var v = parseFloat(String(text).replace(/[^0-9.]/g, ""))
-                                    if (isNaN(v) || v < 0) v = 0
-                                    dlg._setLineDiscount(index, modelData.discountType, v)
+                                    dlg._setLineDiscountValue(index, text)
+                                    var cur = dlg.selectedProducts[index]
+                                    text = String((cur ? cur.discountValue : modelData.discountValue) || 0)
+                                    if (activeFocus) selectAll()
                                 }
                                 onEditingFinished: _commitDiscount()
                                 onAccepted: _commitDiscount()
@@ -433,6 +444,14 @@ BottomSheet {
                             Layout.fillWidth: true
                             visible: cartRow.priceError.length > 0
                             text: cartRow.priceError
+                            color: Constants.danger
+                            font.pixelSize: sp(Constants.fsSmall)
+                            wrapMode: Text.Wrap
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            visible: cartRow.discountError.length > 0
+                            text: cartRow.discountError
                             color: Constants.danger
                             font.pixelSize: sp(Constants.fsSmall)
                             wrapMode: Text.Wrap
@@ -532,12 +551,12 @@ BottomSheet {
         return OrdersStore.computeOrderTotals(lines)
     }
 
-    // A typed price that is not committed yet. The ₹/% pill takes no focus, and a button is not promised to take it on every
-    // platform, so a row tap that rebuilds the rows, and trySubmit, ask first (NO3b).
-    function _settlePriceEdit() {
+    // A typed price or discount that is not committed yet. The ₹/% pill takes no focus, and a button is not promised to take it
+    // on every platform, so a row tap that rebuilds the rows, and trySubmit, ask first (NO3b, NO3c).
+    function _settleFieldEdit() {
         for (var i = 0; i < cartRepeater.count; ++i) {
             var row = cartRepeater.itemAt(i)
-            if (row && row.settlePrice()) return   // one field has the focus, and a committed price rebuilds the rows
+            if (row && row.settleField()) return   // one field has the focus, and a commit rebuilds the rows
         }
     }
 
@@ -545,34 +564,57 @@ BottomSheet {
         _priceErrors = OrderFlow.withPriceError(_priceErrors, productId, message)
     }
 
-    function _setLineDiscount(idx, type, value) {
-        _settlePriceEdit()
-        if (idx < 0 || idx >= selectedProducts.length) return
+    function _setDiscountError(productId, message) {
+        _discountErrors = OrderFlow.withPriceError(_discountErrors, productId, message)
+    }
+
+    function _replaceLine(idx, changes) {
         var arr = selectedProducts.slice()
-        arr[idx] = Object.assign({}, arr[idx], {
-            discountType: type === "percent" ? "percent" : "flat",
-            discountValue: isNaN(value) ? 0 : value
-        })
+        arr[idx] = Object.assign({}, arr[idx], changes)
         selectedProducts = arr
+    }
+
+    // Commit a typed discount (NO3c). Same shape as _setLinePrice: a refusal keeps the old value and records why.
+    function _setLineDiscountValue(idx, text) {
+        if (!OrderFlow.isRow(idx, selectedProducts.length)) return
+        var cur = selectedProducts[idx]
+        var gross = cur.price * cur.qty
+        var r = OrderFlow.discountEdit(text, cur.discountValue, cur.discountType, gross)
+        if (r.kind === "unchanged") return
+        _setDiscountError(cur.productId, r.kind === "refused" ? OrderFlow.discountText(r.reason, InventoryStore.formatCurrency(gross)) : "")
+        if (r.kind !== "set" || r.value === (cur.discountValue || 0)) return
+        _replaceLine(idx, { discountValue: r.value })
+    }
+
+    // The ₹/% pill (NO3c). `typed`: this row's discount text when the person is still in that field, else null. It is then read
+    // under the NEW type; any other field in use is committed first.
+    function _setLineDiscountType(idx, type, typed) {
+        if (typed === null) _settleFieldEdit()
+        if (!OrderFlow.isRow(idx, selectedProducts.length)) return
+        var cur = selectedProducts[idx]
+        var next = type === "percent" ? "percent" : "flat"
+        if ((cur.discountType === "percent" ? "percent" : "flat") === next) return
+        var gross = cur.price * cur.qty
+        var r = OrderFlow.discountSwitch(typed, cur.discountValue, next, gross, InventoryStore.formatCurrency(gross))
+        _setDiscountError(cur.productId, r.message)
+        _replaceLine(idx, { discountType: next, discountValue: r.value })
     }
 
     // Commit an edited per-line unit price (NO3b). Immutable array replace so _totalsCache recomputes. One reading of the text
     // (OrderFlow.priceEdit: a plain decimal up to the app's price limit). A refusal keeps the old price and records why.
     // "unchanged" touches nothing: Enter fires accepted AND editingFinished, and the second call must not wipe the message.
     function _setLinePrice(idx, value) {
-        if (!(idx >= 0 && idx < selectedProducts.length) || Math.floor(idx) !== idx) return   // NaN, undefined, "0", 1.5: no such row
+        if (!OrderFlow.isRow(idx, selectedProducts.length)) return   // NaN, undefined, "0", 1.5: no such row
         var cur = selectedProducts[idx]
         var r = OrderFlow.priceEdit(value, cur.price, InventoryStore.formatCurrency(cur.price))
         if (r.kind === "unchanged") return
         _setPriceError(cur.productId, r.kind === "refused" ? OrderFlow.priceText(r.reason) : "")
         if (r.kind !== "set" || r.price === cur.price) return
-        var arr = selectedProducts.slice()
-        arr[idx] = Object.assign({}, cur, { price: r.price })
-        selectedProducts = arr
+        _replaceLine(idx, { price: r.price })
     }
 
     function changeQty(idx, delta) {
-        _settlePriceEdit()
+        _settleFieldEdit()
         var arr = []
         for (var i = 0; i < selectedProducts.length; ++i) {
             var sp = selectedProducts[i]
@@ -596,7 +638,7 @@ BottomSheet {
         // a second tap arriving while the first request is still in flight
         // must be a hard no-op, not just skip re-validation.
         if (busy) return
-        _settlePriceEdit()
+        _settleFieldEdit()
         var errs = []
         if (!customerField.text || customerField.text.length < 2) errs.push("Enter a valid customer name")
         if (selectedProducts.length === 0) errs.push("Add at least one product")
@@ -605,9 +647,13 @@ BottomSheet {
             var inv = InventoryStore.getById(sp.productId)
             if (inv && sp.qty > inv.stock)
                 errs.push(sp.name + ": only " + inv.stock + " in stock")
-            // A refused price left the old one in the cart: never book it unless the person has seen it (tap the field)
-            if (_priceErrors[sp.productId])
-                errs.push(OrderFlow.priceBlockedText(sp.name, InventoryStore.formatCurrency(sp.price)))
+            // A refused price or discount left another value in the cart, and a discount can stop fitting when the quantity or
+            // price drops: never book either unseen
+            errs = errs.concat(OrderFlow.lineProblems(
+                { productId: sp.productId, name: sp.name, price: sp.price, quantity: sp.qty,
+                  discountType: sp.discountType, discountValue: sp.discountValue },
+                { price: _priceErrors[sp.productId], discount: _discountErrors[sp.productId] },
+                InventoryStore.formatCurrency))
         }
         if (errs.length > 0) { errorLabel.text = errs.join(" · "); return }
         errorLabel.text = ""

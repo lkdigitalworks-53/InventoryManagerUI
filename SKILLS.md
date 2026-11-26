@@ -5471,3 +5471,19 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 11. A refusal is not handled until the SUBMIT path knows it. Tapping the submit button blurs the field, records the refusal and runs submit in one gesture: the order went out at the old price, unseen. Submit refuses while a refusal is unread.
 12. Never rely on a focus event to commit typed input. A `MouseArea` takes no focus, platforms differ on buttons, and Qt's order of `editingFinished` and the focus handler is not yours: settle the field explicitly before reading or rebuilding the model, and let the focus handler reformat only text the person did not change.
 13. Test the sequence, not only the function: a stand-in Repeater that rebuilds rows, running the real handler text, in both event orders and with no event, found all of 11 and 12 without Qt.
+
+## Skill 192: A value whose unit can change is re-checked under the new unit, and a validation rule is applied wherever the value can stop being valid
+
+**Why:** NO3c. The order totals clamp a discount, so a flat 500 switched to `%` was silently 100%: a free line. A clamp downstream hides bad input; it does not validate it.
+
+**Rules:**
+1. A unit toggle is an input event. Read the number (the typed, uncommitted text if the field is in use) under the NEW unit; if it does not fit, reset to the harmless value and say so. Never carry it across and let a clamp decide.
+2. A limit that depends on another field (a flat discount on price x quantity) can break after entry. Check it again at submit, naming the line.
+3. A new submit-time rule must not lock old data: skip a line identical to the saved one, and test the legacy case.
+4. Compare money with a tolerance (`0.7 * 3 < 2.1`).
+5. Where rows are updated in place (`ListModel`), keep a row's message in a row role (declare it in EVERY append); where rows are rebuilt, keep it in the dialog keyed by id.
+6. A field's `text:` binding dies at its first imperative assignment: after changing the value from elsewhere (a pill), set the field text by hand.
+7. Test both dialogs with ONE harness that runs the real handler text, looped over both sheets, plus a monkey that asserts "whatever is sent is inside the limits".
+8. Never let a time-limited command mutate the working tree: run mutants on a COPY of the repo.
+
+**The check:** `cd functions && node --test test/orderDiscountFlow.test.js test/orderMoneyFields.test.js test/orderPriceCap.test.js`. On a device: `test-plans/2026-11-26-no3c-order-money-fields-test-plan.md`.

@@ -185,7 +185,10 @@ test("S5E3-21 the four fields keep their commit wiring (focus out, accept) and t
     assert.match(nd, /if \(activeFocus\) \{ dlg\._setPriceError\(modelData\.productId, ""\); text = String\(modelData\.price\); selectAll\(\) \}/);
     const od = stripComments(read("qml/pages/OrderDetailDialog.qml"));
     assert.match(od, /onEditingFinished: _commitDiscount\(\)/);
-    assert.match(od, /products\.setProperty\(row\.rowIdx, "price", v\)/);
+    // NO3c: the edit sheet commits through the dialog, and swaps plain and formatted text like New Order.
+    assert.match(od, /onEditingFinished: _commitPrice\(\)/);
+    assert.match(od, /dlg\._setLinePrice\(row\.rowIdx, text\)/);
+    assert.match(od, /else if \(text === String\(model\.price\)\) \{ text = OrdersStore\.formatCurrency\(model\.price\) \}/);
 });
 
 // ---- rules for the words ---------------------------------------------------------------------------------------

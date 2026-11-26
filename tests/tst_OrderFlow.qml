@@ -112,4 +112,63 @@ TestCase {
         compare(out.B, "y")
         compare(Object.keys(OF.prunePriceErrors({ A: "x" }, undefined)).length, 0)
     }
+
+    // ---- NO3c (design 2026-11-26-no3c-edit-order-money-fields-design.md); the same rows as orderDiscountFlow.test.js ----
+    function money(n) { return "INR " + n }
+    function test_isRow() {
+        compare(OF.isRow(0, 1), true)
+        compare(OF.isRow(1, 1), false)
+        compare(OF.isRow(-1, 1), false)
+        compare(OF.isRow(0.5, 2), false)
+        compare(OF.isRow(NaN, 2), false)
+        compare(OF.isRow(undefined, 2), false)
+        compare(OF.isRow("0", 2), false)
+    }
+    function test_discountFits() {
+        compare(OF.discountFits(100, "percent", 1), true)
+        compare(OF.discountFits(101, "percent", 1000), false)
+        compare(OF.discountFits(2.1, "flat", 0.7 * 3), true)
+        compare(OF.discountFits(2.11, "flat", 0.7 * 3), false)
+        compare(OF.discountFits(0, "flat", NaN), true)
+        compare(OF.discountFits(1, "flat", NaN), false)
+        compare(OF.discountFits(-1, "flat", 10), false)
+        compare(OF.discountFits("5", "flat", 10), false)
+    }
+    function test_discountEdit() {
+        compare(OF.discountEdit("12.5", 3, "flat", 300).value, 12.5)
+        compare(OF.discountEdit("", 3, "flat", 300).value, 0)
+        compare(OF.discountEdit(" 3 ", 3, "flat", 300).kind, "unchanged")
+        compare(OF.discountEdit("0", undefined, "percent", 300).kind, "unchanged")
+        compare(OF.discountEdit("-5", 3, "flat", 300).reason, "invalid")
+        compare(OF.discountEdit("1e2", 3, "percent", 300).reason, "invalid")
+        compare(OF.discountEdit("1,5", 3, "flat", 300).reason, "invalid")
+        compare(OF.discountEdit("101", 3, "percent", 300).reason, "percent")
+        compare(OF.discountEdit("301", 3, "flat", 300).reason, "amount")
+        compare(OF.discountEdit("99999999999999999999", 3, "flat", 300).reason, "amount")
+    }
+    function test_discountText() {
+        compare(OF.discountText("invalid", ""), "Discount must be a plain number, like 50 or 7.5")
+        compare(OF.discountText("percent", ""), "A percentage discount can be at most 100")
+        compare(OF.discountText("amount", "INR 300"), "The discount cannot be more than the line amount, INR 300")
+        compare(OF.discountText("weird", ""), "")
+    }
+    function test_discountSwitch_never_makes_a_free_line() {
+        var r = OF.discountSwitch(null, 500, "percent", 1000, "INR 1000")
+        compare(r.value, 0)
+        compare(r.message, "A percentage discount can be at most 100. It is now 0")
+        compare(OF.discountSwitch("15", 500, "percent", 1000, "").value, 15)
+        compare(OF.discountSwitch("15", 500, "percent", 1000, "").message, "")
+        compare(OF.discountSwitch("500", 500, "percent", 1000, "").value, 0)
+        compare(OF.discountSwitch("", 15, "flat", 1000, "").value, 0)
+        compare(OF.discountSwitch(null, 50, "flat", 40, "INR 40").value, 0)
+    }
+    function test_lineProblems() {
+        var line = { productId: "P1", name: "Soap", price: 100, quantity: 1, discountType: "flat", discountValue: 150 }
+        compare(OF.lineProblems({ productId: "P1", name: "Soap", price: 100, quantity: 3, discountType: "flat", discountValue: 300 }, {}, money).length, 0)
+        compare(OF.lineProblems(line, {}, money)[0], "Soap: the discount must be from 0 to the line amount, INR 100. Change the discount")
+        compare(OF.lineProblems(line, {}, money, [line]).length, 0)
+        compare(OF.lineProblems(line, { discount: "x" }, money, [line])[0],
+                "Soap: check the discount, it is INR 150. Tap its discount field to keep or change it")
+        compare(OF.lineProblems(line, { price: "x", discount: "y" }, money).length, 2)
+    }
 }

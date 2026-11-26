@@ -96,12 +96,13 @@ test("D-7 _setLinePrice reads the text through OrderFlow.priceEdit only (no rege
 test("D-8 the price field's wiring: both commit signals, the settle callers, the pruning, and the message binding", () => {
     assert.ok(/onEditingFinished: _commitPrice\(\)/.test(DIALOG) && /onAccepted: _commitPrice\(\)/.test(DIALOG));
     assert.ok(/onTextEdited: if \(activeFocus\) dlg\._setPriceError\(modelData\.productId, ""\)/.test(DIALOG));
-    assert.ok(/id: cartRepeater\s+model: dlg\.selectedProducts/.test(DIALOG), "_settlePriceEdit walks THIS repeater");
+    assert.ok(/id: cartRepeater\s+model: dlg\.selectedProducts/.test(DIALOG), "_settleFieldEdit walks THIS repeater");
     assert.ok(/readonly property string priceError: dlg\._priceErrors\[modelData\.productId\] \|\| ""/.test(DIALOG));
-    assert.ok(/onSelectedProductsChanged: _priceErrors = OrderFlow\.prunePriceErrors\(_priceErrors, selectedProducts\)/.test(DIALOG));
-    for (const f of ["function _setLineDiscount(", "function changeQty(", "function trySubmit()"]) {
+    assert.ok(/_priceErrors = OrderFlow\.prunePriceErrors\(_priceErrors, selectedProducts\)/.test(block(DIALOG, "onSelectedProductsChanged:")));
+    assert.ok(/_discountErrors = OrderFlow\.prunePriceErrors\(_discountErrors, selectedProducts\)/.test(block(DIALOG, "onSelectedProductsChanged:")));
+    for (const f of ["function _setLineDiscountType(", "function changeQty(", "function trySubmit()"]) {
         const body = strip(block(DIALOG, f));
-        assert.ok(body.indexOf("_settlePriceEdit()") > 0 && body.indexOf("_settlePriceEdit()") < body.indexOf("selectedProducts"), f + " settles before it reads the cart");
+        assert.ok(body.indexOf("_settleFieldEdit()") > 0 && body.indexOf("_settleFieldEdit()") < body.indexOf("selectedProducts"), f + " settles before it reads the cart");
     }
 });
 

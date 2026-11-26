@@ -84,7 +84,7 @@ test("EOW-05 _applyPicked reads the live rows, applies sets and appends to the m
     const f = fn("_applyPicked");
     assert.ok(f.includes("Edit.applyPlan(_pickerLinesNow(), plan, _pickerCtx(), _pickerLookup)"));
     assert.ok(/products\.setProperty\(res\.sets\[i\]\.index, "quantity", res\.sets\[i\]\.quantity\)/.test(f));
-    assert.ok(/products\.append\(res\.appends\[j\]\)/.test(f));
+    assert.ok(/products\.append\(Object\.assign\(\{ priceError: "", discountError: "" \}, res\.appends\[j\]\)\)/.test(f), "NO3c: a new row has both error roles");
     assert.equal((f.match(/recomputeSubtotal\(\)/g) || []).length, 1, "one recompute, after both loops");
     assert.ok(f.indexOf("recomputeSubtotal()") > f.indexOf("products.append"));
     assert.ok(f.includes('stockErrorLabel.text = ""'));
@@ -230,7 +230,8 @@ test("EOW-14 the real _applyPicked on a PENDING order: new rows get the current 
     assert.deepEqual(plain(v.canCommit), { ok: true, reason: "" });
     g.apply(PD.commitPlan(v.draft, g.dlg._pickerLinesNow()));
     assert.deepEqual(plain(g.model.rows[0]), plain(row("A", 3, { price: 7.5, taxable: true, taxPercent: 18, discountType: "percent", discountValue: 10 })), "bump: quantity only");
-    assert.deepEqual(plain(g.model.rows[1]), { productId: "C", name: "Gamma", price: 5, quantity: 2, discountType: "flat", discountValue: 0, taxable: true, taxPercent: 12 });
+    assert.deepEqual(plain(g.model.rows[1]), { productId: "C", name: "Gamma", price: 5, quantity: 2, discountType: "flat", discountValue: 0, taxable: true, taxPercent: 12,
+        priceError: "", discountError: "" });
     assert.deepEqual(g.recomputes, [2]);
     assert.equal(g.label.text, "");
     assert.deepEqual(g.toasts, []);
