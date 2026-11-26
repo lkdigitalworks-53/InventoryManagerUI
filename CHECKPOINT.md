@@ -10,11 +10,11 @@
 ## Steps
 - [x] 0. Cloned repo, read skills, fetched PR #221 (`0dd5b02`). State was `dirty`: conflicts with main (#219 NO3b merged after the PR was cut).
 - [x] 1. Merged `origin/main` into the branch. 6 doc conflicts (CHECKPOINT, README, SKILLS, SKILLS-INDEX, ATOMIC status, KNOWN-ISSUES), NO code file conflicted. Kept main's entries, appended ours. RENUMBERED ours: KNOWN-ISSUES 150 -> 162 (main owns 150-161), Skill 191 -> 192 (main owns 191); skills count 193; skills-index `--check` current.
-- [ ] 2. Baseline: install `functions` deps (`npm ci`), run the Node suites on the merged tree (this is Node only, not the app).
-- [ ] 3. Review phase 1: qt-qml-review linter (`qt_qml_lint.py`) on the QML files touched by #219/#221 and the picker files.
-- [ ] 4. Review phase 2: six qt-qml-review domains by hand, ponytail audit of the diff, requesting-code-review of #221 against its plan.
-- [ ] 5. Fixes in this PR (list filled in as found).
-- [ ] 6. Tests for each fix, test plan rows, docs (KNOWN-ISSUES, README, SKILLS/AGENTS only if needed).
+- [x] 2. Baseline on the merged tree: `npm ci`, functions 2443/2443 (Node only, no app).
+- [x] 3. Linter on 8 picker, dialog, login files: 500 findings (156 ORD-1, 176 JS-1, 63 BND-2, 41 JS-2, 31 BND-1, 18 DEL-1). All pre-existing style/robustness, NOT mass-fixed (plan section 8).
+- [x] 4. Six domains by hand, ponytail audit of the diff, PR claims checked against git (83 lines, 7 literals true; renumbering). 4 real findings, all in the S5g test matcher (JS, qmldir, folders, temp leak).
+- [x] 5. Fixes: `pickerS5gAuthButtons.test.js` matcher widened, cleanup added, S5G-07..09, 6 hand mutants killed (commit `step 2`). KNOWN-ISSUES 163 fixed, 164 open (owner input).
+- [x] 6. Docs: plan section 8, test plan rows, device pass (status + ranked important checks), KNOWN-ISSUES 142/143/144/163/164, README, AGENTS, Skill 192 rule 7. Measured: functions 2446/2446, scripts 1199/1199, skills-index current.
 - [ ] 7. Push, read CI (QML, Functions, Rules, E2E) on the pushed head.
 - [ ] 8. Report: done / next / important test cases.
 

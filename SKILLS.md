@@ -5483,6 +5483,7 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 4. A mutant changes the code under test, never the test. A first mutant 11 edited the test to drop the check it wanted to prove and then "survived". Redo it by changing only the code.
 5. Read each killer list, not just KILLED. A mutant that is killed by five tests, four of them unrelated, is killed by pollution (rule 3); a clean kill names the one or two tests that own that behaviour.
 6. A whole-word matcher gets look-alike decoys in its own test (a comment, a longer name, a shorter name, a prefixed name, an empty tree) and a seeded monkey with an expected count known by construction (`S5G-03`, `S5G-06`).
+7. A scanner that proves "nothing names this file" must read EVERY kind of file that can name it: QML, JS helpers (`Qt.createComponent` takes a string), a `qmldir` in any folder, tests in sub-folders, C++ and CMake. The first S5g matcher read QML only and four folders; the review sweep found it by listing what the repo really holds (54 JS files under `qml/`) and added a decoy test per kind. A hand-built-tree test must remove its temp folders (`test.after`): 300 monkey trees left 303 `s5g-*` folders per run until fixed.
 
-**The check:** `node --test functions/test/pickerS5gAuthButtons.test.js`: green (6 cases). `node .github/scripts/skills-index.js --check`: current.
+**The check:** `node --test functions/test/pickerS5gAuthButtons.test.js`: green (9 cases). `node .github/scripts/skills-index.js --check`: current.
 

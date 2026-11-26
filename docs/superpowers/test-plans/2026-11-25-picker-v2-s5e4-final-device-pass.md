@@ -2,6 +2,19 @@
 
 **Honesty note.** Written 2026-11-25 without a phone. NOTHING in this file has been run. It is the curated pass the picker roadmap names as its last row (`S5e-4`). The long plan (`2026-11-03-product-picker-v2-test-plan.md`) has 214 numbered device checks and the repo holds NO written device result for any of them; this file is the 20 that give the most information per minute, with the old check numbers in brackets so the long text stays the reference. When a result disagrees with the long plan, the phone wins and the long plan gets a line.
 
+**Status 2026-11-26.** The owner reports that all picker slices were tested on a device. No result line below and no KNOWN-ISSUES 29 number has been written into the repo (KNOWN-ISSUES 164), so every `Result:` stays empty on purpose: a summary like "all passed" is not recorded as 20 results. Send F8 (seconds), F9 (what a dropped connection left) and any FAIL, and the lines get filled from your words.
+
+**The checks that matter most at this stage (PR #221 review, ranked by what a failure costs):**
+1. **F9** dropped connection while saving a completed order's edit: can leave stock and order disagreeing. Money and stock integrity. Highest.
+2. **F8** the measured size of that edit: the number KNOWN-ISSUES 29 waits for.
+3. **F3** completed order keeps its booked tax and held units: wrong tax or double-counted stock.
+4. **F5** stock falls under an open sheet: overselling.
+5. **F4** and **F7**: rows that cannot be picked (no price, unsynced edit, out of stock) and the 60-line limit: a wrong or missing price on an order.
+6. **F14** dark phone: NOT made optional by "no second theme planned". It tests whether the phone's own dark mode repaints unpinned controls (KNOWN-ISSUES 142).
+7. **F17** login screen and every page: the only code change of PR #221 is the deletion, and this is its regression check (cheap, 5 minutes).
+8. **F19** monkey (rapid taps, back key, rotation): crashes and stuck states.
+Also from #219 (merged, NO3b): the price field refusals and "Place order blocked on an unread refusal" (its test plan, checks 1 to 25).
+
 **What 20 means.** Every merged slice S1 to S5g changed something a phone can show and a source scan cannot: the sheet, the stock rule, Back, 48 dp targets, TalkBack names, the wrapped toast, font scale, the dark theme, the photo sheet. Six checks cover the order flow (F1 to F6), three the size limits and KNOWN-ISSUES 29 (F7 to F9), seven accessibility, font and theme (F10 to F16), four the safety nets (F17 to F20). About 75 minutes.
 
 **How to run it.**
