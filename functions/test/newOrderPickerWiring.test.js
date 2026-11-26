@@ -181,7 +181,9 @@ function dialogGlue(world, cart) {
     const toasts = [];
     const fnSrc = extractFunction("pages/NewOrderDialog.qml", "_applyPicked");
     const apply = vm.runInNewContext("(" + fnSrc.replace(/^function _applyPicked/, "function") + ")",
-        { Picker: NP, errorLabel: errorLabel, Toast: { show: (m) => toasts.push(m) }, get selectedProducts() { return dlg.selectedProducts; }, set selectedProducts(v) { dlg.selectedProducts = v; },
+        { Picker: NP, errorLabel: errorLabel, Toast: { show: (m) => toasts.push(m) },
+          _settleFieldEdit: () => {},   // no field in use here; orderMoneyFields M-16 runs the real one (PR 222 sweep F2)
+          get selectedProducts() { return dlg.selectedProducts; }, set selectedProducts(v) { dlg.selectedProducts = v; },
           _pickerLookup: dlg._pickerLookup });
     return { dlg, errorLabel, toasts, apply };
 }
@@ -285,7 +287,7 @@ test("NOW-18 S5b + sweep: the real cart-row stepper uses the one stock rule: a f
     const fn = extractFunction("pages/NewOrderDialog.qml", "changeQty");
     assert.ok(/Picker\.stepQty\(sp\.qty, delta, inv\)/.test(fn) && !/inv\.stock/.test(fn));
     const stepped = (stock, qty, delta, gone) => {
-        const box = { Picker: NP, _settlePriceEdit: () => {}, selectedProducts: [{ name: "W", qty, price: 5, productId: "P" }],
+        const box = { Picker: NP, _settleFieldEdit: () => {}, selectedProducts: [{ name: "W", qty, price: 5, productId: "P" }],
                       InventoryStore: { getById: () => gone ? null : { productId: "P", stock } } };
         vm.createContext(box);
         vm.runInContext(fn + "\nchangeQty(0, " + delta + ")", box);

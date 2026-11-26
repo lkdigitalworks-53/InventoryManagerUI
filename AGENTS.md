@@ -1082,3 +1082,7 @@ env.
 - `XlsxService.cpp` product export is 14 columns (Photo URL dropped, Supplier..Tax % are columns 11-14); template has 14 rows. Guarded by `functions/test/ph5LegacyPhotoUrl.guard.test.js` (G01-G11): when you add a product column change `kProductHeaders`, the `doc.write` list, the widths AND the template row together.
 - User-profile `photoUrl` (AuthStore/AuthService/ProfilePage) is a different field and must not be touched. See Skill 110, KNOWN-ISSUES "Pre-PH5 tenants".
 - PR #137 review: spreadsheet import is POSITIONAL (`readSheet`), see KNOWN-ISSUES "Spreadsheet import is positional" (accepted, A). `_normalizeRecord` now emits `photoIds: []`; its key set is pinned against `_newProductDoc` in `tst_InventoryStore_cloneSymmetry`. Skill 108.
+
+## Order money fields (NO3c, 2026-11-26)
+- A price or discount typed on an order sheet is decided in `qml/helper/OrderFlow.js` (`priceEdit`, `discountEdit`, `discountSwitch`, `lineProblems`). Dialogs only apply the answer. Never parse typed money with `parseFloat` or a strip regex.
+- A new submit path on either sheet calls `_settleFieldEdit()` first and `lineProblems` before sending. Edit Order `ListModel` appends must include `priceError` and `discountError`. See Skill 192.

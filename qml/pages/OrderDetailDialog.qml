@@ -10,6 +10,7 @@ import "../helper/OrderAdjust.js" as OrderAdjust
 import "../helper/StaffPicker.js" as StaffPicker
 import "../helper/EditOrderPicker.js" as Edit
 import "../helper/NewOrderPicker.js" as NP
+import "../helper/OrderFlow.js" as OrderFlow
 import "../model"
 
 // Order detail / edit — bottom sheet. Live product table with qty editing,
@@ -215,7 +216,7 @@ BottomSheet {
         for (let i = 0; i < res.sets.length; ++i)
             products.setProperty(res.sets[i].index, "quantity", res.sets[i].quantity)
         for (let j = 0; j < res.appends.length; ++j)
-            products.append(res.appends[j])
+            products.append(Object.assign({ priceError: "", discountError: "" }, res.appends[j]))
         recomputeSubtotal()
         stockErrorLabel.text = ""
         const note = NP.skippedNote(res.skipped)
@@ -291,7 +292,11 @@ BottomSheet {
                                     discountType: lp.discountType === "percent" ? "percent" : "flat",
                                     discountValue: parseFloat(lp.discountValue) || 0,
                                     taxable: taxable,
-                                    taxPercent: isNaN(taxPercent) ? 0 : taxPercent
+                                    taxPercent: isNaN(taxPercent) ? 0 : taxPercent,
+                                    // Why the last typed price / discount was refused ("" = none). A row role, so it moves and
+                                    // dies with its row; never saved (_lineItemArray and _save pick their fields).
+                                    priceError: "",
+                                    discountError: ""
                                 })
             }
         }
@@ -371,6 +376,71 @@ BottomSheet {
         return Edit.stockShortfalls(_pickerLinesNow(), _pickerCtx(), _pickerLookup.productOf).map(Edit.shortfallText)
     }
 
+    // ---- The price and discount fields (NO3c; the decisions are OrderFlow's, shared with New Order) ----
+    // The ₹/% pill takes no focus, and a button is not promised to take it on every platform: Save asks first.
+    function _settleFieldEdit() {
+        for (var i = 0; i < lineRepeater.count; ++i) {
+            var row = lineRepeater.itemAt(i)
+            if (row && row.settleField()) return
+        }
+    }
+
+    function _setRowError(idx, role, message) {
+        if (OrderFlow.isRow(idx, products.count)) products.setProperty(idx, role, message)
+    }
+
+    function _setLinePrice(idx, text) {
+        if (!OrderFlow.isRow(idx, products.count)) return   // the row was removed while its field committed
+        var cur = products.get(idx)
+        var r = OrderFlow.priceEdit(text, cur.price, OrdersStore.formatCurrency(cur.price))
+        if (r.kind === "unchanged") return
+        _setRowError(idx, "priceError", r.kind === "refused" ? OrderFlow.priceText(r.reason) : "")
+        if (r.kind !== "set" || r.price === cur.price) return
+        products.setProperty(idx, "price", r.price)
+        recomputeSubtotal()
+    }
+
+    function _setLineDiscountValue(idx, text) {
+        if (!OrderFlow.isRow(idx, products.count)) return
+        var cur = products.get(idx)
+        var gross = cur.price * cur.quantity
+        var r = OrderFlow.discountEdit(text, cur.discountValue, cur.discountType, gross)
+        if (r.kind === "unchanged") return
+        _setRowError(idx, "discountError",
+                     r.kind === "refused" ? OrderFlow.discountText(r.reason, OrdersStore.formatCurrency(gross)) : "")
+        if (r.kind !== "set" || r.value === (cur.discountValue || 0)) return
+        products.setProperty(idx, "discountValue", r.value)
+        recomputeSubtotal()
+    }
+
+    // `typed`: this row's discount text when the person is still in that field, else null. -> true when the type changed (the
+    // caller then shows the new value; on a tap of the side already selected the typed text must stay, design D-NO3c-4).
+    function _setLineDiscountType(idx, type, typed) {
+        if (typed === null) _settleFieldEdit()
+        if (!OrderFlow.isRow(idx, products.count)) return false
+        var cur = products.get(idx)
+        var next = type === "percent" ? "percent" : "flat"
+        if ((cur.discountType === "percent" ? "percent" : "flat") === next) return false
+        var gross = cur.price * cur.quantity
+        var r = OrderFlow.discountSwitch(typed, cur.discountValue, next, gross, OrdersStore.formatCurrency(gross))
+        _setRowError(idx, "discountError", r.message)
+        products.setProperty(idx, "discountType", next)
+        products.setProperty(idx, "discountValue", r.value)
+        recomputeSubtotal()
+        return true
+    }
+
+    // Why Save must wait: unread refusals, and changed lines whose discount no longer fits.
+    function _lineProblems() {
+        var out = []
+        for (var i = 0; i < products.count; ++i) {
+            var p = products.get(i)
+            out = out.concat(OrderFlow.lineProblems(p, { price: p.priceError, discount: p.discountError },
+                                                    OrdersStore.formatCurrency, _originalLines))
+        }
+        return out
+    }
+
     function _save() {
         // Bug found 2026-09-14: this dialog used to fire logic.updateOrder
         // (a fire-and-forget signal) and close immediately, with no
@@ -390,6 +460,7 @@ BottomSheet {
         // be unreachable in practice since the button it would guard is
         // itself disabled while busy.
         if (busy) return
+        _settleFieldEdit()
         if (_lockState !== "granted") {
             if (_lockState === "denied") {
                 stockErrorLabel.text = _lockHolder && _lockHolder.name
@@ -431,7 +502,8 @@ BottomSheet {
         }
         // Stock check: only units that must come OUT of on-hand stock on save count, per PRODUCT (all its lines
         // together), against the same ceiling as the product sheet and the + stepper (_stockErrors).
-        var stockErrors = _stockErrors()
+        // _lineProblems: a refused price or discount, or a discount that stopped fitting, is never saved unseen (NO3c).
+        var stockErrors = _lineProblems().concat(_stockErrors())
         if (stockErrors.length > 0) {
             stockErrorLabel.text = stockErrors.join("\n")
             return
@@ -676,10 +748,19 @@ BottomSheet {
             spacing: dp(Constants.space2)
 
             Repeater {
+                id: lineRepeater
                 model: products
                 delegate: ColumnLayout {
                     id: row
                     property int rowIdx: index
+                    property string priceError: model.priceError || ""
+                    property string discountError: model.discountError || ""
+                    // Commits the field of this row the person is still in. -> true when there was one.
+                    function settleField() {
+                        if (priceField.activeFocus) { priceField._commitPrice(); return true }
+                        if (lineDiscountField.activeFocus) { lineDiscountField._commitDiscount(); return true }
+                        return false
+                    }
                     // Capture the delegate model's discount fields here so the
                     // per-line SegmentedPill (whose own `model` property shadows
                     // the delegate `model`) can still read them.
@@ -727,6 +808,7 @@ BottomSheet {
                       QQC.TextField {
                           id: priceField
                           Accessible.name: qsTr("Price of %1").arg(model.name || qsTr("item"))
+                          Accessible.description: row.priceError
                           Layout.minimumHeight: dp(48)
                           Layout.preferredWidth: dp(64)
                           Layout.alignment: Qt.AlignVCenter
@@ -746,27 +828,23 @@ BottomSheet {
                           background: Rectangle {
                               radius: dp(8)
                               color: priceField.enabled ? Constants.cardBg : Constants.subtleBg
-                              border.color: priceField.activeFocus ? Constants.primaryBlue : Constants.borderColor
-                              border.width: priceField.activeFocus ? 2 : 1
+                              border.color: row.priceError.length > 0 ? Constants.danger : (priceField.activeFocus ? Constants.primaryBlue : Constants.borderColor)
+                              border.width: (priceField.activeFocus || row.priceError.length > 0) ? 2 : 1
                           }
+                          // Tapping the field acknowledges a refusal: the person now sees the real price in it.
                           onActiveFocusChanged: {
-                              if (activeFocus) {
-                                  text = String(model.price)
-                                  selectAll()
-                              } else {
-                                  text = OrdersStore.formatCurrency(model.price)
-                              }
+                              if (activeFocus) { dlg._setRowError(row.rowIdx, "priceError", ""); text = String(model.price); selectAll() }
+                              // Format only the untouched plain number: if this runs before editingFinished, typed text must survive
+                              else if (text === String(model.price)) { text = OrdersStore.formatCurrency(model.price) }
                           }
+                          onTextEdited: if (activeFocus) dlg._setRowError(row.rowIdx, "priceError", "")
                           function _commitPrice() {
-                              var v = parseFloat(String(text).replace(/[^0-9.]/g, ""))
-                              if (!isNaN(v) && v >= 0) {
-                                  products.setProperty(row.rowIdx, "price", v)
-                                  dlg.recomputeSubtotal()
-                              }
-                              // Re-sync the field to whatever actually committed
-                              // (rejects empty/NaN/negative by keeping old price).
+                              dlg._setLinePrice(row.rowIdx, text)
                               var cur = products.get(row.rowIdx)
-                              text = OrdersStore.formatCurrency(cur ? cur.price : model.price)
+                              if (!cur) return
+                              // Enter commits with the field still focused: it keeps the plain number, selected, ready to retype
+                              text = activeFocus ? String(cur.price) : OrdersStore.formatCurrency(cur.price)
+                              if (activeFocus) selectAll()
                           }
                           onEditingFinished: _commitPrice()
                           onAccepted: _commitPrice()
@@ -804,6 +882,17 @@ BottomSheet {
                       }
                   }
 
+                  Text {
+                      Layout.fillWidth: true
+                      Layout.leftMargin: dp(14)
+                      Layout.rightMargin: dp(14)
+                      visible: row.priceError.length > 0
+                      text: row.priceError
+                      color: Constants.danger
+                      font.pixelSize: sp(Constants.fsSmall)
+                      wrapMode: Text.Wrap
+                  }
+
                   // ── Per-line discount (₹ / %) ───────────────────────────
                   // Edits this working line's discountType/discountValue.
                   // Mirrors how qty/price commit back into the products model;
@@ -827,14 +916,16 @@ BottomSheet {
                           model: ["₹", "%"]
                           selected: row.lineDiscType === "percent" ? 1 : 0
                           onSegmentSelected: function(idx, label) {
-                              products.setProperty(row.rowIdx, "discountType",
-                                                   idx === 1 ? "percent" : "flat")
-                              dlg.recomputeSubtotal()
+                              // The field's `text` binding is gone after its first commit, so show the result by hand
+                              if (dlg._setLineDiscountType(row.rowIdx, idx === 1 ? "percent" : "flat",
+                                                           lineDiscountField.activeFocus ? lineDiscountField.text : null))
+                                  lineDiscountField.text = String(row.lineDiscValue || 0)
                           }
                       }
                       QQC.TextField {
                           id: lineDiscountField
                           Accessible.name: row.lineDiscType === "percent" ? qsTr("Discount of %1, percent").arg(model.name || qsTr("item")) : qsTr("Discount of %1, flat amount").arg(model.name || qsTr("item"))
+                          Accessible.description: row.discountError
                           Layout.minimumHeight: dp(48)
                           Layout.fillWidth: true
                           text: String(row.lineDiscValue || 0)
@@ -851,20 +942,34 @@ BottomSheet {
                           background: Rectangle {
                               radius: dp(8)
                               color: lineDiscountField.enabled ? Constants.cardBg : Constants.subtleBg
-                              border.color: lineDiscountField.activeFocus ? Constants.primaryBlue : Constants.borderColor
-                              border.width: lineDiscountField.activeFocus ? 2 : 1
+                              border.color: row.discountError.length > 0 ? Constants.danger : (lineDiscountField.activeFocus ? Constants.primaryBlue : Constants.borderColor)
+                              border.width: (lineDiscountField.activeFocus || row.discountError.length > 0) ? 2 : 1
                           }
+                          // Tapping the field acknowledges a refusal: the person now sees the real discount in it.
+                          onActiveFocusChanged: if (activeFocus) { dlg._setRowError(row.rowIdx, "discountError", ""); selectAll() }
+                          onTextEdited: if (activeFocus) dlg._setRowError(row.rowIdx, "discountError", "")
                           function _commitDiscount() {
-                              var v = parseFloat(String(text).replace(/[^0-9.]/g, ""))
-                              if (isNaN(v) || v < 0) v = 0
-                              products.setProperty(row.rowIdx, "discountValue", v)
-                              dlg.recomputeSubtotal()
+                              dlg._setLineDiscountValue(row.rowIdx, text)
                               var cur = products.get(row.rowIdx)
-                              text = String(cur ? (cur.discountValue || 0) : v)
+                              if (!cur) return
+                              text = String(cur.discountValue || 0)
+                              if (activeFocus) selectAll()
                           }
                           onEditingFinished: _commitDiscount()
                           onAccepted: _commitDiscount()
                       }
+                  }
+
+                  Text {
+                      Layout.fillWidth: true
+                      Layout.leftMargin: dp(14)
+                      Layout.rightMargin: dp(14)
+                      Layout.bottomMargin: dp(Constants.space2)
+                      visible: row.discountError.length > 0
+                      text: row.discountError
+                      color: Constants.danger
+                      font.pixelSize: sp(Constants.fsSmall)
+                      wrapMode: Text.Wrap
                   }
                 }
             }

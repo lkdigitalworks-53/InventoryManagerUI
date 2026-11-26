@@ -199,3 +199,4 @@ Read THIS file at session start, not SKILLS.md (about 75k tokens). Then read the
 - 189: Audit font scale and system theme by reading source with a ratchet, pin what the app leaves to the palette, and say what the source cannot prove
 - 190: Delete dead code only after a reachability scan proves it dead, take its test exceptions with it, and let a font change grow its container (and scroll it)
 - 191: A money text field is read once, by the same reader as every other money field, and a refusal says why next to the field
+- 192: A value whose unit can change is re-checked under the new unit, and a validation rule is applied wherever the value can stop being valid

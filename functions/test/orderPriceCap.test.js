@@ -24,11 +24,11 @@ const ISO = "2026-06-15T12:00:00.000Z";
 
 // The dialog's cart and its real price-commit functions.
 function dialog(lines) {
-    const ctx = { OrderFlow: OF, Object, Number, String, Math, Intl, isNaN, isFinite, parseFloat, selectedProducts: lines, _priceErrors: {} };
+    const ctx = { OrderFlow: OF, Object, Number, String, Math, Intl, isNaN, isFinite, parseFloat, selectedProducts: lines, _priceErrors: {}, _discountErrors: {} };
     vm.createContext(ctx);
     vm.runInContext(extractFunction("model/InventoryStore.qml", "formatCurrency"), ctx);
     ctx.InventoryStore = { formatCurrency: ctx.formatCurrency };
-    for (const f of ["_setLinePrice", "_setPriceError"]) vm.runInContext(extractFunction("pages/NewOrderDialog.qml", f), ctx);
+    for (const f of ["_setLinePrice", "_setPriceError", "_replaceLine"]) vm.runInContext(extractFunction("pages/NewOrderDialog.qml", f), ctx);
     return {
         // -> what this one commit did: the refusal it recorded, "" when it replaced the price or cleared an older refusal, null when
         // it touched nothing.
@@ -163,8 +163,8 @@ test("P-7 monkey: 20000 random texts never throw, never change a refused or unch
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Review sweep of PR 219: the flow around the commit. A stand-in Repeater builds one delegate per cart line and rebuilds them
-// on every cart change, as Qt does; each delegate runs the REAL settlePrice, _commitPrice, onActiveFocusChanged and onTextEdited
-// text, and the dialog runs the REAL trySubmit, _settlePriceEdit, _setLineDiscount and onSelectedProductsChanged. What stays
+// on every cart change, as Qt does; each delegate runs the REAL settleField, _commitPrice, onActiveFocusChanged and onTextEdited
+// text, and the dialog runs the REAL trySubmit, _settleFieldEdit, _setLineDiscountType and onSelectedProductsChanged. What stays
 // unproven here is only which Qt event fires when: so both focus-loss orders and "no focus loss at all" are run.
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -188,7 +188,7 @@ function sheet(lines = cart()) {
     let rows = [], selected = [];
     const ctx = {
         OrderFlow: OF, Picker: NP, Object, Number, String, Math, Array, Intl, isNaN, isFinite, parseFloat,
-        busy: false, _priceErrors: {}, _staffIds: [""],
+        busy: false, _priceErrors: {}, _discountErrors: {}, _staffIds: [""],
         customerField: { text: "Asha" }, emailField: { text: "" }, phoneField: { text: "" }, errorLabel: { text: "" },
         channelCombo: { currentIndex: -1 }, staffCombo: { currentIndex: 0 }, OrderChannelStore: { channels: [] },
         orderCreated: (o) => sent.push(plain(o)),
@@ -203,7 +203,7 @@ function sheet(lines = cart()) {
     vm.createContext(ctx);
     vm.runInContext(extractFunction("model/InventoryStore.qml", "formatCurrency"), ctx);
     ctx.InventoryStore = { formatCurrency: ctx.formatCurrency, getById: () => ({ stock: 1000, taxable: false }) };
-    for (const f of ["_settlePriceEdit", "_setPriceError", "_setLineDiscount", "_setLinePrice", "changeQty", "trySubmit"])
+    for (const f of ["_settleFieldEdit", "_setPriceError", "_setDiscountError", "_replaceLine", "_setLineDiscountType", "_setLinePrice", "changeQty", "trySubmit"])
         vm.runInContext(extractFunction("pages/NewOrderDialog.qml", f), ctx);
 
     function delegate(index) {
@@ -213,10 +213,11 @@ function sheet(lines = cart()) {
         vm.createContext(f);
         vm.runInContext(extractFunction("pages/NewOrderDialog.qml", "_commitPrice"), f);
         f.linePriceField = { get activeFocus() { return f.activeFocus; }, _commitPrice: () => f._commitPrice() };
-        vm.runInContext(extractFunction("pages/NewOrderDialog.qml", "settlePrice"), f);
+        f.lineDiscField = { activeFocus: false };   // the discount field is driven in orderMoneyFields.test.js
+        vm.runInContext(extractFunction("pages/NewOrderDialog.qml", "settleField"), f);
         return {
             field: f,
-            settlePrice: () => f.settlePrice(),
+            settleField: () => f.settleField(),
             focus() { if (!f.activeFocus) { f.activeFocus = true; vm.runInContext(FOCUS, f); } },
             type(t) { f.text = t; vm.runInContext(TYPED, f); },
             enter() { f._commitPrice(); f._commitPrice(); },
@@ -332,12 +333,12 @@ test("P-13 a refusal survives the rows being rebuilt (quantity, another line's p
 test("P-14 the discount pill (it takes no focus) commits the typed price before it rebuilds the rows", () => {
     const s = sheet();
     s.type(0, "250");
-    s.ctx._setLineDiscount(0, "percent", 5);
+    s.ctx._setLineDiscountType(0, "percent", null);
     assert.deepEqual(s.prices, [250, 40.5]);
     assert.equal(s.lines[0].discountType, "percent");
     const r = sheet();
     r.type(1, "1,5");
-    r.ctx._setLineDiscount(0, "percent", 5);
+    r.ctx._setLineDiscountType(0, "percent", null);
     assert.deepEqual(r.prices, [100, 40.5]);
     assert.equal(r.error("PRD-002"), OF.priceText("invalid"), "a refusal made by the pill's commit is kept and shown");
 });
@@ -382,7 +383,7 @@ test("P-16 monkey: 800 sessions of random typing, Enter, focus moves, pills and 
             case "enter": if (r.field.activeFocus) r.enter(); break;
             case "blur": r.blur(pick(ORDERS.slice(0, 2))); break;
             case "focus": leave(); s.row(i).focus(); break;
-            case "pill": s.ctx._setLineDiscount(i, pick(["flat", "percent"]), 1); break;
+            case "pill": s.ctx._setLineDiscountType(i, pick(["flat", "percent"]), null); break;
             case "submit": {
                 if (rnd() < 0.5) for (let k = 0; k < 2; k++) if (s.row(k)) s.row(k).blur(pick(ORDERS.slice(0, 2)));
                 const before = s.sent.length;
