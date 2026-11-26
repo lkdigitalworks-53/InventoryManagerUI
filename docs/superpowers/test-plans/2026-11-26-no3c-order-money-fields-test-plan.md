@@ -23,6 +23,7 @@ None added: dialogs have no headless e2e; the saved document shape is unchanged.
 - Functions suite RUN: before 2437/2437 on `main` @ `5c41b8f`; after 2475/2475 (+38). Scripts suite 1199/1199.
 - Hand mutants: 48 over `OrderFlow.js` (20), `NewOrderDialog.qml` (12), `OrderDetailDialog.qml` (16). First run killed 47; the survivor (Edit Order price field showing formatted text after Enter while still focused) got a case in M-11 and is now killed: 48 of 48.
 - qt-qml-review linter: new hits only in kinds the two files already carry (`var`, `property var`, imperative text assignment, attribute order); the two new `JS-2` hits are on lines that use `===`/`!==`. The six-domain agent review was not run.
+- CI on PR #222 @ `150f2f7`, RUN and green: QML 3422/3422 (includes the six new `OrderFlow` twins), Functions 2475/2475, Rules 129/129, E2E 124/124 (total 6150/6150).
 
 ## 6. On-device test plan (owner). Build of this branch, owner login on a dev tenant, products A (price 100) and B (price 1200), one old pending order and one completed order.
 Run 1 to 14 on **Edit Order**; run 5 to 14 again on **New Order**.

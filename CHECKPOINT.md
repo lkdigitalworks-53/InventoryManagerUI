@@ -10,9 +10,9 @@
 - [x] 1. State read: #219 merged and device tested; CI on `main` green; baseline functions 2437/2437.
 - [x] 2. Design `specs/2026-11-26-no3c-edit-order-money-fields-design.md` (D-NO3c-1..8, Q-NO3c-1..2, defaults taken).
 - [x] 3. Code: `OrderFlow.js` helpers, `NewOrderDialog.qml`, `OrderDetailDialog.qml`.
-- [x] 4. Tests RUN: functions 2475/2475, scripts 1199/1199, 48/48 hand mutants. QML twins (+6) are CI only.
+- [x] 4. Tests RUN: functions 2475/2475, scripts 1199/1199, 48/48 hand mutants. QML twins (+6) are CI only (green, step 6).
 - [x] 5. Docs: test plan (19 device checks), test-plan index, README, KNOWN-ISSUES 162-170 (151, 154, 158 fixed), Skill 192, SKILLS-INDEX, AGENTS, STATUS section 22.
-- [ ] 6. Push, open PR, read CI (QML, Functions, Rules, E2E).
+- [x] 6. Pushed, PR #222 open. CI RUN green @ `150f2f7`: 6150/6150 (QML 3422, Functions 2475, Rules 129, E2E 124). Later commits on the branch are docs only.
 - [ ] 7. Owner: review the PR (veto D-NO3c-4 / D-NO3c-6 if wanted), device checks 1 to 19. Rotate the PAT.
 
 ## Next slice
