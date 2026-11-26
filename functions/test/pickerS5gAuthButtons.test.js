@@ -1,5 +1,5 @@
 "use strict";
-// Picker v2, slice S5g: the two dead Auth buttons are deleted (KNOWN-ISSUES 146, 143). S5G-01..NN.
+// Picker v2, slice S5g: the two dead Auth buttons are deleted (KNOWN-ISSUES 146, 143). S5G-01..09 (07..09 added in the PR 221 review sweep).
 // Plan: docs/superpowers/plans/2026-11-25-product-picker-v2-s5g-auth-buttons-and-final-pass.md
 // Source reads only (qmltestrunner cannot load Felgo pages). They pin that the files stay deleted, that nothing names them
 // (in code, qmldir, QML tests, C++ or CMake) and that the login screen still has the buttons it really uses.
@@ -14,31 +14,50 @@ const ROOT = path.join(__dirname, "..", "..");
 const GONE = ["AuthPrimaryButton", "AuthSecondaryButton"];
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
-// Every file of the app that could name a type: QML (comments stripped), QML tests, qmldir files, C++, CMake. Whole-word match.
+// Every file under a directory, recursive, sorted.
+function walk(dir) {
+    const out = [];
+    if (!fs.existsSync(dir)) return out;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) out.push(...walk(p)); else out.push(p);
+    }
+    return out.sort();
+}
+// Every file of the app that could name a type: QML and JS under qml/ (comments stripped; a JS helper can `Qt.createComponent` by
+// string), every qmldir anywhere under qml/, QML and JS tests (recursive), C++ and CMake. Whole-word match.
 function mentions(root, names) {
     const hay = [];
-    for (const f of qmlFiles(path.join(root, "qml"))) hay.push([path.relative(root, f), stripComments(fs.readFileSync(f, "utf8"))]);
-    const tdir = path.join(root, "tests");
-    if (fs.existsSync(tdir)) for (const f of fs.readdirSync(tdir)) if (/\.(qml|js)$/.test(f)) hay.push(["tests/" + f, stripComments(fs.readFileSync(path.join(tdir, f), "utf8"))]);
-    for (const d of ["helper", "components", "model"]) {
-        const q = path.join(root, "qml", d, "qmldir");
-        if (fs.existsSync(q)) hay.push([path.relative(root, q), fs.readFileSync(q, "utf8")]);
+    for (const f of walk(path.join(root, "qml"))) {
+        const b = path.basename(f);
+        if (/\.(qml|js|mjs)$/.test(b)) hay.push([path.relative(root, f), stripComments(fs.readFileSync(f, "utf8"))]);
+        else if (b === "qmldir") hay.push([path.relative(root, f), fs.readFileSync(f, "utf8")]);
     }
+    for (const f of walk(path.join(root, "tests"))) if (/\.(qml|js|mjs)$/.test(f)) hay.push([path.relative(root, f), stripComments(fs.readFileSync(f, "utf8"))]);
     for (const f of ["main.cpp", "CMakeLists.txt"]) if (fs.existsSync(path.join(root, f))) hay.push([f, fs.readFileSync(path.join(root, f), "utf8")]);
     const out = [];
     for (const [f, t] of hay) for (const n of names) if (new RegExp("\\b" + n + "\\b").test(t)) out.push(f + " names " + n);
     return out.sort();
 }
+// Where a QML file of that name lives, anywhere under qml/ (any folder, the qml/ root included).
+function filesNamed(root, names) {
+    return walk(path.join(root, "qml")).filter((f) => names.some((n) => path.basename(f) === n + ".qml")).map((f) => path.relative(root, f)).sort();
+}
+// Temp trees are removed after the run: S5G-03 and S5G-06 build about 300 of them.
+const made = [];
+function cleanup() { while (made.length) fs.rmSync(made.pop(), { recursive: true, force: true }); }
+test.after(cleanup);
 function tree(files, extra) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "s5g-"));
+    made.push(root);
     fs.mkdirSync(path.join(root, "qml"), { recursive: true });
     for (const [n, body] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(root, "qml", n)), { recursive: true }); fs.writeFileSync(path.join(root, "qml", n), body); }
     for (const [n, body] of Object.entries(extra || {})) { fs.mkdirSync(path.dirname(path.join(root, n)), { recursive: true }); fs.writeFileSync(path.join(root, n), body); }
     return root;
 }
 
-test("S5G-01 the two dead Auth buttons are deleted, from every place a QML file can live", () => {
-    for (const n of GONE) for (const d of ["components", "helper", "model", "pages"]) assert.equal(fs.existsSync(path.join(ROOT, "qml", d, n + ".qml")), false, d + "/" + n + ".qml came back");
+test("S5G-01 the two dead Auth buttons are deleted, from every folder under qml/ (components, helper, model, pages, logic, the root)", () => {
+    assert.deepEqual(filesNamed(ROOT, GONE), [], "a deleted button came back");
 });
 
 test("S5G-02 nothing names a deleted button: no QML file (comments aside), no qmldir, no QML test, no C++ or CMake", () => {
@@ -81,4 +100,29 @@ test("S5G-06 MONKEY: 300 seeded trees, a name placed in a random kind of file or
         const expectCount = (real ? 1 : 0) + (extra["CMakeLists.txt"] ? 1 : 0);
         assert.equal(mentions(r, GONE).length, expectCount, "round " + i + " " + file + " " + body);
     }
+});
+
+test("S5G-07 review sweep: the matcher also reads a JS helper (Qt.createComponent by string) and a qmldir in any folder, and a test in a sub-folder", () => {
+    const r = tree({ "helper/Make.js": 'function f() { return Qt.createComponent("../components/AuthPrimaryButton.qml"); }', "logic/qmldir": "AuthSecondaryButton 1.0 AuthSecondaryButton.qml" },
+        { "tests/sub/tst_Deep.js": "var x = AuthPrimaryButton;" });
+    assert.deepEqual(mentions(r, GONE), ["qml/helper/Make.js names AuthPrimaryButton", "qml/logic/qmldir names AuthSecondaryButton", "tests/sub/tst_Deep.js names AuthPrimaryButton"]);
+    const ok = tree({ "helper/Make.js": "// AuthPrimaryButton\n/* AuthSecondaryButton */ var a = MyAuthPrimaryButton;" });
+    assert.deepEqual(mentions(ok, GONE), [], "a JS comment and a look-alike name are not uses");
+});
+
+test("S5G-08 review sweep: the file-name check finds a deleted name in ANY folder under qml/ (logic, the root, a new folder), and nothing for look-alike file names", () => {
+    const r = tree({ "logic/AuthPrimaryButton.qml": "Item { }", "AuthSecondaryButton.qml": "Item { }", "new/dir/AuthPrimaryButton.qml": "Item { }" });
+    assert.deepEqual(filesNamed(r, GONE), ["qml/AuthSecondaryButton.qml", "qml/logic/AuthPrimaryButton.qml", "qml/new/dir/AuthPrimaryButton.qml"]);
+    const ok = tree({ "components/PrimaryButton.qml": "Item { }", "components/MyAuthPrimaryButton.qml": "Item { }", "components/AuthPrimaryButton.txt": "x" });
+    assert.deepEqual(filesNamed(ok, GONE), []);
+    assert.deepEqual(filesNamed(tree({}), GONE), [], "empty tree");
+    assert.deepEqual(filesNamed(path.join(os.tmpdir(), "s5g-does-not-exist"), GONE), [], "no qml folder at all");
+});
+
+test("S5G-09 review sweep: the temp trees the tests build are removed (no leak of s5g-* folders)", () => {
+    const r = tree({ "Page.qml": "Item { }" });
+    assert.equal(fs.existsSync(r), true);
+    cleanup();
+    assert.equal(fs.existsSync(r), false, "cleanup left the tree behind");
+    assert.equal(made.length, 0);
 });
