@@ -11,7 +11,7 @@
 - [x] 2. Design `specs/2026-11-26-no3c-edit-order-money-fields-design.md` (D-NO3c-1..8, Q-NO3c-1..2, defaults taken).
 - [x] 3. Code: `OrderFlow.js` helpers, `NewOrderDialog.qml`, `OrderDetailDialog.qml`.
 - [x] 4. Tests RUN: functions 2475/2475, scripts 1199/1199, 48/48 hand mutants. QML twins (+6) are CI only.
-- [x] 5. Docs: test plan (19 device checks), test-plan index, README, KNOWN-ISSUES 162-169 (151, 154, 158 fixed), Skill 192, SKILLS-INDEX, AGENTS, STATUS section 22.
+- [x] 5. Docs: test plan (19 device checks), test-plan index, README, KNOWN-ISSUES 162-170 (151, 154, 158 fixed), Skill 192, SKILLS-INDEX, AGENTS, STATUS section 22.
 - [ ] 6. Push, open PR, read CI (QML, Functions, Rules, E2E).
 - [ ] 7. Owner: review the PR (veto D-NO3c-4 / D-NO3c-6 if wanted), device checks 1 to 19. Rotate the PAT.
 
