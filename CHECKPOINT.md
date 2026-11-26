@@ -15,8 +15,12 @@
 - [x] 4. Six domains by hand, ponytail audit of the diff, PR claims checked against git (83 lines, 7 literals true; renumbering). 4 real findings, all in the S5g test matcher (JS, qmldir, folders, temp leak).
 - [x] 5. Fixes: `pickerS5gAuthButtons.test.js` matcher widened, cleanup added, S5G-07..09, 6 hand mutants killed (commit `step 2`). KNOWN-ISSUES 163 fixed, 164 open (owner input).
 - [x] 6. Docs: plan section 8, test plan rows, device pass (status + ranked important checks), KNOWN-ISSUES 142/143/144/163/164, README, AGENTS, Skill 192 rule 7. Measured: functions 2446/2446, scripts 1199/1199, skills-index current.
-- [ ] 7. Push, read CI (QML, Functions, Rules, E2E) on the pushed head.
-- [ ] 8. Report: done / next / important test cases.
+- [x] 7. Pushed `4857794`; CI read on it: 6115/6115 = QML 3416, Functions 2446, Rules 129, E2E 124; Deploy steps skipped; PR mergeable `clean`.
+- [x] 8. Report given to the owner (done / next / important checks).
+- [ ] 9. OWNER: F8 + F9 numbers and any FAIL (KNOWN-ISSUES 164); answer Q-S5G-5..7 (plan section 8); review and merge PR #221.
+
+## Next slice (small)
+After merge: NO3c (Edit Order price and discount fields via `OrderFlow.priceEdit`, KNOWN-ISSUES 151) and fold in `OrderDetailDialog` `required property` for delegates (linter DEL-1, 18 hits). Not before F9/F8 are read: they decide whether `_tryAdjustOrder` needs atomic work first.
 
 ## If this session is cut off
 Resume at the first unticked step. Re-measure counts before claiming any: `cd functions && npm ci && node --test`, `node --test .github/scripts/__tests__/*.test.js`, `node .github/scripts/skills-index.js --check`. The branch on the remote always holds the latest finished step.
