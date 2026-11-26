@@ -13,6 +13,7 @@
 - [x] 4. Tests RUN: functions 2475/2475, scripts 1199/1199, 48/48 hand mutants. QML twins (+6) are CI only (green, step 6).
 - [x] 5. Docs: test plan (19 device checks), test-plan index, README, KNOWN-ISSUES 162-170 (151, 154, 158 fixed), Skill 192, SKILLS-INDEX, AGENTS, STATUS section 22.
 - [x] 6. Pushed, PR #222 open. CI RUN green @ `150f2f7`: 6150/6150 (QML 3422, Functions 2475, Rules 129, E2E 124). Later commits on the branch are docs only.
+- [x] 6b. Review sweep (2026-11-26, owner ask: full deep review, fixes in this PR; superpowers review + qt-qml-review six domains run in sequence + ponytail audit of the PR's code). Fixed: **F1** Edit Order pill handler rewrote the discount field after every tap, so a tap on the side already selected wiped the typed number (D-NO3c-4 says it does nothing): `_setLineDiscountType` now returns true only when the type changed and the handler refreshes the field only then. **F2** New Order `_applyPicked` replaced the cart without `_settleFieldEdit()`, so a price or discount still being typed died with its row when Add products came back (158 class): it settles first. Tests: M-7 widened to both sheets and all focus orders, M-16 new, NOW harness stub; functions 2476/2476 RUN; 4 hand mutants killed. Device checks 11 (reworded) and 20 (new). Not fixed, noted: lint style hits (`var`, `property var`) match the files' existing style.
 - [ ] 7. Owner: review the PR (veto D-NO3c-4 / D-NO3c-6 if wanted), device checks 1 to 19. Rotate the PAT.
 
 ## Next slice

@@ -105,6 +105,7 @@ BottomSheet {
     // the red label sits at the bottom of the scrolling body and may be off screen. The label is cleared, since the
     // person has just added products and an older "Add at least one product" no longer applies.
     function _applyPicked(plan) {
+        _settleFieldEdit()   // the new cart rebuilds every row: a price or discount still being typed would die with its row
         const res = Picker.applyPlan(selectedProducts, plan, _pickerLookup)
         selectedProducts = res.lines
         errorLabel.text = ""

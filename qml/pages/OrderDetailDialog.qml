@@ -413,19 +413,21 @@ BottomSheet {
         recomputeSubtotal()
     }
 
-    // `typed`: this row's discount text when the person is still in that field, else null.
+    // `typed`: this row's discount text when the person is still in that field, else null. -> true when the type changed (the
+    // caller then shows the new value; on a tap of the side already selected the typed text must stay, design D-NO3c-4).
     function _setLineDiscountType(idx, type, typed) {
         if (typed === null) _settleFieldEdit()
-        if (!OrderFlow.isRow(idx, products.count)) return
+        if (!OrderFlow.isRow(idx, products.count)) return false
         var cur = products.get(idx)
         var next = type === "percent" ? "percent" : "flat"
-        if ((cur.discountType === "percent" ? "percent" : "flat") === next) return
+        if ((cur.discountType === "percent" ? "percent" : "flat") === next) return false
         var gross = cur.price * cur.quantity
         var r = OrderFlow.discountSwitch(typed, cur.discountValue, next, gross, OrdersStore.formatCurrency(gross))
         _setRowError(idx, "discountError", r.message)
         products.setProperty(idx, "discountType", next)
         products.setProperty(idx, "discountValue", r.value)
         recomputeSubtotal()
+        return true
     }
 
     // Why Save must wait: unread refusals, and changed lines whose discount no longer fits.
@@ -914,10 +916,10 @@ BottomSheet {
                           model: ["₹", "%"]
                           selected: row.lineDiscType === "percent" ? 1 : 0
                           onSegmentSelected: function(idx, label) {
-                              dlg._setLineDiscountType(row.rowIdx, idx === 1 ? "percent" : "flat",
-                                                       lineDiscountField.activeFocus ? lineDiscountField.text : null)
                               // The field's `text` binding is gone after its first commit, so show the result by hand
-                              lineDiscountField.text = String(row.lineDiscValue || 0)
+                              if (dlg._setLineDiscountType(row.rowIdx, idx === 1 ? "percent" : "flat",
+                                                           lineDiscountField.activeFocus ? lineDiscountField.text : null))
+                                  lineDiscountField.text = String(row.lineDiscValue || 0)
                           }
                       }
                       QQC.TextField {

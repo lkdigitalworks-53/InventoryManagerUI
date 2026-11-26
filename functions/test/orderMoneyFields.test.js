@@ -285,13 +285,19 @@ for (const kind of KINDS) {
     });
 
     test(`M-7 ${kind}: tapping the selected side does nothing to the line or to the text being typed`, () => {
-        const s = sheet(kind);
-        s.row(0).disc.type("15");
-        s.row(0).pill("flat");
-        assert.equal(s.line(0).discountValue, 5);
-        if (kind === "newOrder") assert.equal(s.row(0).disc.text, "15");
-        assert.deepEqual(s.submit(), []);
-        if (kind === "newOrder") assert.equal(s.line(0).discountValue, 15);
+        // Review sweep of PR 222 (F1): Edit Order's pill handler rewrote the field after EVERY tap, so a tap on the side already
+        // selected wiped the typed number without a word (design D-NO3c-4: "Tapping the selected side does nothing").
+        for (const order of ORDERS) {
+            const s = sheet(kind);
+            s.row(0).disc.type("15");
+            s.row(0).pill("flat");
+            assert.equal(s.line(0).discountValue, 5, order);
+            assert.equal(s.row(0).disc.text, "15", order + ": the typed text survives");
+            assert.ok(s.row(0).disc.focused, order);
+            leave(s.row(0).disc, order);
+            assert.deepEqual(s.submit(), [], order);
+            assert.equal(s.line(0).discountValue, 15, order + ": and is what goes out");
+        }
     });
 
     test(`M-8 ${kind}: a pill on one row commits the field in use on another row first`, () => {
@@ -425,4 +431,26 @@ test("M-15 edit: a field that commits after its row was removed changes nothing 
     row.pill("percent");
     assert.equal(s.ctx.products.count, 1);
     assert.deepEqual([s.line(0).price, s.line(0).discountType, s.line(0).discountValue], [40, "percent", 10]);
+});
+
+test("M-16 newOrder: Add products (the picker's plan rebuilds every row) commits the field in use first", () => {
+    // Review sweep of PR 222 (F2): _applyPicked replaced the cart without settling, so a price or discount still being typed died
+    // with its row when the picker's plan came back (the KNOWN-ISSUES 158 class, on the one rebuild path left).
+    const apply = extractFunction("pages/NewOrderDialog.qml", "_applyPicked");
+    assert.ok(apply.indexOf("_settleFieldEdit()") >= 0 && apply.indexOf("_settleFieldEdit()") < apply.indexOf("Picker.applyPlan("), apply);
+    for (const [i, which, typed, field, want, err] of [[0, "disc", "40", "discountValue", 40, ""], [1, "price", "55", "price", 55, ""],
+        [0, "disc", "-5", "discountValue", 5, "discount"], [1, "price", "1e5", "price", 40, "price"]]) {
+        const s = sheet("newOrder");
+        s.ctx.Picker = { applyPlan: (lines) => ({ lines: lines.map((l) => Object.assign({}, l)), skipped: [] }), skippedNote: () => "" };
+        s.ctx.Toast = { show() {} };
+        s.ctx._pickerLookup = {};
+        vm.runInContext(apply, s.ctx);
+        s.row(i)[which].type(typed);
+        s.ctx._applyPicked({ adds: [] });
+        assert.equal(s.line(i)[field], want, typed);
+        if (err) {
+            assert.ok(s.error(i, err), typed + ": the refusal is kept");
+            assert.equal(s.submit().length, 1, typed + ": and stops Place order");
+        } else assert.equal(s.error(i, which === "disc" ? "discount" : "price"), "", typed);
+    }
 });

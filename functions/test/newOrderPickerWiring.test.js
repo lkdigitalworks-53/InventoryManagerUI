@@ -181,7 +181,9 @@ function dialogGlue(world, cart) {
     const toasts = [];
     const fnSrc = extractFunction("pages/NewOrderDialog.qml", "_applyPicked");
     const apply = vm.runInNewContext("(" + fnSrc.replace(/^function _applyPicked/, "function") + ")",
-        { Picker: NP, errorLabel: errorLabel, Toast: { show: (m) => toasts.push(m) }, get selectedProducts() { return dlg.selectedProducts; }, set selectedProducts(v) { dlg.selectedProducts = v; },
+        { Picker: NP, errorLabel: errorLabel, Toast: { show: (m) => toasts.push(m) },
+          _settleFieldEdit: () => {},   // no field in use here; orderMoneyFields M-16 runs the real one (PR 222 sweep F2)
+          get selectedProducts() { return dlg.selectedProducts; }, set selectedProducts(v) { dlg.selectedProducts = v; },
           _pickerLookup: dlg._pickerLookup });
     return { dlg, errorLabel, toasts, apply };
 }

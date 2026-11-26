@@ -5482,7 +5482,8 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 3. A new submit-time rule must not lock old data: skip a line identical to the saved one, and test the legacy case.
 4. Compare money with a tolerance (`0.7 * 3 < 2.1`).
 5. Where rows are updated in place (`ListModel`), keep a row's message in a row role (declare it in EVERY append); where rows are rebuilt, keep it in the dialog keyed by id.
-6. A field's `text:` binding dies at its first imperative assignment: after changing the value from elsewhere (a pill), set the field text by hand.
+6. A field's `text:` binding dies at its first imperative assignment: after changing the value from elsewhere (a pill), set the field text by hand, and ONLY when the value changed: a no-op tap (the side already selected) must leave the typed text alone (PR 222 sweep F1).
+9. "Commit the field in use before the rows rebuild" holds for EVERY assignment of the rows' model: grep them all (`selectedProducts = `), not only the ones the bug report names. The picker's apply was missed (PR 222 sweep F2).
 7. Test both dialogs with ONE harness that runs the real handler text, looped over both sheets, plus a monkey that asserts "whatever is sent is inside the limits".
 8. Never let a time-limited command mutate the working tree: run mutants on a COPY of the repo.
 
