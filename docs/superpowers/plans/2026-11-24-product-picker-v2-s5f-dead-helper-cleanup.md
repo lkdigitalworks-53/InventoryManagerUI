@@ -51,7 +51,7 @@ Node only (CI is the oracle, no Qt in the sandbox). `S5F-01` files gone. `S5F-02
 ## 7. Questions for Taher (none block the merge)
 - **Q1.** Delete the five dead helpers? Default: yes (veto = revert `686caf8`).
 - **Q2.** Keep the photo-sheet `sp()` and the growing rows? Default: yes (veto = revert `b5e36b2`).
-- **Q3.** Delete `AuthPrimaryButton` and `AuthSecondaryButton` (KI 146) in the next cleanup? Default: yes, own slice.
+- **Q3.** Delete `AuthPrimaryButton` and `AuthSecondaryButton` (KI 146) in the next cleanup? Default: yes, own slice. **Taken in S5g (2026-11-25), default, no answer was written anywhere.**
 - **Q4.** Commit address: this session used `taher.lkdw@gmail.com` (owner instruction of 2026-11-24).
 
 ## 8. Result (2026-11-24)

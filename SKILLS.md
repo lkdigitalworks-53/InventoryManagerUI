@@ -5471,3 +5471,19 @@ When a client write cannot carry explicit ledger rows (the applied quantity is o
 11. A refusal is not handled until the SUBMIT path knows it. Tapping the submit button blurs the field, records the refusal and runs submit in one gesture: the order went out at the old price, unseen. Submit refuses while a refusal is unread.
 12. Never rely on a focus event to commit typed input. A `MouseArea` takes no focus, platforms differ on buttons, and Qt's order of `editingFinished` and the focus handler is not yours: settle the field explicitly before reading or rebuilding the model, and let the focus handler reformat only text the person did not change.
 13. Test the sequence, not only the function: a stand-in Repeater that rebuilds rows, running the real handler text, in both event orders and with no event, found all of 11 and 12 without Qt.
+
+## Skill 192: A deletion touches every ratchet that names the file, and a mutant loop must clean untracked files and never edit its own test
+
+**Why:** S5g deleted two unused QML buttons. Three tests named them (the roots-of-raw-buttons list and its `text` pin, the set of unreachable files, the colour-literal table); the reachability scan of Skill 190 reads `qml/`, not `functions/test/`, so it cannot find a name pinned in a test. Then the mutant loop went wrong twice, in ways that looked like success.
+
+**The rules:**
+1. Before deleting a file, grep its NAME across the whole tree including `functions/test/` and `docs/`. A name in a test is a ratchet entry or a fixture; each one changes in the same commit as the deletion (Skill 190 rule 2). A look-alike decoy string in a scanner test (`AuthPrimaryButton { }` as a type that must NOT count) is input, not a reference: leave it.
+2. After the deletion, run the three families that count things: the list of roots, the table of literals, the set of unreachable files. If the change leaves them green on the first run, check that they would have failed (mutant 1: put the file back).
+3. A mutant loop resets with `git reset --hard HEAD` AND `git clean -fdq -- qml tests CMakeLists.txt`. `reset --hard` does NOT remove files the mutant ADDED: the first loop left the restored file behind, and every later mutant was "killed" by the leftover, so the whole run proved nothing. Print a baseline first: it must be empty (no failures) or the loop is not trustworthy.
+4. A mutant changes the code under test, never the test. A first mutant 11 edited the test to drop the check it wanted to prove and then "survived". Redo it by changing only the code.
+5. Read each killer list, not just KILLED. A mutant that is killed by five tests, four of them unrelated, is killed by pollution (rule 3); a clean kill names the one or two tests that own that behaviour.
+6. A whole-word matcher gets look-alike decoys in its own test (a comment, a longer name, a shorter name, a prefixed name, an empty tree) and a seeded monkey with an expected count known by construction (`S5G-03`, `S5G-06`).
+7. A scanner that proves "nothing names this file" must read EVERY kind of file that can name it: QML, JS helpers (`Qt.createComponent` takes a string), a `qmldir` in any folder, tests in sub-folders, C++ and CMake. The first S5g matcher read QML only and four folders; the review sweep found it by listing what the repo really holds (54 JS files under `qml/`) and added a decoy test per kind. A hand-built-tree test must remove its temp folders (`test.after`): 300 monkey trees left 303 `s5g-*` folders per run until fixed.
+
+**The check:** `node --test functions/test/pickerS5gAuthButtons.test.js`: green (9 cases). `node .github/scripts/skills-index.js --check`: current.
+
